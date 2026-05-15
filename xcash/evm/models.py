@@ -19,6 +19,7 @@ from chains.models import TxHash
 from chains.signer import get_signer_backend
 from common.fields import EvmAddressField
 from common.models import UndeletableModel
+from evm.choices import TxKind
 from evm.constants import EVM_PIPELINE_DEPTH
 
 if TYPE_CHECKING:
@@ -108,6 +109,11 @@ class EvmBroadcastTask(UndeletableModel):
     )
     data = models.TextField(_("Data"), blank=True, default="")
     gas = models.PositiveIntegerField(_("Gas"))
+    tx_kind = models.CharField(
+        _("交易形态"),
+        max_length=32,
+        choices=TxKind.choices,
+    )
     gas_price = models.PositiveBigIntegerField(_("Gas Price"), blank=True, null=True)
     signed_payload = models.TextField(_("已签名链上载荷"), blank=True, default="")
 
@@ -521,6 +527,7 @@ class EvmBroadcastTask(UndeletableModel):
         crypto: Crypto | None,
         recipient,
         amount: Decimal | None,
+        tx_kind,
         value=0,
         data="",
         verify_fn=None,
@@ -562,6 +569,7 @@ class EvmBroadcastTask(UndeletableModel):
                 nonce=nonce,
                 data=data,
                 gas=gas,
+                tx_kind=tx_kind,
             )
             state.next_nonce = nonce + 1
             state.save()
@@ -611,6 +619,7 @@ class EvmBroadcastTask(UndeletableModel):
             crypto=chain.native_coin,
             recipient=to,
             amount=cls._normalize_amount(value, chain.native_coin.decimals),
+            tx_kind=TxKind.NATIVE_TRANSFER,
             verify_fn=verify_fn,
         )
 
@@ -641,6 +650,7 @@ class EvmBroadcastTask(UndeletableModel):
             recipient=recipient,
             data=data,
             amount=amount,
+            tx_kind=TxKind.CONTRACT_CALL,
             verify_fn=verify_fn,
         )
 

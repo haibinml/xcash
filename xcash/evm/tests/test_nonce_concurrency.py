@@ -33,6 +33,7 @@ from chains.service import TransferService
 from common.consts import ERC20_TRANSFER_GAS
 from currencies.models import ChainToken
 from currencies.models import Crypto
+from evm.choices import TxKind
 from evm.admin import EvmScanCursorAdmin
 from evm.models import EvmBroadcastTask
 from evm.models import EvmScanCursor
@@ -134,6 +135,15 @@ class EvmNonceConcurrencyTests(TransactionTestCase):
                 address=self.address, chain=self.chain
             ).count(),
             self.THREAD_COUNT,
+        )
+        self.assertEqual(
+            set(
+                EvmBroadcastTask.objects.filter(
+                    address=self.address,
+                    chain=self.chain,
+                ).values_list("tx_kind", flat=True)
+            ),
+            {TxKind.NATIVE_TRANSFER},
         )
 
     def test_concurrent_schedule_native_across_addresses_are_independent(self):
