@@ -288,17 +288,30 @@ class WithdrawalService:
         cls, *, vault_address, chain, crypto, to, value_raw, verify_fn
     ):
         """EVM 提币写入统一链上任务队列，广播由定时任务异步完成。"""
-        from evm.models import EvmBroadcastTask
+        from evm.intents import build_erc20_transfer_intent  # noqa: PLC0415
+        from evm.intents import build_native_transfer_intent  # noqa: PLC0415
+        from evm.models import EvmBroadcastTask  # noqa: PLC0415
 
-        task = EvmBroadcastTask.schedule_transfer(
-            address=vault_address,
-            chain=chain,
-            crypto=crypto,
-            to=to,
-            value_raw=value_raw,
-            transfer_type=TransferType.Withdrawal,
-            verify_fn=verify_fn,
-        )
+        if crypto == chain.native_coin:
+            intent = build_native_transfer_intent(
+                address=vault_address,
+                chain=chain,
+                to=to,
+                value=value_raw,
+                transfer_type=TransferType.Withdrawal,
+                verify_fn=verify_fn,
+            )
+        else:
+            intent = build_erc20_transfer_intent(
+                address=vault_address,
+                chain=chain,
+                crypto=crypto,
+                to=to,
+                value_raw=value_raw,
+                transfer_type=TransferType.Withdrawal,
+                verify_fn=verify_fn,
+            )
+        task = EvmBroadcastTask.schedule(intent)
         return task.base_task
 
     @classmethod
