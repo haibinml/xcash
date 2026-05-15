@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal  # noqa: TC003 - 规格要求运行时可解析 Decimal 注解
 from typing import TYPE_CHECKING
 
 from chains.models import TransferType
@@ -11,10 +12,9 @@ from evm.choices import TxKind
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tokens.models import Crypto
-
+    from chains.models import Address
     from chains.models import Chain
-    from evm.models import Address
+    from currencies.models import Crypto
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class EvmTxIntent:
     transfer_type: TransferType
     crypto: Crypto | None
     recipient: str | None
-    amount: int | None
+    amount: Decimal | None
     verify_fn: Callable[[], None] | None = None
 
 

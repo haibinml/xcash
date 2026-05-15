@@ -1,9 +1,13 @@
 """evm/intents 骨架：dataclass + 校验工具 + 派发表 + 闸门。"""
 
+import typing
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
+from decimal import Decimal
 
 import pytest
 
+import evm.intents as intents_module
 from chains.models import TransferType
 from evm.choices import TxKind
 from evm.intents import EvmTxIntent
@@ -34,6 +38,22 @@ def simple_intent():
 def test_evm_tx_intent_is_frozen(simple_intent):
     with pytest.raises(FrozenInstanceError):
         simple_intent.value = 999
+
+
+def test_evm_tx_intent_amount_annotation_is_decimal():
+    hints = typing.get_type_hints(
+        EvmTxIntent,
+        globalns={
+            **vars(intents_module),
+            "Address": object,
+            "Callable": Callable,
+            "Chain": object,
+            "Crypto": object,
+            "Decimal": Decimal,
+        },
+    )
+
+    assert hints["amount"] == Decimal | None
 
 
 def test_normalize_accepts_empty_string_returns_0x():
