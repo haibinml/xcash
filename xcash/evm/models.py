@@ -552,6 +552,8 @@ class EvmBroadcastTask(UndeletableModel):
         - 首次签名和首个 tx_hash 生成延后到 broadcast()；内部稳定身份只依赖 (address, chain, nonce)。
         - 行锁跟随事务提交自动释放，不依赖 Redis TTL。
         """
+        assert_transfer_type_implemented(transfer_type)
+
         with db_transaction.atomic():
             state = AddressChainState.acquire_for_update(address=address, chain=chain)
 
@@ -594,41 +596,20 @@ class EvmBroadcastTask(UndeletableModel):
         事务回滚，避免留下未通过业务二次校验的 BroadcastTask 或 nonce 空洞。
         """
         assert_transfer_type_implemented(intent.transfer_type)
-
-        with db_transaction.atomic():
-            state = AddressChainState.acquire_for_update(
-                address=intent.address,
-                chain=intent.chain,
-            )
-
-            if intent.verify_fn is not None:
-                intent.verify_fn()
-
-            nonce = cls._next_nonce(intent.address, intent.chain, state=state)
-            base_task = BroadcastTask.objects.create(
-                chain=intent.chain,
-                address=intent.address,
-                transfer_type=intent.transfer_type,
-                crypto=intent.crypto,
-                recipient=intent.recipient,
-                amount=intent.amount,
-                stage=getattr(intent, "stage", BroadcastTaskStage.QUEUED),
-                result=getattr(intent, "result", BroadcastTaskResult.UNKNOWN),
-            )
-            broadcast_task = cls.objects.create(
-                base_task=base_task,
-                address=intent.address,
-                chain=intent.chain,
-                tx_kind=intent.tx_kind,
-                to=intent.to,
-                value=intent.value,
-                data=intent.data,
-                gas=intent.gas,
-                nonce=nonce,
-            )
-            state.next_nonce = nonce + 1
-            state.save(update_fields=["next_nonce", "updated_at"])
-            return broadcast_task
+        return cls._create_broadcast_task(
+            address=intent.address,
+            chain=intent.chain,
+            to=intent.to,
+            value=intent.value,
+            transfer_type=intent.transfer_type,
+            gas=intent.gas,
+            crypto=intent.crypto,
+            recipient=intent.recipient,
+            data=intent.data,
+            amount=intent.amount,
+            tx_kind=intent.tx_kind,
+            verify_fn=intent.verify_fn,
+        )
 
     @staticmethod
     def _next_nonce(address, chain, *, state: AddressChainState) -> int:

@@ -1,5 +1,4 @@
 from decimal import Decimal
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -17,6 +16,7 @@ from chains.models import TransferType
 from chains.models import Wallet
 from currencies.models import Crypto
 from evm.choices import TxKind
+from evm.intents import EvmTxIntent
 from evm.models import EvmBroadcastTask
 
 
@@ -58,21 +58,19 @@ class EvmBroadcastTaskScheduleTests(TestCase):
         values = {
             "address": self.address,
             "chain": self.chain,
-            "transfer_type": TransferType.Withdrawal,
-            "crypto": self.native,
-            "recipient": self.recipient,
-            "amount": Decimal("1.23"),
-            "stage": BroadcastTaskStage.PENDING_CHAIN,
-            "result": BroadcastTaskResult.UNKNOWN,
             "tx_kind": TxKind.NATIVE_TRANSFER,
             "to": self.recipient,
             "value": 1_230_000_000_000_000_000,
             "data": "",
             "gas": 21_000,
+            "transfer_type": TransferType.Withdrawal,
+            "crypto": self.native,
+            "recipient": self.recipient,
+            "amount": Decimal("1.23"),
             "verify_fn": None,
         }
         values.update(overrides)
-        return SimpleNamespace(**values)
+        return EvmTxIntent(**values)
 
     def test_schedule_persists_base_and_evm_fields_from_intent(self):
         intent = self._intent(
@@ -101,8 +99,8 @@ class EvmBroadcastTaskScheduleTests(TestCase):
         self.assertEqual(base_task.crypto, intent.crypto)
         self.assertEqual(base_task.recipient, intent.recipient)
         self.assertEqual(base_task.amount, intent.amount)
-        self.assertEqual(base_task.stage, intent.stage)
-        self.assertEqual(base_task.result, intent.result)
+        self.assertEqual(base_task.stage, BroadcastTaskStage.QUEUED)
+        self.assertEqual(base_task.result, BroadcastTaskResult.UNKNOWN)
 
         state = AddressChainState.objects.get(address=self.address, chain=self.chain)
         self.assertEqual(state.next_nonce, 1)
@@ -158,6 +156,24 @@ class EvmBroadcastTaskScheduleTests(TestCase):
             self.assertRaises(NotImplementedError),
         ):
             EvmBroadcastTask.schedule(intent)
+
+        acquire_mock.assert_not_called()
+        self.assertEqual(BroadcastTask.objects.count(), 0)
+        self.assertEqual(EvmBroadcastTask.objects.count(), 0)
+
+    def test_legacy_schedule_transfer_blocks_unimplemented_transfer_type(self):
+        with (
+            patch.object(AddressChainState, "acquire_for_update") as acquire_mock,
+            self.assertRaises(NotImplementedError),
+        ):
+            EvmBroadcastTask.schedule_transfer(
+                address=self.address,
+                chain=self.chain,
+                crypto=self.native,
+                to=self.recipient,
+                value_raw=1,
+                transfer_type=TransferType.ContractDeployCollect,
+            )
 
         acquire_mock.assert_not_called()
         self.assertEqual(BroadcastTask.objects.count(), 0)
