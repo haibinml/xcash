@@ -1758,6 +1758,11 @@ def test_transfer_type_new_values_exist():
     # 新加的 transfer_type 必须可被 enum 反查
     assert TransferType.X402Facilitate.value == "x402_facilitate"
     assert TransferType.ContractDeployCollect.value == "contract_deploy_collect"
+    assert TransferType("x402_facilitate") == TransferType.X402Facilitate
+    assert (
+        TransferType("contract_deploy_collect")
+        == TransferType.ContractDeployCollect
+    )
 
 
 @pytest.mark.django_db
