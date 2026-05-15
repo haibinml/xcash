@@ -11,6 +11,7 @@ from web3 import Web3
 
 from chains.models import TransferType
 from evm.choices import TxKind
+from evm.constants import get_x402_eip3009_facilitate_gas
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -202,4 +203,91 @@ def build_contract_call_intent(
         recipient=recipient_checksum,
         amount=amount,
         verify_fn=verify_fn,
+    )
+
+
+_EIP3009_TRANSFER_WITH_AUTH_SELECTOR = "0xe3ee160e"
+
+
+@dataclass(frozen=True)
+class X402Authorization:
+    pass
+
+
+@dataclass(frozen=True)
+class Eip3009Authorization(X402Authorization):
+    from_address: str
+    to: str
+    value: int
+    valid_after: int
+    valid_before: int
+    nonce: bytes
+    v: int
+    r: bytes
+    s: bytes
+
+
+def build_x402_eip3009_facilitate_intent(
+    *,
+    address: Address,
+    chain: Chain,
+    crypto: Crypto,
+    authorization: Eip3009Authorization,
+) -> EvmTxIntent:
+    if authorization.value < 0:
+        raise ValueError("authorization.value must be >= 0")
+    if authorization.valid_after >= authorization.valid_before:
+        raise ValueError("authorization.valid_after must be < authorization.valid_before")
+
+    _require_bytes32("authorization.nonce", authorization.nonce)
+    _require_bytes32("authorization.r", authorization.r)
+    _require_bytes32("authorization.s", authorization.s)
+
+    if authorization.v not in {27, 28}:
+        raise ValueError("authorization.v must be 27 or 28")
+
+    token_addr = crypto.address(chain)
+    if not token_addr:
+        raise ValueError(
+            f"Crypto {crypto.symbol} is not deployed on chain {chain.code}"
+        )
+
+    contract_addr = Web3.to_checksum_address(token_addr)
+    auth_from = Web3.to_checksum_address(authorization.from_address)
+    auth_to = Web3.to_checksum_address(authorization.to)
+    encoded_args = eth_abi.encode(
+        [
+            "address",
+            "address",
+            "uint256",
+            "uint256",
+            "uint256",
+            "bytes32",
+            "uint8",
+            "bytes32",
+            "bytes32",
+        ],
+        [
+            auth_from,
+            auth_to,
+            authorization.value,
+            authorization.valid_after,
+            authorization.valid_before,
+            authorization.nonce,
+            authorization.v,
+            authorization.r,
+            authorization.s,
+        ],
+    ).hex()
+
+    return build_contract_call_intent(
+        address=address,
+        chain=chain,
+        contract_address=contract_addr,
+        data=f"{_EIP3009_TRANSFER_WITH_AUTH_SELECTOR}{encoded_args}",
+        gas=get_x402_eip3009_facilitate_gas(chain),
+        transfer_type=TransferType.X402Facilitate,
+        crypto=crypto,
+        recipient=auth_to,
+        amount=Decimal(authorization.value).scaleb(-crypto.get_decimals(chain)),
     )

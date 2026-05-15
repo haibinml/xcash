@@ -12,13 +12,16 @@ from web3 import Web3
 import evm.intents as intents_module
 from chains.models import TransferType
 from evm.choices import TxKind
+from evm.intents import Eip3009Authorization
 from evm.intents import EvmTxIntent
+from evm.intents import X402Authorization
 from evm.intents import _normalize_hex_calldata
 from evm.intents import _require_bytes32
 from evm.intents import assert_transfer_type_implemented
 from evm.intents import build_contract_call_intent
 from evm.intents import build_erc20_transfer_intent
 from evm.intents import build_native_transfer_intent
+from evm.intents import build_x402_eip3009_facilitate_intent
 from evm.intents import get_preflight_buffer_multiplier
 from evm.intents import is_gas_rechargeable
 
@@ -333,4 +336,137 @@ def test_build_contract_call_intent_rejects_non_hex_data():
             data="zzzz",
             gas=50000,
             transfer_type=TransferType.Invoice,
+        )
+
+
+def _good_auth(**overrides):
+    values = {
+        "from_address": "0x1111111111111111111111111111111111111111",
+        "to": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "value": 1234567,
+        "valid_after": 100,
+        "valid_before": 200,
+        "nonce": b"\x01" * 32,
+        "v": 27,
+        "r": b"\x02" * 32,
+        "s": b"\x03" * 32,
+    }
+    values.update(overrides)
+    return Eip3009Authorization(**values)
+
+
+def test_eip3009_authorization_is_x402_authorization():
+    assert isinstance(_good_auth(), X402Authorization)
+
+
+def test_build_x402_eip3009_facilitate_intent_sets_contract_call_fields(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        intents_module,
+        "get_x402_eip3009_facilitate_gas",
+        lambda chain: 200000,
+    )
+    token_address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    crypto = _fake_crypto(symbol="USDC", decimals=6, token_address=token_address)
+    chain = _fake_chain()
+    authorization = _good_auth()
+
+    intent = build_x402_eip3009_facilitate_intent(
+        address=_fake_address(),
+        chain=chain,
+        crypto=crypto,
+        authorization=authorization,
+    )
+
+    assert intent.tx_kind == TxKind.CONTRACT_CALL
+    assert intent.to == Web3.to_checksum_address(token_address)
+    assert intent.to != Web3.to_checksum_address(authorization.to)
+    assert intent.recipient == Web3.to_checksum_address(authorization.to)
+    assert intent.transfer_type == TransferType.X402Facilitate
+    assert intent.gas == 200000
+    assert intent.data.startswith("0xe3ee160e")
+    assert intent.amount == Decimal(authorization.value).scaleb(-6)
+
+    decoded = eth_abi.decode(
+        [
+            "address",
+            "address",
+            "uint256",
+            "uint256",
+            "uint256",
+            "bytes32",
+            "uint8",
+            "bytes32",
+            "bytes32",
+        ],
+        bytes.fromhex(intent.data.removeprefix("0xe3ee160e")),
+    )
+    assert Web3.to_checksum_address(decoded[0]) == Web3.to_checksum_address(
+        authorization.from_address
+    )
+    assert Web3.to_checksum_address(decoded[1]) == Web3.to_checksum_address(
+        authorization.to
+    )
+    assert decoded[2:] == (
+        authorization.value,
+        authorization.valid_after,
+        authorization.valid_before,
+        authorization.nonce,
+        authorization.v,
+        authorization.r,
+        authorization.s,
+    )
+
+
+def test_build_x402_eip3009_facilitate_intent_rejects_negative_value():
+    with pytest.raises(ValueError, match=r"authorization\.value"):
+        build_x402_eip3009_facilitate_intent(
+            address=_fake_address(),
+            chain=_fake_chain(),
+            crypto=_fake_crypto(token_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            authorization=_good_auth(value=-1),
+        )
+
+
+def test_build_x402_eip3009_facilitate_intent_rejects_invalid_validity_window():
+    with pytest.raises(ValueError, match="valid_after"):
+        build_x402_eip3009_facilitate_intent(
+            address=_fake_address(),
+            chain=_fake_chain(),
+            crypto=_fake_crypto(token_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            authorization=_good_auth(valid_after=200, valid_before=200),
+        )
+
+
+def test_build_x402_eip3009_facilitate_intent_rejects_invalid_v():
+    with pytest.raises(ValueError, match=r"authorization\.v"):
+        build_x402_eip3009_facilitate_intent(
+            address=_fake_address(),
+            chain=_fake_chain(),
+            crypto=_fake_crypto(token_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            authorization=_good_auth(v=1),
+        )
+
+
+def test_build_x402_eip3009_facilitate_intent_rejects_invalid_nonce():
+    with pytest.raises(ValueError, match=r"authorization\.nonce"):
+        build_x402_eip3009_facilitate_intent(
+            address=_fake_address(),
+            chain=_fake_chain(),
+            crypto=_fake_crypto(token_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            authorization=_good_auth(nonce=b"\x01" * 31),
+        )
+
+
+def test_build_x402_eip3009_facilitate_intent_rejects_crypto_not_deployed_on_chain():
+    crypto = _fake_crypto(symbol="USDC", token_address=None)
+    chain = _fake_chain()
+
+    with pytest.raises(ValueError, match="Crypto USDC is not deployed on chain ETH"):
+        build_x402_eip3009_facilitate_intent(
+            address=_fake_address(),
+            chain=chain,
+            crypto=crypto,
+            authorization=_good_auth(),
         )
