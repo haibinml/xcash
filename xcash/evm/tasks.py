@@ -165,34 +165,10 @@ def dispatch_due_evm_broadcast_tasks() -> None:
 @shared_task(ignore_result=True)
 @singleton_task(timeout=48, use_params=True)
 def scan_evm_chain(chain_pk: int) -> None:
-    """按链执行一次 EVM 自扫描，同时扫描原生币直转和 ERC20 Transfer。"""
-    chain = Chain.objects.get(pk=chain_pk)
-    if not chain.active:
-        return
-
-    summary = None
-    try:
-        summary = EvmChainScannerService.scan_chain(chain=chain)
-    except EvmScannerRpcError:
-        # RPC 失败已在游标层记录，任务层只保留简洁日志，避免重复堆叠异常噪音。
-        logger.warning("EVM 自扫描 RPC 失败", chain=chain.code)
-
-    InternalEvmTaskCoordinator.reconcile_chain(chain=chain)
-    if summary is None:
-        return
-
-    logger.info(
-        "EVM 自扫描完成",
-        chain=chain.code,
-        native_from=summary.native.from_block,
-        native_to=summary.native.to_block,
-        native_observed=summary.native.observed_transfers,
-        native_created=summary.native.created_transfers,
-        erc20_from=summary.erc20.from_block,
-        erc20_to=summary.erc20.to_block,
-        erc20_logs=summary.erc20.observed_logs,
-        erc20_created=summary.erc20.created_transfers,
-    )
+    """兼容旧入口：按当前开关委托到拆分后的 EVM 扫描任务。"""
+    scan_evm_erc20_chain(chain_pk)
+    if get_open_native_scanner():
+        scan_evm_native_chain(chain_pk)
 
 
 @shared_task(ignore_result=True)
@@ -253,12 +229,14 @@ def scan_evm_native_chain(chain_pk: int) -> None:
 
 @shared_task(ignore_result=True)
 def scan_active_evm_chains() -> None:
-    """批量调度所有启用中的 EVM 链自扫描任务。"""
+    """兼容旧入口：批量调度拆分后的 EVM 链自扫描任务。"""
     for chain_pk in Chain.objects.filter(
         active=True,
         type=ChainType.EVM,
     ).values_list("pk", flat=True):
-        scan_evm_chain.delay(chain_pk)
+        scan_evm_erc20_chain.delay(chain_pk)
+        if get_open_native_scanner():
+            scan_evm_native_chain.delay(chain_pk)
 
 
 @shared_task(ignore_result=True)

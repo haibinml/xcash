@@ -624,15 +624,14 @@ class StressServiceTests(SimpleTestCase):
         )
 
     def test_simulate_payment_dispatches_to_evm_native_sender(self):
-        native_coin = SimpleNamespace(symbol="ETH")
+        native_coin = Mock()
+        native_coin.symbol = "ETH"
+        native_coin.get_decimals.return_value = 18
         chain_obj = SimpleNamespace(type=ChainType.EVM, native_coin=native_coin)
-        crypto_obj = Mock()
-        crypto_obj.is_native = True
-        crypto_obj.get_decimals.return_value = 18
 
         with (
             patch("stress.payment.Chain.objects.get", return_value=chain_obj),
-            patch("stress.payment.Crypto.objects.get", return_value=crypto_obj),
+            patch("stress.payment.Crypto.objects.get", return_value=native_coin),
             patch(
                 "stress.payment.send_native",
                 return_value={
@@ -654,6 +653,43 @@ class StressServiceTests(SimpleTestCase):
             to="0xtarget",
             amount=Decimal("1.5"),
             decimals=18,
+        )
+
+    def test_simulate_payment_dispatches_native_symbol_token_to_erc20_sender(self):
+        native_coin = SimpleNamespace(symbol="ETH")
+        chain_obj = SimpleNamespace(type=ChainType.EVM, native_coin=native_coin)
+        crypto_obj = Mock()
+        crypto_obj.is_native = True
+        crypto_obj.get_decimals.return_value = 6
+        crypto_obj.address.return_value = "0xtoken"
+
+        with (
+            patch("stress.payment.Chain.objects.get", return_value=chain_obj),
+            patch("stress.payment.Crypto.objects.get", return_value=crypto_obj),
+            patch("stress.payment.send_native") as send_native_mock,
+            patch(
+                "stress.payment.send_erc20",
+                return_value={
+                    "tx_hash": "0xerc20",
+                    "payer_address": "0xpayer",
+                },
+            ) as send_erc20_mock,
+        ):
+            result = simulate_payment(
+                to_address="0xtarget",
+                chain_code="ethereum-local",
+                crypto_symbol="BSC",
+                amount=Decimal("25"),
+                payment_ref="case-native-like",
+            )
+
+        self.assertEqual(result["tx_hash"], "0xerc20")
+        send_native_mock.assert_not_called()
+        send_erc20_mock.assert_called_once_with(
+            token_address="0xtoken",
+            to="0xtarget",
+            amount=Decimal("25"),
+            decimals=6,
         )
 
     def test_simulate_payment_dispatches_to_evm_erc20_sender(self):

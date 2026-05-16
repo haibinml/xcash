@@ -25,6 +25,7 @@ from evm.scanner.native import EvmNativeDirectScanner
 from evm.scanner.native import EvmNativeScanResult
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.watchers import load_watch_set
+from evm.tasks import scan_active_evm_chains
 from evm.tasks import scan_active_evm_erc20_chains
 from evm.tasks import scan_active_evm_native_chains
 from evm.tasks import scan_evm_chain
@@ -506,34 +507,32 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(cursor.last_safe_block, 94)
         get_transfer_logs_mock.assert_not_called()
 
-    @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
-    @patch("evm.tasks.EvmChainScannerService.scan_chain")
-    def test_scan_evm_chain_task_dispatches_chain_scanner(
+    @patch("evm.tasks.scan_evm_native_chain")
+    @patch("evm.tasks.scan_evm_erc20_chain")
+    def test_scan_evm_chain_task_delegates_to_erc20_when_native_scanner_closed(
         self,
-        scan_chain_mock,
-        reconcile_chain_mock,
+        scan_erc20_mock,
+        scan_native_mock,
     ):
-        # Celery 入口应只负责链级调度，不再混入具体日志解析逻辑。
+        # 旧兼容入口不能绕过 native scanner 总开关。
         scan_evm_chain(self.chain.pk)
 
-        scan_chain_mock.assert_called_once()
-        reconcile_chain_mock.assert_called_once()
+        scan_erc20_mock.assert_called_once_with(self.chain.pk)
+        scan_native_mock.assert_not_called()
 
-    @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
-    @patch(
-        "evm.tasks.EvmChainScannerService.scan_chain",
-        side_effect=EvmScannerRpcError("rpc timeout"),
-    )
-    def test_scan_evm_chain_runs_coordinator_when_scanner_rpc_fails(
+    @patch("evm.tasks.scan_evm_native_chain")
+    @patch("evm.tasks.scan_evm_erc20_chain")
+    def test_scan_evm_chain_task_delegates_to_native_when_enabled(
         self,
-        scan_chain_mock,
-        reconcile_chain_mock,
+        scan_erc20_mock,
+        scan_native_mock,
     ):
-        # 主扫描 RPC 异常不能阻断内部 PENDING_CHAIN 任务的超时收口。
+        PlatformSettings.objects.create(open_native_scanner=True)
+
         scan_evm_chain(self.chain.pk)
 
-        scan_chain_mock.assert_called_once()
-        reconcile_chain_mock.assert_called_once()
+        scan_erc20_mock.assert_called_once_with(self.chain.pk)
+        scan_native_mock.assert_called_once_with(self.chain.pk)
 
     @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
     @patch("evm.tasks.EvmChainScannerService.scan_erc20")
@@ -617,6 +616,35 @@ class EvmErc20ScannerTests(TestCase):
         scan_active_evm_erc20_chains()
 
         delay_mock.assert_called_once_with(self.chain.pk)
+
+    @patch("evm.tasks.scan_evm_native_chain.delay")
+    @patch("evm.tasks.scan_evm_erc20_chain.delay")
+    def test_scan_active_evm_chains_compat_dispatches_split_tasks_when_enabled(
+        self,
+        erc20_delay_mock,
+        native_delay_mock,
+    ):
+        PlatformSettings.objects.create(open_native_scanner=True)
+        self._create_scan_dispatch_ignored_chains()
+
+        scan_active_evm_chains()
+
+        erc20_delay_mock.assert_called_once_with(self.chain.pk)
+        native_delay_mock.assert_called_once_with(self.chain.pk)
+
+    @patch("evm.tasks.scan_evm_native_chain.delay")
+    @patch("evm.tasks.scan_evm_erc20_chain.delay")
+    def test_scan_active_evm_chains_compat_skips_native_when_closed(
+        self,
+        erc20_delay_mock,
+        native_delay_mock,
+    ):
+        self._create_scan_dispatch_ignored_chains()
+
+        scan_active_evm_chains()
+
+        erc20_delay_mock.assert_called_once_with(self.chain.pk)
+        native_delay_mock.assert_not_called()
 
     @patch("evm.tasks.scan_evm_native_chain.delay")
     def test_scan_active_evm_native_chains_skips_when_global_native_scanner_closed(

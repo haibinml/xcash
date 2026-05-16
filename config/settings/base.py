@@ -417,8 +417,6 @@ CELERY_WORKER_HIJACK_ROOT_LOGGER = False  # 减少日志开销
 
 # 队列隔离：扫描任务路由到独立队列，防止被 confirm/broadcast/process 高频任务饥饿。
 CELERY_TASK_ROUTES = {
-    "evm.tasks.scan_evm_chain": {"queue": "scan"},
-    "evm.tasks.scan_active_evm_chains": {"queue": "scan"},
     "evm.tasks.scan_evm_erc20_chain": {"queue": "scan"},
     "evm.tasks.scan_active_evm_erc20_chains": {"queue": "scan"},
     "evm.tasks.scan_evm_native_chain": {"queue": "scan"},

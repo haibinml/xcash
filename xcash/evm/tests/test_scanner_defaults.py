@@ -1,4 +1,5 @@
 from django.test import TestCase
+from django.conf import settings
 
 from config.celery import EVM_ERC20_SCAN_SCHEDULE_SECONDS
 from config.celery import EVM_NATIVE_SCAN_SCHEDULE_SECONDS
@@ -47,3 +48,8 @@ class EvmScannerDefaultsTests(TestCase):
             app.conf.beat_schedule,
         )
         self.assertNotIn("scan_active_evm_chains", app.conf.beat_schedule)
+        self.assertNotIn("evm.tasks.scan_evm_chain", settings.CELERY_TASK_ROUTES)
+        self.assertNotIn(
+            "evm.tasks.scan_active_evm_chains",
+            settings.CELERY_TASK_ROUTES,
+        )

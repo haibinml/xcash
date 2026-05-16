@@ -35,7 +35,7 @@ def simulate_payment(
     if chain_obj.type != ChainType.EVM:
         raise ValueError(f"不支持的链类型: {chain_obj.type}")
 
-    if crypto_obj.is_native or crypto_obj == chain_obj.native_coin:
+    if crypto_obj == chain_obj.native_coin:
         return send_native(
             to=to_address,
             amount=amount,
