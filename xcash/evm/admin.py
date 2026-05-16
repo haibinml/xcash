@@ -15,6 +15,7 @@ class EvmBroadcastTaskAdmin(ReadOnlyModelAdmin):
         "display_address",
         "display_chain",
         "transfer_type",
+        "tx_kind",
         "display_crypto",
         "display_recipient",
         "display_amount",
@@ -26,6 +27,7 @@ class EvmBroadcastTaskAdmin(ReadOnlyModelAdmin):
     # BroadcastTask 已吸收 EVM 业务元数据，后台直接查询主任务对象即可。
     # 状态展示优先读取统一父任务，后台查询一并预加载，避免 N+1。
     list_select_related = ("base_task", "base_task__crypto", "address", "chain")
+    list_filter = ("tx_kind",)
     search_fields = ("base_task__tx_hash", "address__address", "base_task__recipient")
 
     @admin.display(ordering="last_attempt_at", description="执行时间")
