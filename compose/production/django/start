@@ -6,13 +6,8 @@ set -o nounset
 
 eval "$(python /app/config/performance.py shell-env web)"
 
-# web 容器启动前先自动应用主库迁移，避免新环境还要手工分步执行 migrate。
-if [[ "${COLLECTSTATIC_ON_STARTUP:-true}" == "true" ]]; then
-  python manage.py collectstatic --noinput
-fi
-
-python manage.py migrate --noinput
-python manage.py ensure_default_superuser
+# 生产迁移、collectstatic 与默认管理员补齐由 scripts/upgrade.sh 统一执行。
+# 容器启动阶段不能隐式修改数据库，避免绕过真实数据演练流程。
 
 /app/compose/production/django/check-signer-preflight
 

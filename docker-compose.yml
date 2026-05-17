@@ -44,6 +44,24 @@ services:
     volumes:
       - signer_db_data:/var/lib/postgresql
 
+  migration-rehearsal-db:
+    image: postgres:18.3-trixie
+    container_name: xcash_migration_rehearsal_db
+    profiles: ["migration-rehearsal"]
+    environment:
+      POSTGRES_DB: xcash
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  migration-rehearsal-signer-db:
+    image: postgres:18.3-trixie
+    container_name: xcash_migration_rehearsal_signer_db
+    profiles: ["migration-rehearsal"]
+    environment:
+      POSTGRES_DB: xcash_signer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${SIGNER_POSTGRES_PASSWORD}
+
   signer:
     build:
       context: .

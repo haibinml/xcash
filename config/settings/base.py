@@ -115,7 +115,7 @@ AUTO_BOOTSTRAP_REFERENCE_DATA = True
 # DATABASES
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#databases
-if "DATABASE_URL" in env:
+if "DATABASE_URL" in env and not env.bool("XCASH_IGNORE_DATABASE_URL", default=False):
     default_db = env.db("DATABASE_URL")
 else:
     default_db = {

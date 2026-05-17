@@ -40,6 +40,22 @@ repos:
       - id: ruff
         args: [ --fix, --exit-non-zero-on-fix ]
 
+  - repo: local
+    hooks:
+      - id: django-makemigrations-check
+        name: Django makemigrations check
+        entry: ./scripts/dev-manage.sh makemigrations --check --dry-run
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: django-migration-linter
+        name: Django migration linter
+        entry: ./scripts/dev-lint-migrations.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
 # sets up .pre-commit-ci.yaml to ensure pre-commit dependencies stay up to date
 ci:
   autoupdate_schedule: weekly

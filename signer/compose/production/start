@@ -8,8 +8,7 @@ cd /app/signer
 
 eval "$(python /app/performance.py shell-env signer)"
 
-# signer 作为独立 Django 项目，容器启动前自动应用 signer 库迁移。
-python manage.py migrate --noinput
+# signer 数据库迁移由 scripts/upgrade.sh 统一执行，避免容器启动时绕过迁移演练入口。
 
 exec gunicorn config.wsgi:application \
   --bind 0.0.0.0:8000 \

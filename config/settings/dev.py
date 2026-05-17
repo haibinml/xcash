@@ -26,7 +26,7 @@ TRUSTED_PROXY_IPS = ["127.0.0.1", "::1"]
 # django-debug-toolbar
 # ------------------------------------------------------------------------------
 # https://django-debug-toolbar.readthedocs.io/en/latest/installation.html#prerequisites
-INSTALLED_APPS += ["debug_toolbar", "stress"]
+INSTALLED_APPS += ["debug_toolbar", "django_migration_linter", "stress"]
 # https://django-debug-toolbar.readthedocs.io/en/latest/installation.html#middleware
 MIDDLEWARE += ["debug_toolbar.middleware.DebugToolbarMiddleware"]
 # https://django-debug-toolbar.readthedocs.io/en/latest/configuration.html#debug-toolbar-config
@@ -47,7 +47,7 @@ try:
     _hostname, _, _ips = socket.gethostbyname_ex(socket.gethostname())
 except (socket.herror, socket.gaierror):
     _ips = []
-INTERNAL_IPS += [".".join(ip.split(".")[:-1] + ["1"]) for ip in _ips]
+INTERNAL_IPS += [".".join([*ip.split(".")[:-1], "1"]) for ip in _ips]
 
 # Celery
 # ------------------------------------------------------------------------------
@@ -71,7 +71,9 @@ SIGNER_BASE_URL = "http://127.0.0.1:8010"
 # Stress test 配置（仅开发环境）
 STRESS_EVM_RPC_URL = "http://localhost:8545"
 # Anvil 默认助记词第一个账户私钥
-STRESS_EVM_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+STRESS_EVM_PRIVATE_KEY = (
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+)
 STRESS_BTC_RPC_URL = "http://xcash:xcash@localhost:18443"
 STRESS_WEBHOOK_BASE_URL = "http://localhost:8000"
 # 压力测试允许的链代码；EVM 走 Ethereum Local，BTC 走 Bitcoin Local，非本地链无法支付

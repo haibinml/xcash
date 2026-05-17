@@ -45,8 +45,8 @@ DATABASES = {
         "NAME": "xcash_signer",
         "USER": "postgres",
         "PASSWORD": env.str("SIGNER_POSTGRES_PASSWORD", default="postgres"),
-        "HOST": "signer-db",
-        "PORT": 5432,
+        "HOST": env.str("SIGNER_POSTGRES_HOST", default="signer-db"),
+        "PORT": env.int("SIGNER_POSTGRES_PORT", default=5432),
     }
 }
 DATABASES["default"]["ATOMIC_REQUESTS"] = True
