@@ -5,7 +5,7 @@ from core.default_data import ensure_local_chains
 
 
 class Command(BaseCommand):
-    help = "初始化本地联调链（anvil / bitcoin regtest）"
+    help = "初始化本地联调链（anvil）"
 
     def handle(self, *args, **options):
         self.stdout.write("开始初始化本地联调环境...")

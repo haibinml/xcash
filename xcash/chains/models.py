@@ -38,7 +38,6 @@ logger = structlog.get_logger()
 # Create your models here.
 class ChainType(models.TextChoices):
     EVM = "evm", "EVM"
-    BITCOIN = "btc", "Bitcoin"
     TRON = "tron", "Tron"
 
 

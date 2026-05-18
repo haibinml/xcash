@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from urllib.parse import quote
-
 import environ
 from django.conf import settings
 from django.db import transaction
@@ -68,14 +66,6 @@ PRODUCTION_MAINNET_CHAINS = (
         "native_symbol": "ETH",
         "chain_id": 8453,
         "is_poa": False,
-    },
-    {
-        "code": "bitcoin-mainnet",
-        "name": "Bitcoin",
-        "type": ChainType.BITCOIN,
-        "native_symbol": "BTC",
-        "chain_id": None,
-        "is_poa": None,
     },
     {
         "code": "tron-mainnet",
@@ -177,12 +167,6 @@ def ensure_base_currencies(*, using: str = "default", stdout=None) -> None:
         symbol="ETH",
         coingecko_id="ethereum",
         decimals=18,
-    )
-    crypto_manager.get_or_create(
-        name="Bitcoin",
-        symbol="BTC",
-        coingecko_id="bitcoin",
-        decimals=8,
     )
     crypto_manager.get_or_create(
         name="TRON",
@@ -430,32 +414,11 @@ def ensure_public_chains(*, using: str = "default", stdout=None) -> None:
         stdout.write("✅ 生产主网初始化完成")
 
 
-def _build_local_bitcoin_wallet_rpc() -> str:
-    """构造钱包级 Bitcoin RPC 地址，保证 watch-only / listunspent 使用同一钱包上下文。"""
-    host = "127.0.0.1"
-    port = 18443
-    user = quote("xcash", safe="")
-    password = quote("xcash", safe="")
-    wallet_name = quote("xcash", safe="")
-    return f"http://{user}:{password}@{host}:{port}/wallet/{wallet_name}"
-
-
-def build_local_bitcoin_root_rpc() -> str:
-    """构造无钱包路径的 Bitcoin 根 RPC 地址，供创建/加载钱包使用。"""
-    host = "127.0.0.1"
-    port = 18443
-    user = quote("xcash", safe="")
-    password = quote("xcash", safe="")
-    return f"http://{user}:{password}@{host}:{port}"
-
-
 def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
-    """初始化本地联调链配置，供本地 Ethereum / Bitcoin 端到端验证使用。"""
+    """初始化本地联调链配置，供本地 Ethereum 端到端验证使用。"""
     chain_manager = Chain.objects.using(using)
     eth = Crypto.objects.using(using).get(symbol="ETH")
-    btc = Crypto.objects.using(using).get(symbol="BTC")
     local_evm_chain_code = "ethereum-local"
-    local_btc_chain_code = "bitcoin-local"
     local_evm_rpc = "http://127.0.0.1:8545"
     local_usdt_address = ensure_local_evm_usdt_contract_address(
         using=using,
@@ -478,21 +441,7 @@ def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
                 "active": True,
             },
         )
-        chain_manager.update_or_create(
-            code=local_btc_chain_code,
-            defaults={
-                "name": "Bitcoin Local",
-                "type": ChainType.BITCOIN,
-                "native_coin": btc,
-                "rpc": _build_local_bitcoin_wallet_rpc(),
-                "confirm_block_count": 1,
-                "active": True,
-            },
-        )
-        for chain_code, crypto_symbol in (
-            (local_evm_chain_code, "ETH"),
-            (local_btc_chain_code, "BTC"),
-        ):
+        for chain_code, crypto_symbol in ((local_evm_chain_code, "ETH"),):
             ensure_chain_native_mapping(
                 using=using,
                 chain_code=chain_code,
@@ -519,10 +468,10 @@ def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
 def resolve_chain_bootstrap_profile() -> str:
     """解析默认链初始化方案。
 
-    - 开发/联调环境默认走本地 anvil + regtest
+    - 开发/联调环境默认走本地 anvil
     - 其他环境默认走生产主网骨架配置
     """
-    if settings.DEBUG or env.str("BITCOIN_NETWORK", default="mainnet") == "regtest":
+    if settings.DEBUG:
         return "local"
     return "public"
 

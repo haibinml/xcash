@@ -185,8 +185,6 @@ LOCAL_APPS = [
     "risk",
     # EVM 链相关模型（EvmOnchainTask）
     "evm",
-    # Bitcoin 链相关模型（BitcoinOnchainTask）
-    "bitcoin",
     # Tron 监听、扫描游标与 provider 接入
     "tron",
     "internal_api",

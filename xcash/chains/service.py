@@ -273,7 +273,7 @@ class TransferService:
         """统一入口：将"外部服务商 / 内部扫描"观察到的链上转账写入 OnchainTransfer。
 
         OnchainTransfer 创建不能分散在各链 provider/scanner 内部各写各的。
-        后续无论是 EVM 自扫、Bitcoin 自扫还是其他链监听，都应通过这个入口落库，
+        后续无论是 EVM 自扫还是其他链监听，都应通过这个入口落库，
         以统一幂等语义、唯一键冲突判定和后续扩展能力。
         """
         create_kwargs = TransferService._build_observed_transfer_kwargs(observed)
