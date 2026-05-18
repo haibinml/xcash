@@ -4,6 +4,7 @@ from django.test import SimpleTestCase
 from tron.codec import TronAddressCodec
 
 from common.fields import AddressField
+from common.fields import HashField
 
 
 class TronAddressValidationTests(SimpleTestCase):
@@ -32,3 +33,17 @@ class TronAddressValidationTests(SimpleTestCase):
         )
         with self.assertRaisesRegex(ValueError, "not a valid address"):
             field.pre_save(invalid_instance, add=True)
+
+
+class HashFieldValidationTests(SimpleTestCase):
+    def test_hash_field_accepts_supported_chain_hash_formats(self):
+        field = HashField()
+        field.set_attributes_from_name("hash")
+
+        for value in (
+            "0x" + "a" * 64,
+            "b" * 64,
+        ):
+            with self.subTest(value=value):
+                instance = SimpleNamespace(hash=value)
+                self.assertEqual(field.pre_save(instance, add=True), value)

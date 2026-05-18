@@ -16,7 +16,7 @@ class HashField(models.CharField):
         kwargs.setdefault("unique", True)
         kwargs.setdefault("db_index", True)
         kwargs.setdefault("verbose_name", _("哈希"))
-        # 覆盖当前支持链哈希最大长度：EVM=66。
+        # 覆盖当前支持链哈希最大长度：EVM=66，Tron=64。
         # 统一设为 100，留有余量，不依赖调用方传入
         kwargs.setdefault("max_length", 100)
 
@@ -26,7 +26,7 @@ class HashField(models.CharField):
         value = getattr(model_instance, self.attname)
 
         # 当前系统仅接受真实链上交易哈希，转账明细唯一性统一由业务字段单独表达。
-        if value is not None and not is_valid_evm_256bit_hex_string(value):
+        if value is not None and not is_valid_blockchain_hash(value):
             msg = f"{value} is not a valid blockchain hash"
             raise ValueError(msg)
 
@@ -87,8 +87,28 @@ def is_valid_evm_256bit_hex_string(s: str) -> bool:
     if not s.startswith("0x"):
         return False
 
+    return is_hex_string(s[2:])
+
+
+def is_valid_tron_256bit_hex_string(s: str) -> bool:
+    if len(s) != 64:
+        return False
+
+    return is_hex_string(s)
+
+
+def is_valid_blockchain_hash(s: str) -> bool:
+    return any(
+        (
+            is_valid_evm_256bit_hex_string(s),
+            is_valid_tron_256bit_hex_string(s),
+        )
+    )
+
+
+def is_hex_string(s: str) -> bool:
     hex_digits = set("0123456789abcdefABCDEF")
-    return all(c in hex_digits for c in s[2:])
+    return all(c in hex_digits for c in s)
 
 
 class SysNoField(ShortUUIDField):
