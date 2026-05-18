@@ -276,7 +276,7 @@ SIDEBAR_UNFOLD = {
                 "items": [
                     {
                         "title": _("加密货币"),
-                        "icon": "currency_bitcoin",
+                        "icon": "currency_exchange",
                         "link": reverse_lazy("admin:currencies_crypto_changelist"),
                     },
                     {

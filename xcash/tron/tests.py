@@ -1425,22 +1425,6 @@ class TronTaskTests(TestCase):
             active=True,
         )
         Chain.objects.create(
-            code="tron-no-key",
-            name="Tron No Key",
-            type=ChainType.TRON,
-            rpc="https://api.trongrid.io",
-            native_coin=native,
-            active=True,
-        )
-        Chain.objects.create(
-            code="tron-inactive",
-            name="Tron Inactive",
-            type=ChainType.TRON,
-            rpc="https://api.trongrid.io",
-            native_coin=native,
-            active=False,
-        )
-        Chain.objects.create(
             code="eth-active",
             name="Ethereum Active",
             type=ChainType.EVM,
@@ -1453,3 +1437,15 @@ class TronTaskTests(TestCase):
         scan_active_tron_chains.run()
 
         scan_delay_mock.assert_called_once_with(tron_chain.pk)
+
+        scan_delay_mock.reset_mock()
+        Chain.objects.filter(pk=tron_chain.pk).update(tron_api_key="")
+        scan_active_tron_chains.run()
+        scan_delay_mock.assert_not_called()
+
+        Chain.objects.filter(pk=tron_chain.pk).update(
+            active=False,
+            tron_api_key="tron-key",
+        )
+        scan_active_tron_chains.run()
+        scan_delay_mock.assert_not_called()

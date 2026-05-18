@@ -408,7 +408,6 @@ class RiskChainMappingTests(SimpleTestCase):
             (137, "USDC.E"): "USDC.e-Polygon",
             (324, "ETH"): "ETH-zkSync",
             (324, "ZK"): "ZK-zkSync",
-            (4200, "BTC"): "BTC-Merlin",
             (4689, "IOTX"): "IOTX",
             (8453, "ETH"): "ETH-Base",
             (8453, "USDC"): "USDC-Base",

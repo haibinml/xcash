@@ -1,7 +1,7 @@
 """MistTrack OpenAPI / QuickNode add-on 的 chain & coin 取值映射。
 
 仅整理静态常量映射，不依赖项目其他模型，便于按官方文档维护：
-- QuickNode add-on 当前仅支持 Bitcoin、Tron、Ethereum、BNB Smart Chain、Arbitrum。
+- QuickNode add-on 当前项目只接入 Tron 与 EVM 主网族。
 - MistTrack OpenAPI V3 的 coin 取值见
   https://docs.misttrack.io/openapi/overview#multi-chain-support
 """
@@ -124,7 +124,6 @@ OPENAPI_EVM_COIN: dict[int, dict[str, str]] = {
         "USDT": "USDT-zkSync",
         "USDC": "USDC-zkSync",
     },
-    4200: {"BTC": "BTC-Merlin"},
     4689: {"IOTX": "IOTX"},
     8453: {
         "ETH": "ETH-Base",

@@ -18,7 +18,6 @@ const SPECIAL_ICONS = {
  * 代币符号到图标文件名的映射
  */
 const CRYPTO_ICON_MAP = {
-  'BTC': 'btc',
   'ETH': 'eth',
   'USDT': 'usdt',
   'USDC': 'usdc',
@@ -99,7 +98,7 @@ const CHAIN_ICON_MAP = {
 
 /**
  * 获取加密货币图标 URL
- * @param {string} crypto - 代币符号（如 BTC, ETH）
+ * @param {string} crypto - 代币符号（如 ETH, USDT）
  * @returns {string|null} - 图标 URL 或 null
  */
 export function getCryptoIconUrl(crypto) {

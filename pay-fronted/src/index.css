@@ -89,7 +89,7 @@
   /* Solid dark for popovers/dropdowns */
   --popover: oklch(0.13 0.025 254);
   --popover-foreground: oklch(0.91 0.01 240);
-  /* Bitcoin orange primary */
+  /* Amber primary */
   --primary: oklch(0.72 0.22 50);
   --primary-foreground: oklch(0.10 0 0);
   /* Dark navy surfaces */
