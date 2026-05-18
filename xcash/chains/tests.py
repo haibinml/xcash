@@ -94,23 +94,6 @@ class TransferMatchingTests(TestCase):
 
         self.assertTrue(addresses_equal(checksum.lower(), checksum, chain=chain))
 
-    def test_addresses_equal_uses_exact_string_for_non_evm_chains(self):
-        native = Crypto.objects.create(
-            name="Transfer Match Bitcoin",
-            symbol="TMB",
-            coingecko_id="transfer-match-bitcoin",
-        )
-        chain = Chain.objects.create(
-            name="Transfer Match BTC",
-            code="transfer-match-btc",
-            type=ChainType.BITCOIN,
-            native_coin=native,
-            active=True,
-        )
-
-        self.assertTrue(addresses_equal("bc1ABC", "bc1ABC", chain=chain))
-        self.assertFalse(addresses_equal("bc1ABC", "bc1abc", chain=chain))
-
     def test_transfer_matches_uses_raw_value_and_chain_specific_address_rules(self):
         native = Crypto.objects.create(
             name="Transfer Match Coin",

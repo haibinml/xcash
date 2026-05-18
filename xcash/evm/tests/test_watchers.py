@@ -71,7 +71,7 @@ class EvmWatchSetCacheTests(TestCase):
         initial_watch_set = load_watch_set(chain=self.chain, refresh=True)
         self.assertIn(self.address.address, initial_watch_set.watched_addresses)
 
-        Address.objects.filter(pk=self.address.pk).update(chain_type=ChainType.BITCOIN)
+        Address.objects.filter(pk=self.address.pk).update(chain_type=ChainType.TRON)
 
         cached_watch_set = load_watch_set(chain=self.chain)
         self.assertIn(self.address.address, cached_watch_set.watched_addresses)

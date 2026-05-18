@@ -7,7 +7,6 @@ from decimal import Decimal
 from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -18,8 +17,6 @@ from django.test import override_settings
 from django.utils import timezone
 from web3 import Web3
 
-from bitcoin.rpc import BitcoinRpcClient
-from bitcoin.rpc import BitcoinRpcError
 from chains.adapters import AdapterFactory
 from chains.models import AddressUsage
 from chains.models import BroadcastTask
@@ -60,8 +57,6 @@ from evm.models import EvmScanCursorType
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.service import EvmChainScannerService
 from evm.scanner.watchers import clear_evm_watch_set_cache
-from invoices.models import Invoice
-from invoices.models import InvoiceStatus
 from projects.models import Project
 from projects.models import RecipientAddress
 from projects.models import RecipientAddressUsage
@@ -139,29 +134,22 @@ class LocalChainBootstrapCommandTests(TestCase):
     @patch.dict(
         environ,
         {
-            "BITCOIN_NETWORK": "regtest",
             "LOCAL_EVM_CHAIN_CODE": "ethereum-local",
             "LOCAL_EVM_CHAIN_NAME": "Ethereum Local",
             "LOCAL_EVM_RPC": "http://127.0.0.1:8545",
             "LOCAL_EVM_CHAIN_ID": "31337",
-            "LOCAL_BTC_CHAIN_CODE": "bitcoin-local",
-            "LOCAL_BTC_CHAIN_NAME": "Bitcoin Local",
-            "LOCAL_BTC_RPC": "http://xcash:xcash@127.0.0.1:18443/wallet/xcash",
         },
         clear=False,
     )
     def test_init_local_chains_creates_local_chain_records(self):
-        # 本地链初始化必须独立于生产 init，直接生成本地 Ethereum / Bitcoin 配置与原生币映射。
+        # 本地链初始化必须独立于生产 init，直接生成本地 Ethereum 配置与原生币映射。
         call_command("init_local_chains")
 
         evm_chain = Chain.objects.get(code="ethereum-local")
-        btc_chain = Chain.objects.get(code="bitcoin-local")
 
         self.assertEqual(evm_chain.type, ChainType.EVM)
         self.assertEqual(evm_chain.chain_id, 31337)
         self.assertEqual(evm_chain.confirm_block_count, 1)
-        self.assertEqual(btc_chain.type, ChainType.BITCOIN)
-        self.assertEqual(btc_chain.confirm_block_count, 1)
         self.assertTrue(
             ChainToken.objects.filter(
                 chain=evm_chain,
@@ -169,25 +157,14 @@ class LocalChainBootstrapCommandTests(TestCase):
                 address="",
             ).exists()
         )
-        self.assertTrue(
-            ChainToken.objects.filter(
-                chain=btc_chain,
-                crypto__symbol="BTC",
-                address="",
-            ).exists()
-        )
 
     @patch.dict(
         environ,
         {
-            "BITCOIN_NETWORK": "regtest",
             "LOCAL_EVM_CHAIN_CODE": "ethereum-local",
             "LOCAL_EVM_CHAIN_NAME": "Ethereum Local",
             "LOCAL_EVM_RPC": "http://127.0.0.1:8545",
             "LOCAL_EVM_CHAIN_ID": "31337",
-            "LOCAL_BTC_CHAIN_CODE": "bitcoin-local",
-            "LOCAL_BTC_CHAIN_NAME": "Bitcoin Local",
-            "LOCAL_BTC_RPC": "http://xcash:xcash@127.0.0.1:18443/wallet/xcash",
             "LOCAL_EVM_USDT_ADDRESS": "",
         },
         clear=False,
@@ -210,14 +187,10 @@ class LocalChainBootstrapCommandTests(TestCase):
     @patch.dict(
         environ,
         {
-            "BITCOIN_NETWORK": "regtest",
             "LOCAL_EVM_CHAIN_CODE": "ethereum-local",
             "LOCAL_EVM_CHAIN_NAME": "Ethereum Local",
             "LOCAL_EVM_RPC": "http://127.0.0.1:8545",
             "LOCAL_EVM_CHAIN_ID": "31337",
-            "LOCAL_BTC_CHAIN_CODE": "bitcoin-local",
-            "LOCAL_BTC_CHAIN_NAME": "Bitcoin Local",
-            "LOCAL_BTC_RPC": "http://xcash:xcash@127.0.0.1:18443/wallet/xcash",
             "LOCAL_EVM_USDT_ADDRESS": "",
         },
         clear=False,
@@ -255,14 +228,10 @@ class LocalChainBootstrapCommandTests(TestCase):
     @patch.dict(
         environ,
         {
-            "BITCOIN_NETWORK": "regtest",
             "LOCAL_EVM_CHAIN_CODE": "ethereum-local",
             "LOCAL_EVM_CHAIN_NAME": "Ethereum Local",
             "LOCAL_EVM_RPC": "http://127.0.0.1:8545",
             "LOCAL_EVM_CHAIN_ID": "31337",
-            "LOCAL_BTC_CHAIN_CODE": "bitcoin-local",
-            "LOCAL_BTC_CHAIN_NAME": "Bitcoin Local",
-            "LOCAL_BTC_RPC": "http://xcash:xcash@127.0.0.1:18443/wallet/xcash",
         },
         clear=False,
     )
@@ -272,118 +241,16 @@ class LocalChainBootstrapCommandTests(TestCase):
         ensure_local_usdt_contract_address,
     ):
         ensure_local_usdt_contract_address.side_effect = RuntimeError("deploy failed")
-        Chain.objects.filter(code__in=("ethereum-local", "bitcoin-local")).delete()
+        Chain.objects.filter(code="ethereum-local").delete()
 
         ensure_base_currencies()
         with self.assertRaisesMessage(RuntimeError, "deploy failed"):
             ensure_local_chains()
 
         self.assertFalse(Chain.objects.filter(code="ethereum-local").exists())
-        self.assertFalse(Chain.objects.filter(code="bitcoin-local").exists())
         self.assertFalse(
             ChainToken.objects.filter(chain__code="ethereum-local").exists()
         )
-        self.assertFalse(
-            ChainToken.objects.filter(chain__code="bitcoin-local").exists()
-        )
-
-    @patch.dict(
-        environ,
-        {
-            "BITCOIN_NETWORK": "regtest",
-            "LOCAL_BTC_RPC_USER": "xcash",
-            "LOCAL_BTC_RPC_PASSWORD": "xcash",
-            "LOCAL_BTC_RPC_HOST": "127.0.0.1",
-            "LOCAL_BTC_RPC_PORT": "18443",
-        },
-        clear=False,
-    )
-    @patch("core.management.commands.prepare_local_bitcoin.BitcoinRpcClient")
-    def test_prepare_local_bitcoin_creates_wallet_mines_blocks_and_imports_addresses(
-        self,
-        bitcoin_client_cls,
-    ):
-        # 本地 regtest 准备命令要能一次性完成钱包准备、预挖区块和 watch-only 导入。
-        wallet = Wallet.generate()
-        addr = wallet.get_address(
-            chain_type=ChainType.BITCOIN,
-            usage=AddressUsage.Deposit,
-            address_index=0,
-        )
-        project = Project.objects.create(
-            name="Demo",
-            wallet=Wallet.objects.create(),
-        )
-        RecipientAddress.objects.create(
-            name="BTC 收款地址",
-            project=project,
-            chain_type=ChainType.BITCOIN,
-            address="mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn",
-            usage=RecipientAddressUsage.INVOICE,
-        )
-
-        root_client = Mock()
-        wallet_client = Mock()
-        miner_client = Mock()
-        root_client.list_wallets.return_value = []
-        root_client.load_wallet.side_effect = BitcoinRpcError("Wallet file not found")
-        # 首次运行场景：bitcoind 链上还是空的，命令应一次性补挖到目标块高。
-        miner_client.get_block_count.return_value = 0
-        miner_client.get_new_address.return_value = (
-            "mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn"
-        )
-        # prepare_local_bitcoin 创建 3 个 client：root, wallet(watch-only), miner
-        bitcoin_client_cls.side_effect = [root_client, wallet_client, miner_client]
-
-        call_command("prepare_local_bitcoin", "--wallet-name=xcash", "--mine-blocks=2")
-
-        # 主钱包（watch-only）和矿工钱包分别创建
-        root_client.create_wallet.assert_any_call("xcash", disable_private_keys=True)
-        root_client.create_wallet.assert_any_call("xcash-miner", disable_private_keys=False)
-        miner_client.generate_to_address.assert_called_once_with(
-            2,
-            "mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn",
-        )
-        wallet_client.import_address.assert_any_call(
-            addr.address,
-            label="xcash-watch-only",
-            rescan=False,
-        )
-        wallet_client.import_address.assert_any_call(
-            "mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn",
-            label="xcash-watch-only",
-            rescan=False,
-        )
-
-    @patch.dict(
-        environ,
-        {
-            "BITCOIN_NETWORK": "regtest",
-            "LOCAL_BTC_RPC_USER": "xcash",
-            "LOCAL_BTC_RPC_PASSWORD": "xcash",
-            "LOCAL_BTC_RPC_HOST": "127.0.0.1",
-            "LOCAL_BTC_RPC_PORT": "18443",
-        },
-        clear=False,
-    )
-    @patch("core.management.commands.prepare_local_bitcoin.BitcoinRpcClient")
-    def test_prepare_local_bitcoin_skips_mining_when_block_height_already_satisfied(
-        self,
-        bitcoin_client_cls,
-    ):
-        # mine-blocks 是"目标最低块高"语义：链上已经够高时必须跳过，避免重复运行又挖一遍。
-        root_client = Mock()
-        wallet_client = Mock()
-        miner_client = Mock()
-        root_client.list_wallets.return_value = ["xcash", "xcash-miner"]
-        wallet_client.get_wallet_info.return_value = {"private_keys_enabled": False}
-        miner_client.get_block_count.return_value = 150
-        bitcoin_client_cls.side_effect = [root_client, wallet_client, miner_client]
-
-        call_command("prepare_local_bitcoin", "--wallet-name=xcash", "--mine-blocks=101")
-
-        miner_client.generate_to_address.assert_not_called()
-        miner_client.get_new_address.assert_not_called()
 
 
 class InitEnvScriptTests(TestCase):
@@ -471,31 +338,12 @@ class InitEnvScriptTests(TestCase):
 
 class LocalChainIntegrationMixin:
     EVM_RPC = "http://127.0.0.1:8545"
-    BTC_RPC = "http://xcash:xcash@127.0.0.1:18443/wallet/xcash"
-    BTC_MINER_RPC = "http://xcash:xcash@127.0.0.1:18443/wallet/xcash-miner"
 
     def _require_anvil(self) -> Web3:
         w3 = Web3(Web3.HTTPProvider(self.EVM_RPC, request_kwargs={"timeout": 5}))
         if not w3.is_connected():
             self.skipTest("本地 anvil 未启动，跳过真实 EVM 联调测试")
         return w3
-
-    def _require_bitcoin(self) -> BitcoinRpcClient:
-        client = BitcoinRpcClient(self.BTC_RPC)
-        try:
-            client.get_block_count()
-        except Exception as exc:  # noqa: BLE001
-            self.skipTest(f"本地 bitcoind regtest 不可用，跳过真实 BTC 联调测试: {exc}")
-        return client
-
-    def _require_bitcoin_miner(self) -> BitcoinRpcClient:
-        """返回带私钥的矿工钱包客户端，用于 regtest 打款和挖矿。"""
-        client = BitcoinRpcClient(self.BTC_MINER_RPC)
-        try:
-            client.get_block_count()
-        except Exception as exc:  # noqa: BLE001
-            self.skipTest(f"本地 bitcoind regtest 矿工钱包不可用: {exc}")
-        return client
 
     def _deploy_test_erc20(self, w3: Web3, *, supply_raw: int):
         token_factory = w3.eth.contract(
@@ -1660,96 +1508,3 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
         self.assertEqual(broadcast_task.result, BroadcastTaskResult.UNKNOWN)
 
 
-class LocalBitcoinIntegrationTests(LocalChainIntegrationMixin, TestCase):
-    @patch.dict(environ, {"BITCOIN_NETWORK": "regtest"}, clear=False)
-    @patch("invoices.service.WebhookService.create_event")
-    @patch("chains.tasks.process_transfer.apply_async")
-    def test_local_bitcoin_invoice_payment_can_complete(
-        self,
-        _process_transfer_mock,
-        _create_event_mock,
-    ):
-        # 真实 regtest 联调：项目 BTC 收款地址收到付款后，
-        # 扫描、Invoice 命中、确认和 Completed 终局都必须打通。
-        self._require_bitcoin()
-        # prepare_local_bitcoin 负责创建 xcash / xcash-miner 钱包并预挖区块
-        call_command(
-            "prepare_local_bitcoin", "--wallet-name=xcash", "--mine-blocks=101"
-        )
-        wallet_client = self._require_bitcoin_miner()
-        crypto = Crypto.objects.create(
-            name="Bitcoin Invoice Local",
-            symbol="BTCI",
-            coingecko_id="bitcoin-invoice-local",
-            decimals=8,
-            prices={"USD": "65000"},
-        )
-        chain = Chain.objects.create(
-            name="Bitcoin Local Invoice",
-            code="bitcoin-local-invoice",
-            type=ChainType.BITCOIN,
-            native_coin=crypto,
-            rpc=self.BTC_RPC,
-            active=True,
-            confirm_block_count=1,
-        )
-        project = Project.objects.create(
-            name="Local BTC Invoice Project",
-            wallet=Wallet.generate(),
-        )
-        ensure_base_currencies()
-        recipient = RecipientAddress.objects.create(
-            name="BTC Invoice Recipient",
-            project=project,
-            chain_type=ChainType.BITCOIN,
-            address=wallet_client.get_new_address(
-                label="btc-invoice-recipient",
-                address_type="legacy",
-            ),
-            usage=RecipientAddressUsage.INVOICE,
-        )
-        invoice = Invoice.objects.create(
-            project=project,
-            out_no="local-btc-invoice-order",
-            title="Local BTC Invoice",
-            currency=crypto.symbol,
-            amount=Decimal("0.012"),
-            methods={crypto.symbol: [chain.code]},
-            expires_at=timezone.now() + timedelta(minutes=10),
-        )
-        invoice.select_method(crypto, chain)
-        # Bitcoin 区块时间戳是整秒精度，invoice.started_at 是 timezone.now() 的微秒精度。
-        # 实测中两者落在同一秒时，会出现 transfer.datetime < invoice.started_at（差几百毫秒），
-        # 导致 InvoicePaySlot 的 started_at__lte 过滤失败。生产里付款必然在 invoice 创建之后
-        # 才会进 mempool，不会触发；这里把 started_at 拨早 1 秒模拟同样的真实时序。
-        Invoice.objects.filter(pk=invoice.pk).update(
-            started_at=invoice.started_at - timedelta(seconds=1)
-        )
-        invoice.refresh_from_db()
-        self.assertEqual(invoice.pay_address, recipient.address)
-        self.assertEqual(invoice.pay_amount, Decimal("0.012"))
-        tx_hash = wallet_client.send_to_address(invoice.pay_address, invoice.pay_amount)
-        mining_address = wallet_client.get_new_address(
-            label="btc-invoice-miner",
-            address_type="legacy",
-        )
-        wallet_client.generate_to_address(1, mining_address)
-
-        from bitcoin.tasks import scan_bitcoin_receipts
-
-        scan_bitcoin_receipts.run()
-
-        transfer = OnchainTransfer.objects.get(
-            chain=chain,
-            hash=tx_hash,
-            to_address=invoice.pay_address,
-        )
-        transfer.process()
-        invoice.refresh_from_db()
-        self.assertEqual(transfer.type, OnchainActionType.Invoice)
-        self.assertEqual(invoice.status, InvoiceStatus.CONFIRMING)
-        self.assertEqual(invoice.transfer_id, transfer.pk)
-
-        transfer.confirm()
-        invoice.refresh_from_db()
-        self.assertEqual(invoice.status, InvoiceStatus.COMPLETED)

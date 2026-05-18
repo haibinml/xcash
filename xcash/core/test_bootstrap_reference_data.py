@@ -21,7 +21,6 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         super().tearDown()
 
     @override_settings(DEBUG=False, AUTO_BOOTSTRAP_REFERENCE_DATA=True)
-    @patch.dict(os.environ, {"BITCOIN_NETWORK": "mainnet"}, clear=False)
     def test_post_migrate_bootstraps_public_reference_data_by_default(self):
         bootstrap_reference_data_after_migrate(sender=None, using="default")
 
@@ -35,23 +34,19 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         eth_chain = Chain.objects.get(code="ethereum-mainnet")
         bsc_chain = Chain.objects.get(code="bsc-mainnet")
         polygon_chain = Chain.objects.get(code="polygon-mainnet")
-        btc_chain = Chain.objects.get(code="bitcoin-mainnet")
         tron_chain = Chain.objects.get(code="tron-mainnet")
 
         self.assertEqual(eth_chain.type, ChainType.EVM)
         self.assertEqual(bsc_chain.type, ChainType.EVM)
         self.assertEqual(polygon_chain.type, ChainType.EVM)
-        self.assertEqual(btc_chain.type, ChainType.BITCOIN)
         self.assertEqual(tron_chain.type, ChainType.TRON)
         self.assertFalse(eth_chain.active)
         self.assertFalse(bsc_chain.active)
         self.assertFalse(polygon_chain.active)
-        self.assertFalse(btc_chain.active)
         self.assertFalse(tron_chain.active)
         self.assertEqual(eth_chain.rpc, "")
         self.assertEqual(bsc_chain.rpc, "")
         self.assertEqual(polygon_chain.rpc, "")
-        self.assertEqual(btc_chain.rpc, "")
         self.assertEqual(tron_chain.rpc, "")
         self.assertIsNone(tron_chain.chain_id)
         self.assertIsNone(tron_chain.is_poa)
@@ -60,13 +55,6 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ChainToken.objects.filter(
                 chain=eth_chain,
                 crypto__symbol="ETH",
-                address="",
-            ).exists()
-        )
-        self.assertTrue(
-            ChainToken.objects.filter(
-                chain=btc_chain,
-                crypto__symbol="BTC",
                 address="",
             ).exists()
         )
@@ -195,24 +183,14 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         bootstrap_reference_data_after_migrate(sender=None, using="default")
 
         evm_chain = Chain.objects.get(code="ethereum-local")
-        btc_chain = Chain.objects.get(code="bitcoin-local")
 
         self.assertEqual(evm_chain.type, ChainType.EVM)
         self.assertEqual(evm_chain.chain_id, 31337)
         self.assertEqual(evm_chain.confirm_block_count, 1)
-        self.assertEqual(btc_chain.type, ChainType.BITCOIN)
-        self.assertEqual(btc_chain.confirm_block_count, 1)
         self.assertTrue(
             ChainToken.objects.filter(
                 chain=evm_chain,
                 crypto__symbol="ETH",
-                address="",
-            ).exists()
-        )
-        self.assertTrue(
-            ChainToken.objects.filter(
-                chain=btc_chain,
-                crypto__symbol="BTC",
                 address="",
             ).exists()
         )

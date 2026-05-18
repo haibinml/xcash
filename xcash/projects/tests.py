@@ -191,24 +191,6 @@ class RecipientAddressCapabilityTests(TestCase):
 
         self.assertIn("chain_type", ctx.exception.message_dict)
 
-    def test_clean_rejects_bitcoin_collection_address(self):
-        recipient = RecipientAddress(
-            name="Bitcoin Collection",
-            project=self.project,
-            chain_type=ChainType.BITCOIN,
-            address="1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
-            usage=RecipientAddressUsage.DEPOSIT_COLLECTION,
-        )
-
-        with self.assertRaises(ValidationError) as ctx:
-            recipient.clean()
-
-        self.assertIn("chain_type", ctx.exception.message_dict)
-        self.assertEqual(
-            ctx.exception.message_dict["chain_type"],
-            ["当前版本归集地址仅支持 EVM。"],
-        )
-
     def test_invoice_recipient_queryset_filters_by_usage(self):
         from projects.service import ProjectService
 
