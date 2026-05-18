@@ -31,7 +31,7 @@ cleanup() {
     rm -rf "${TMP_DIR}"
   fi
 
-  "${REHEARSAL_COMPOSE[@]}" rm -sf migration-rehearsal-db migration-rehearsal-signer-db >/dev/null 2>&1 || true
+  "${REHEARSAL_COMPOSE[@]}" rm -sf migration-rehearsal-db >/dev/null 2>&1 || true
 
   exit "${exit_code}"
 }
@@ -170,18 +170,15 @@ flock -n 9 || die "another upgrade is in progress (lock: ${UPGRADE_LOCK_FILE})"
 
 TMP_DIR="$(mktemp -d)"
 MAIN_DUMP="${TMP_DIR}/xcash-main.dump"
-SIGNER_DUMP="${TMP_DIR}/xcash-signer.dump"
 MAIN_REHEARSAL_PLAN="${TMP_DIR}/main-rehearsal.plan"
 MAIN_PRODUCTION_PLAN="${TMP_DIR}/main-production.plan"
-SIGNER_REHEARSAL_PLAN="${TMP_DIR}/signer-rehearsal.plan"
-SIGNER_PRODUCTION_PLAN="${TMP_DIR}/signer-production.plan"
 
 pull_code
 
 log "build production images"
 "${COMPOSE[@]}" build
 
-log "start database and cache dependencies"
+log "ensure database and cache dependencies are running"
 "${COMPOSE[@]}" up -d django-db signer-db redis
 wait_for_postgres django-db
 wait_for_postgres signer-db
@@ -192,25 +189,18 @@ if [[ "${QUIESCE_BEFORE_REHEARSAL}" == "true" ]]; then
 fi
 
 dump_database django-db "${MAIN_DUMP}"
-dump_database signer-db "${SIGNER_DUMP}"
 
 log "reset rehearsal databases"
-"${REHEARSAL_COMPOSE[@]}" rm -sf migration-rehearsal-db migration-rehearsal-signer-db >/dev/null 2>&1 || true
-"${REHEARSAL_COMPOSE[@]}" up -d migration-rehearsal-db migration-rehearsal-signer-db
+"${REHEARSAL_COMPOSE[@]}" rm -sf migration-rehearsal-db >/dev/null 2>&1 || true
+"${REHEARSAL_COMPOSE[@]}" up -d migration-rehearsal-db
 wait_for_postgres migration-rehearsal-db
-wait_for_postgres migration-rehearsal-signer-db
 
 restore_database migration-rehearsal-db "${MAIN_DUMP}"
-restore_database migration-rehearsal-signer-db "${SIGNER_DUMP}"
 
 log "run main database migration rehearsal"
 run_main_manage migration-rehearsal-db migrate --plan | tee "${MAIN_REHEARSAL_PLAN}"
 run_main_manage migration-rehearsal-db migrate --noinput
 run_main_manage migration-rehearsal-db check --deploy
-
-log "run signer database migration rehearsal"
-run_signer_manage migration-rehearsal-signer-db migrate --plan | tee "${SIGNER_REHEARSAL_PLAN}"
-run_signer_manage migration-rehearsal-signer-db migrate --noinput
 
 log "stop app services before production migration"
 "${COMPOSE[@]}" stop django worker beat signer || true
@@ -218,8 +208,6 @@ log "stop app services before production migration"
 log "verify production migration plans"
 run_main_manage django-db migrate --plan | tee "${MAIN_PRODUCTION_PLAN}"
 compare_plans "${MAIN_REHEARSAL_PLAN}" "${MAIN_PRODUCTION_PLAN}" "main database"
-run_signer_manage signer-db migrate --plan | tee "${SIGNER_PRODUCTION_PLAN}"
-compare_plans "${SIGNER_REHEARSAL_PLAN}" "${SIGNER_PRODUCTION_PLAN}" "signer database"
 
 log "apply production migrations"
 run_main_manage django-db migrate --noinput

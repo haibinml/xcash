@@ -1,10 +1,14 @@
 ENV_FILE ?= .env
 DC = docker compose --env-file $(ENV_FILE) -f docker-compose.dev.yml
 
-.PHONY: help dev-sync dev-up dev-up-pro dev-up-deps dev-up-chain dev-up-signer dev-down dev-logs dev-chain-logs dev-ps dev-web dev-worker dev-worker-stress dev-worker-scan dev-beat dev-manage dev-mm dev-migrate dev-clear-migrations dev-shell dev-test dev-local-init dev-local-bitcoin dev-signer-migrate dev-signer-check dev-signer-e2e dev-bootstrap
+.PHONY: help init-env up down upgrade dev-sync dev-up dev-up-pro dev-up-deps dev-up-chain dev-up-signer dev-down dev-logs dev-chain-logs dev-ps dev-web dev-worker dev-worker-stress dev-worker-scan dev-beat dev-manage dev-mm dev-migrate dev-clear-migrations dev-shell dev-test dev-local-init dev-local-bitcoin dev-signer-migrate dev-signer-check dev-signer-e2e dev-bootstrap
 
 help:
 	@echo "可用命令："
+	@echo "  make init-env        根据 .env.example 初始化生产 .env"
+	@echo "  make up              启动生产 Docker Compose 服务"
+	@echo "  make down            停止生产 Docker Compose 服务"
+	@echo "  make upgrade         升级到 main 最新版"
 	@echo "  开发环境准备：cp .env.example .env 后按需改成开发值"
 	@echo "  make dev-sync         同步本地开发依赖（uv dev group）"
 	@echo "  make dev-up           前台运行 Django + Celery（开发模式）"
@@ -33,6 +37,18 @@ help:
 	@echo "  make dev-signer-check 执行 signer 服务检查"
 	@echo "  make dev-signer-e2e   启动主依赖和 signer，并串行执行迁移、检查"
 	@echo "  make dev-bootstrap    从空数据卷初始化 signer、主库和本地联调链"
+
+init-env:
+	./scripts/init_env.sh
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
+
+upgrade:
+	./scripts/upgrade.sh main
 
 dev-sync:
 	uv sync --group dev

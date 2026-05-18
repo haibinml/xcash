@@ -1,9 +1,9 @@
 # Xcash
 
 <p align="center">
-  <strong>Open-Source Self-Hosted Cryptocurrency Payment Gateway</strong>
+  <strong>开源自托管加密货币支付网关</strong>
   <br />
-  Accept USDT · BTC · ETH · and 100+ blockchains — zero platform fees, full self-custody
+  支持 USDT、ETH 与 100+ 链上资产收款，零平台手续费，完全自托管。
 </p>
 
 <p align="center">
@@ -14,131 +14,75 @@
   <img src="https://img.shields.io/badge/django-5.2-green.svg" alt="Django">
 </p>
 
-## What is Xcash?
-
-**Xcash** is an open-source, self-hosted **cryptocurrency payment gateway** that lets businesses accept crypto payments (USDT, BTC, ETH, and 100+ other tokens) directly into their own wallets — without any third party holding their funds.
-
-Unlike hosted payment processors like CoinGate or OpenNode, Xcash is **fully self-custodial**: your private keys stay on your infrastructure, every payment goes directly to your wallet, and you pay zero platform fees. It's the self-hosted alternative to BTCPay Server with broader chain support and a modern architecture.
-
-**Use cases:** e-commerce crypto payments, USDT deposit/withdraw systems, cross-border stablecoin settlements, SaaS subscription billing in crypto, and exchange-style wallet infrastructure.
-
-**Quick start:** Deploy with Docker in 3 minutes — `docker compose up -d`
-
-### Key Capabilities
-
-| Feature | Detail |
-|---------|--------|
-| 💳 **Payment Gateway** | Accept USDT, BTC, ETH on 100+ chains |
-| 🔐 **Self-Custody** | Private keys on your infrastructure, zero third-party risk |
-| 💰 **Zero Platform Fees** | No percentage cuts — pay only blockchain gas |
-| 🚀 **3-Min Deploy** | Docker Compose, one command |
-| 🛡️ **Risk Control** | MistTrack on-chain address risk scoring |
-| 🔄 **Deposit/Withdraw** | Full exchange-style crypto deposit and withdrawal flows |
-| 📡 **Webhooks** | Real-time payment event notifications |
-| 🔗 **100+ Chains** | All EVM chains + Bitcoin + Tron |
+<p align="center">
+  <a href="README.en.md">English</a> | 简体中文
+</p>
 
 ## 什么是 Xcash？
 
-企业级开源加密货币支付网关 —— 专注链上价值流通
+**Xcash** 是一个开源、自托管的**加密货币支付网关**，面向商家、SaaS 产品、交易所和钱包平台，提供加密货币收款、USDT 收款、链上充值和提币能力。
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
-[![Django](https://img.shields.io/badge/django-5.2-green.svg)](https://www.djangoproject.com/)
-[![PostgreSQL](https://img.shields.io/badge/postgresql-18-blue.svg)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/redis-8-red.svg)](https://redis.io/)
-[![React](https://img.shields.io/badge/react-19-blue.svg)](https://react.dev/)
+不同于 CoinGate、OpenNode 这类托管式支付处理商，Xcash 强调**完全自托管**：私钥保留在你的基础设施内，支付直达你的链上钱包地址，Xcash 不抽取平台手续费。它适合需要多链资产收款、充值、提币和 Webhook 通知能力的业务系统。
 
-Xcash 是一个面向商家和平台方的加密货币支付基础设施，适合需要接入加密货币收款、USDT 收款、链上充值和提币能力的业务系统。项目支持 EVM 兼容链和 Bitcoin、Tron 等网络，提供支付、充值、提币、自动归集、风险地址识别等完整的加密货币金融网关能力。
-系统完全自托管，支付场景下资金可直接进入商户自己的链上收款地址，资产安全永远是第一驱动力。
+**适用场景：** 电商加密货币收款、USDT 充值和提现系统、跨境稳定币结算、SaaS 加密货币订阅计费、类似交易所的钱包基础设施，以及企业内部数字资产管理。
 
-> **内置风控接入能力**：Xcash 可对支付账单和用户充币的来源地址进行风险标记；当前风险识别依赖外部 MistTrack（慢雾 MistTrack）服务，可优先使用官方 OpenAPI V3，也可回退到 QuickNode MistTrack add-on，Xcash 负责触发查询、缓存结果、记录风险评估并在后台、API 和 Webhook 中展示风险信息。
+## 核心能力
 
-## 核心功能
-- 支付收款；支持 USDT 收款和多种加密货币收款，买家付款直达您的链上收款地址，平台不托管资金。
-- 充提币；允许您的平台用户像交易所用户一样充值和提现代币。
-- **内置风控接入能力**；支持接入 MistTrack OpenAPI V3 或 QuickNode MistTrack add-on 进行链上地址风险评估，对支付和充币资金来源进行异步风险标记，辅助防止被黑资产污染系统内资产。
-- **兼容易支付（EPay）**；支持标准易支付 V1 协议，任何支持易支付的平台和 typecho/wordpress/discuz 等主流开源系统的易支付插件可直接对接，无需额外改造。
-
-## 适用场景
-
-- 电商、游戏、SaaS 等平台接入加密货币支付
-- 需要通过 USDT 收款、加密货币收款补充传统支付方式的商户系统
-- 交易所或钱包服务商需要充提币基础设施
-- 跨境业务使用稳定币（USDT/USDC）进行结算
-- 企业内部数字资产管理与链上资金调度
+| 功能 | 说明 |
+|------|------|
+| 支付网关 | 支持 USDT、ETH 与其他 100+ 链上资产收款 |
+| 完全自托管 | 私钥保留在你的基础设施内 |
+| 零平台手续费 | 不按交易抽成，仅承担链上 Gas |
+| 充提币 | 提供类似交易所的充值和提现流程 |
+| Webhook 回调 | 实时推送支付、充值、提现事件 |
+| 风控接入 | 接入 MistTrack 链上地址风险评分 |
+| 兼容易支付 | 支持标准易支付 V1 协议 |
+| Docker 部署 | 使用 Docker Compose 部署生产服务 |
 
 ## 链支持
 
-| 功能 | ETH | BTC | BNB Chain | Arbitrum | Base | Tron | Polygon | Avalanche | Optimism | 其他 EVM |
-|:----:|:---:|:---:|:---------:|:--------:|:----:|:----:|:-------:|:---------:|:--------:|:--------:|
-| 支付 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 充值 | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
-| 提币 | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
+| 功能 | ETH | BNB Chain | Arbitrum | Base | Tron | Polygon | Avalanche | Optimism | 其他 EVM |
+|:----:|:---:|:---------:|:--------:|:----:|:----:|:-------:|:---------:|:--------:|:--------:|
+| 支付 | 是 | 是 | 是 | 是 | 是 | 是 | 是 | 是 | 是 |
+| 充值 | 是 | 是 | 是 | 是 | 否 | 是 | 是 | 是 | 是 |
+| 提币 | 是 | 是 | 是 | 是 | 否 | 是 | 是 | 是 | 是 |
 
-> 所有 EVM 兼容链均可通过后台配置接入，无需额外开发。
+所有 EVM 兼容链均可通过后台配置接入，无需额外开发。
 
 ## 代币支持
 
 EVM 链支持任意 ERC-20 代币，只需在后台添加代币合约地址即可启用，适合按业务需要接入 USDT、USDC 或其他链上资产收款。
-Tron 链当前仅支持支付功能，且仅支持 USDT，适合只需要 TRC20-USDT 收款的轻量支付场景。
+
+Tron 链当前仅支持支付功能，且主要面向 TRC20-USDT 收款场景。
 
 ## 内置风控接入
 
-Xcash 内置的是风控查询、缓存、记录和展示能力；当前风险地址识别依赖外部 MistTrack（慢雾 MistTrack）服务，并非项目内部自行维护黑名单或自研链上风控模型。该能力用于在链上资金进入业务流程后尽早发现可疑来源，降低被黑资产、制裁地址、混币器、钓鱼地址等风险资金污染系统内资产的概率。
+Xcash 内置的是风控查询、缓存、记录和展示能力；当前风险地址识别依赖外部 MistTrack（慢雾 MistTrack）服务，并非项目内部自行维护黑名单或自研链上风控模型。
 
 风控系统当前覆盖两类核心资金入口：
 
 - **支付账单**：账单匹配到链上付款后，系统会对付款方地址进行异步风险查询，并将风险等级和风险分数同步到账单记录。
 - **用户充币**：充币记录创建后，系统会对转入资金的来源地址进行异步风险查询，并将风险等级和风险分数同步到充币记录。
 
-风险结果会同时写入独立的 **风险评估** 记录，包含查询状态、目标类型、来源地址、交易哈希、风险等级、风险分数、风险原因、报告链接和错误摘要。管理后台可直接查看账单、充币和风险评估记录中的风险信息，便于运营人员进行人工复核、业务放行或进一步处置。账单和充币的 API/Webhook 输出也会携带 `risk_level` 与 `risk_score`，方便商户系统同步展示或接入自己的处置流程。
+风险结果会同时写入独立的**风险评估**记录，包含查询状态、目标类型、来源地址、交易哈希、风险等级、风险分数、风险原因、报告链接和错误摘要。管理后台可直接查看账单、充币和风险评估记录中的风险信息，便于运营人员进行人工复核、业务放行或进一步处置。账单和充币的 API/Webhook 输出也会携带 `risk_level` 与 `risk_score`，方便商户系统同步展示或接入自己的处置流程。
 
-### 风控配置
+Xcash 优先使用 MistTrack OpenAPI V3；未配置 MistTrack OpenAPI API Key 时，可回退到 QuickNode MistTrack add-on。
 
-登录管理后台，进入 **系统 -> 平台参数**，可配置以下风控参数：
+## 为什么选择 Xcash？
 
-- **开启风险标记**：总开关，默认关闭；关闭后系统会跳过风险查询，不调用外部 MistTrack 服务。
-- **风险查询阈值(USD)**：账单或充币价值大于该阈值时才触发查询，避免低价值交易产生不必要的外部查询成本。
-- **风险查询缓存秒数**：同一来源地址查询成功后会缓存在 Django 缓存中，缓存期内可复用结果。
-- **风险查询强制刷新阈值(USD)**：单笔业务价值高于该阈值时跳过缓存，直接重新查询外部风控数据。
-- **MistTrack OpenAPI API Key**：MistTrack 官方 OpenAPI API Key；配置后优先使用官方 V3 风险评分接口。
-- **QuickNode MistTrack Endpoint**：QuickNode MistTrack add-on 的 JSON-RPC endpoint URL；仅在未配置 MistTrack OpenAPI API Key 时作为回退来源。
-
-风控查询通过 Celery 异步执行，外部接口调用设置了超时和异常处理；当风控服务不可用、API Key 与 Endpoint 均未配置或当前链暂不支持 MistTrack 映射时，系统会记录失败或跳过状态和错误摘要，不会阻塞主业务状态流转。
-
-Provider 选择规则很简单：系统先读取 **MistTrack OpenAPI API Key**，存在则调用官方 `https://openapi.misttrack.io/v3/risk_score`；没有 API Key 时再读取 **QuickNode MistTrack Endpoint** 并调用 `mt_addressRiskScore`。QuickNode add-on 当前只用于 Bitcoin、Tron、Ethereum、BNB Chain、Arbitrum 这 5 个网络，其他链在 QuickNode 模式下会跳过风险标记，避免产生无效外部请求。MistTrack OpenAPI V3 模式覆盖更多网络，当前映射包括 Bitcoin、Tron，以及 Ethereum、BNB Chain、Polygon、zkSync、Merlin、IoTeX、Base、Arbitrum、Avalanche、Optimism 等常见 EVM 主网。
+| 对比 | Xcash | CoinGate | OpenNode |
+|---|---|---|---|
+| 自托管 | 是 | 否 | 否 |
+| 100+ 链支持 | 是 | 是 | 否 |
+| 零平台手续费 | 是 | 否 | 否 |
+| 充提币 | 是 | 否 | 否 |
+| 风控接入 | 是 | 否 | 否 |
+| 易支付兼容 | 是 | 否 | 否 |
+| Docker 部署 | 是 | 不适用 | 不适用 |
 
 ## 截图
 
-![管理后台 Dashboard](xcash/static/xcash-dashboard.jpeg)
-
-## Why Xcash?
-
-| vs. | Xcash | BTCPay Server | CoinGate | OpenNode |
-|---|---|---|---|---|
-| **Self-Hosted** | ✅ | ✅ | ❌ | ❌ |
-| **100+ Chains** | ✅ | ❌ Bitcoin only | ✅ | ❌ BTC/Lightning |
-| **Zero Fees** | ✅ | ✅ | ❌ 1%+ | ❌ 1%+ |
-| **Deposit/Withdraw** | ✅ | ❌ | ❌ | ❌ |
-| **Risk Control** | ✅ | ❌ | ❌ | ❌ |
-| **EasyPay Compat** | ✅ | ❌ | ❌ | ❌ |
-| **3-Min Deploy** | ✅ | ❌ Complex | N/A | N/A |
-
-## 特性
-
-- 🔗 **多链支持** — 支持所有 EVM 兼容链（Ethereum、BSC、Polygon 等）和 Bitcoin、Tron，更多链即将到来
-- 💎 **资金直达** — 支付场景下，买家付款直接转入商户自己的钱包地址，资金全程不经过第三方，零信任风险
-- 🔐 **完全自托管** — 基于 BIP44 HD 钱包派生地址，账户由你自己掌控，不依赖任何第三方托管
-- 🛡️ **内置风控接入** — 接入 MistTrack OpenAPI V3 或 QuickNode add-on 对支付和充币来源地址进行链上风险标记，辅助识别被黑资产、制裁地址、混币器等污染风险
-- 🚀 **一键部署** — 提供环境初始化脚本和 Docker Compose，几条命令即可启动完整服务
-- 💰 **完整支付网关** — 加密货币支付、USDT 收款、充值、提币、自动归集、Webhook 通知，覆盖加密货币收付款全链路
-- 📊 **强大的管理后台** — 内置经营看板、多维度数据统计、开箱即用的运营管理能力，让你对业务全局一目了然
-
-## 云服务
-
-如果你不想自己部署和维护，可以直接使用官方托管版本：
-
-👉 **[xca.sh](https://xca.sh)** — 开箱即用，免部署，持续更新
+![Xcash 管理后台 Dashboard](xcash/static/xcash-dashboard.jpeg)
 
 ## 架构
 
@@ -154,7 +98,7 @@ graph LR
         Webhook["Xcash Webhook<br/>异步通知"]
     end
 
-    Blockchain["区块链网络<br/>EVM · Bitcoin"]
+    Blockchain["区块链网络<br/>EVM · Tron"]
 
     Buyer -->|发起支付| API
     Merchant <-->|创建账单 / 查询| API
@@ -164,21 +108,17 @@ graph LR
     Webhook -->|推送事件| Merchant
 ```
 
-## 部署前的准备
+## 部署前准备
 
-在开始部署之前，请确保具备以下条件：
+在开始部署之前，请准备以下条件：
 
-### 1. 服务器
+- Linux 服务器，推荐 Ubuntu 22.04+ 或 Debian 12+
+- Docker 和 Docker Compose
+- 已解析到服务器 IP 的域名
+- 需要启用的公链 RPC 节点
+- 如需启用 Tron 支付，需要准备 TronGrid API Key
 
-- 最低配置：1 核 CPU、2 GB 内存（`PERFORMANCE=low`）
-- 推荐配置：4 核 CPU、8 GB 内存（`PERFORMANCE=medium`）
-- 高性能配置：8 核 CPU、16 GB 内存（`PERFORMANCE=high`）
-- 操作系统：Linux（推荐 Ubuntu 22.04+ / Debian 12+）
-- 安装 Docker 和 Docker Compose
-
-`PERFORMANCE` 为可设置到 .env 中的性能参数，不设置时默认使用 `low`。部署规模较小时建议先从 `low` 启动，只开启实际需要的链与功能；业务量、链扫描压力或并发请求增加后再切换到 `medium` 或 `high`。
-
-各性能模式在不同场景下建议承载的链数量：
+推荐服务器配置：
 
 | 性能模式 | 硬件配置 | 仅支付（未开启原生币扫描） | 开启原生币扫描（充提币） |
 |:-------:|:-------:|:----------------------:|:---------------------:|
@@ -186,36 +126,11 @@ graph LR
 | medium | 4 核 / 8 GB | 15 - 30 条 EVM 链 | 8 - 15 条 EVM 链 |
 | high | 8 核 / 16 GB | 30+ 条 EVM 链 | 15 - 30 条 EVM 链 |
 
-> 以上为基于 Celery 并发数与扫描间隔的保守建议值。实际承载量受 RPC 节点性能、区块交易密度、业务并发量等多因素影响，建议部署后观察 CPU、内存与 Celery 任务积压情况，按需调整。Bitcoin 与 Tron 链扫描开销远低于 EVM 原生币扫描，不纳入上述限制。
+`PERFORMANCE` 为可设置到 `.env` 中的性能参数，可选值为 `low`、`medium`、`high`。不设置时默认使用 `low`。
 
-### 2. 域名
-
-准备一个已解析到服务器 IP 的域名，用于访问管理后台和 API 接口。后续通过反向代理（Nginx/Caddy）处理 HTTPS 证书。
-
-### 3. 链 RPC 地址
-
-准备好所需公链的 RPC 访问凭证，网关需要与区块链节点通信才能正常工作：
-
-- **EVM 链**（Ethereum、BSC、Arbitrum、Base、Polygon 等）：各链的 RPC 节点地址。推荐使用 [QuickNode](https://www.quicknode.com/)、[Alchemy](https://www.alchemy.com/) 或 [Infura](https://www.infura.io/) 等节点服务商获取。
-- **Tron 链**：需要在 [TronGrid](https://www.trongrid.io/) 注册并获取 API Key。
-
-启动服务后，登录管理后台进入 **链管理** 页面填写以上 RPC 配置。
-
-> **重要：充提币功能需要手动开启原生币扫描**
-> 
-> 系统默认关闭了 EVM 原生币扫描。**充值、提币功能依赖原生币扫描才能正常工作**，因为 Gas 分发、归集等链上交易必须通过原生币扫描来感知和确认。
-> 
-> 开启方法：
-> 1. 登录管理后台，进入 **系统->平台参数** 页面
-> 2. 开启 **「开启 EVM 原生币扫描」** 开关
-> 
-> **⚠️ 充提币功能需要 EVM 链的 RPC 节点必须支持高频调用。** 原生币扫描需要持续轮询链上区块，服务商提供的免费套餐通常有严格的请求次数限制（如每天几千次），完全无法满足系统的扫描需求。请务必使用支持高频调用的付费 RPC 套餐（如 QuickNode、Alchemy 的 Growth/Scale 套餐，或自建全节点）。
+系统默认关闭 EVM 原生币扫描。充值、提币功能依赖原生币扫描才能正常工作，因为 Gas 分发、归集等链上交易必须通过原生币扫描来感知和确认。请仅在 RPC 节点支持高频调用时，在管理后台 **系统 -> 平台参数** 中开启 **开启 EVM 原生币扫描**。
 
 ## 快速开始
-
-### 环境要求
-
-- Docker 和 Docker Compose
 
 ### 1. 克隆项目
 
@@ -227,26 +142,25 @@ cd xcash
 ### 2. 初始化环境变量
 
 ```bash
-./scripts/init_env.sh
+make init-env
 ```
 
-自动生成 `.env` 文件并填充所有必需的密钥（Django Secret、数据库密码、Signer 密钥等）。   
-请妥善保存并保密此 `.env` 文件，如若丢失将失去系统内资产。
+该命令会根据 `.env.example` 生成 `.env`，并填充所有必需密钥，包括 Django Secret、数据库密码、Signer 共享密钥和 Signer 加密密钥。请妥善保存并保密 `.env` 文件。
 
 ### 3. 设置访问域名
 
-编辑 `.env` 设置 `SITE_DOMAIN` 为你的域名：
+编辑 `.env` 设置 `SITE_DOMAIN`：
 
 ```env
 SITE_DOMAIN=xcash.example.com
 ```
 
-请确保该域名的 DNS 已解析到你的服务器 IP，并配置好反向代理（如 Nginx/Caddy）将流量转发至 `http://localhost:6688`，由反向代理处理 HTTPS 证书。启动后通过 `https://你的域名` 访问。内网部署同样建议配置内部域名。
+请确保该域名的 DNS 已解析到服务器 IP，并配置 Nginx 或 Caddy 等反向代理，将流量转发至 `http://localhost:6688`。
 
 ### 4. 启动服务
 
 ```bash
-docker compose up -d
+make up
 ```
 
 首次启动时，如果数据库内还没有任何管理员账号，系统会自动创建默认后台账号：
@@ -258,25 +172,32 @@ password: Admin@123456
 
 首次登录后台后，系统会继续引导你绑定 OTP；完成登录后请立即修改默认密码。
 
-### 5. 配置链 RPC
-
-系统已预置主流链的基础信息，但 **RPC 节点地址需要你自行填写**，网关才能与区块链通信。
-
-登录管理后台，进入 **链管理** 页面，为你需要使用的链填写 RPC 地址。推荐使用 [QuickNode](https://www.quicknode.com/)、[Alchemy](https://www.alchemy.com/) 或 [Infura](https://www.infura.io/) 等节点服务商。
-
-### 6. 更新项目
-
-拉取最新代码后重新构建镜像并重启容器。
+### 5. 停止服务
 
 ```bash
-git pull
-docker compose down --remove-orphans
-docker compose up -d --build
+make down
 ```
+
+该命令会停止并移除生产 Docker Compose 服务容器，不会删除数据库数据卷。
+
+### 6. 配置链 RPC
+
+系统已预置主流链的基础信息，但 **RPC 节点地址需要自行填写**，网关才能与区块链通信。
+
+登录管理后台，进入 **链管理** 页面，为需要使用的链填写 RPC 地址。推荐使用 [QuickNode](https://www.quicknode.com/)、[Alchemy](https://www.alchemy.com/) 或 [Infura](https://www.infura.io/) 等节点服务商。Tron 支付需要在 [TronGrid](https://www.trongrid.io/) 注册并获取 API Key。
+
+### 7. 升级到最新版
+
+```bash
+make upgrade
+```
+
+该命令会拉取 `main` 分支最新版并执行完整生产升级流程。
 
 ## API 对接
 
 部署完成后，参考 [API 对接文档](API.md) 接入支付、充币、提币和 Webhook 回调。
+
 创建账单时可传入账单级 `notify_url` 覆盖项目默认 Webhook；兼容易支付 V1 的 `submit.php` 入口也会将 `notify_url` 翻译为账单自身的通知地址。
 
 ## 技术栈
@@ -284,7 +205,7 @@ docker compose up -d --build
 - **后端**：Django 5.2 + Django REST Framework
 - **任务队列**：Celery + Redis
 - **数据库**：PostgreSQL
-- **区块链交互**：web3.py（EVM）、bit（Bitcoin）
+- **区块链交互**：web3.py（EVM）
 - **钱包派生**：BIP44 HD 钱包（bip-utils）
 - **前端支付页**：React 19 + Vite + Tailwind CSS
 - **部署**：Docker Compose
@@ -292,14 +213,20 @@ docker compose up -d --build
 ## 路线图
 
 - [ ] Solana 链支持
-- [x] TRON 链支持
+- [x] Tron 链支持
 - [ ] 完善文档站
+
+## 云服务
+
+如果你不想自己部署和维护，可以直接使用官方托管版本：
+
+**[xca.sh](https://xca.sh)** — 开箱即用，免部署，持续更新。
 
 ## 商业支持
 
-如果你在部署或使用过程中需要专业协助，欢迎联系我们获取技术支持服务。
+如果你在部署或使用过程中需要专业协助，欢迎联系我们获取技术支持服务：
 
-📮 联系邮箱：tech@xca.sh
+tech@xca.sh
 
 ## 贡献
 

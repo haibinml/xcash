@@ -49,6 +49,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: signer-makemigrations-check
+        name: Signer makemigrations check
+        entry: ./scripts/dev-signer-manage.sh makemigrations --check --dry-run
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: django-migration-linter
         name: Django migration linter
         entry: ./scripts/dev-lint-migrations.sh
