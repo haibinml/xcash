@@ -302,9 +302,12 @@ class EvmErc20TransferScanner:
             return False
 
         tx = rpc_client.get_transaction(tx_hash=tx_hash)
+        if tx is None:
+            raise EvmScannerRpcError(f"已知内部交易缺少交易详情: tx_hash={tx_hash}")
+
         receipt = rpc_client.get_transaction_receipt(tx_hash=tx_hash)
-        if tx is None or receipt is None:
-            return True
+        if receipt is None:
+            raise EvmScannerRpcError(f"已知内部交易缺少交易回执: tx_hash={tx_hash}")
 
         try:
             process_internal_transaction(chain=chain, tx=tx, receipt=receipt)
