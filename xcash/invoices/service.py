@@ -23,6 +23,7 @@ from webhooks.service import WebhookService
 
 from .exceptions import InvoiceStatusError
 from .models import Invoice
+from .models import InvoiceBillingMode
 from .models import InvoicePaySlot
 from .models import InvoicePaySlotDiscardReason
 from .models import InvoicePaySlotStatus
@@ -140,12 +141,11 @@ class InvoiceService:
         # 第一步：不加锁地找到候选槽位，仅用于定位归属的 Invoice ID。
         # 避免先锁 PaySlot 再锁 Invoice 的顺序——select_method 先锁 Invoice 再锁
         # PaySlot，两者顺序相反会在并发时形成死锁。
-        candidate = (
+        base_filter = (
             InvoicePaySlot.objects.filter(
                 chain=transfer.chain,
                 crypto=transfer.crypto,
                 pay_address=transfer.to_address,
-                pay_amount=transfer.amount,
                 invoice__started_at__lte=transfer.datetime,
                 invoice__expires_at__gte=transfer.datetime,
                 invoice__status__in=[InvoiceStatus.WAITING, InvoiceStatus.EXPIRED],
@@ -157,10 +157,27 @@ class InvoiceService:
                     discard_reason=InvoicePaySlotDiscardReason.EXPIRED,
                 )
             )
+        )
+
+        differ_candidate = (
+            base_filter.filter(
+                billing_mode=InvoiceBillingMode.DIFFER,
+                pay_amount=transfer.amount,
+            )
             .order_by("-version", "-created_at", "-pk")
             .values("pk", "invoice_id")
             .first()
         )
+        contract_candidate = (
+            base_filter.filter(
+                billing_mode=InvoiceBillingMode.CONTRACT,
+                pay_amount__lte=transfer.amount,
+            )
+            .order_by("-version", "-created_at", "-pk")
+            .values("pk", "invoice_id")
+            .first()
+        )
+        candidate = differ_candidate or contract_candidate
         if candidate is None:
             return False
 

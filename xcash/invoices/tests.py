@@ -1961,3 +1961,77 @@ class CreateContractInvoicePreflightTest(TestCase):
         self.assertEqual(response.status_code, 201)
         invoice = Invoice.objects.get(out_no="default-billing-order")
         self.assertEqual(invoice.billing_mode, InvoiceBillingMode.DIFFER)
+
+
+class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
+    def setUp(self):
+        self.setup_base_fixtures(
+            username="contract-match-merchant",
+            project_name="ContractMatchProject",
+            crypto_symbol="USDTMAT",
+            chain_code="eth-contract-match",
+            chain_id=8805,
+        )
+        self.invoice = self.create_test_invoice(
+            out_no="contract-match-order",
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            amount=Decimal("100"),
+        )
+        self.collector_address = Web3.to_checksum_address(
+            "0x00000000000000000000000000000000000000ce"
+        )
+        self.contract_slot = InvoicePaySlot.objects.create(
+            invoice=self.invoice,
+            project=self.invoice.project,
+            version=1,
+            crypto=self.crypto,
+            chain=self.chain,
+            pay_address=self.collector_address,
+            pay_amount=Decimal("100"),
+            recipient_address=self.recipient_address,
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            status=InvoicePaySlotStatus.ACTIVE,
+        )
+
+    def _make_transfer(self, amount: Decimal) -> OnchainTransfer:
+        now = timezone.now()
+        return OnchainTransfer.objects.create(
+            chain=self.chain,
+            block=1,
+            hash=f"0x{self.chain.chain_id:08x}{int(now.timestamp() * 1000000):056x}",
+            event_id=f"cm-{str(amount).replace('.', '')}",
+            crypto=self.crypto,
+            from_address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000b2"
+            ),
+            to_address=self.collector_address,
+            value=Decimal(amount * Decimal("100000000")),
+            amount=amount,
+            timestamp=int(now.timestamp()),
+            datetime=now,
+        )
+
+    def test_matches_when_transfer_amount_equals_pay_amount(self):
+        transfer = self._make_transfer(Decimal("100"))
+
+        matched = InvoiceService.try_match_invoice(transfer)
+
+        self.assertTrue(matched)
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, InvoiceStatus.CONFIRMING)
+
+    def test_matches_when_transfer_amount_greater_than_pay_amount(self):
+        transfer = self._make_transfer(Decimal("150"))
+
+        matched = InvoiceService.try_match_invoice(transfer)
+
+        self.assertTrue(matched)
+
+    def test_does_not_match_when_transfer_amount_less_than_pay_amount(self):
+        transfer = self._make_transfer(Decimal("99.99"))
+
+        matched = InvoiceService.try_match_invoice(transfer)
+
+        self.assertFalse(matched)
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, InvoiceStatus.WAITING)
