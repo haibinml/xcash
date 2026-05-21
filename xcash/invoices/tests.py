@@ -1758,3 +1758,39 @@ class AllocateContractSlotTest(TestCase, InvoiceTestMixin):
                 self.chain,
                 Decimal("100"),
             )
+
+
+class SelectMethodContractBranchTest(TestCase, InvoiceTestMixin):
+    def setUp(self):
+        self.setup_base_fixtures(
+            username="contract-select-merchant",
+            project_name="ContractSelectProject",
+            crypto_symbol="USDTSEL",
+            chain_code="eth-contract-select",
+            chain_id=8802,
+        )
+        self.chain.create2_factory_address = Web3.to_checksum_address(
+            "0x00000000000000000000000000000000000000ab"
+        )
+        self.chain.save(update_fields=["create2_factory_address"])
+        ChainToken.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000c1"
+            ),
+        )
+        self.invoice = self.create_test_invoice(
+            out_no="contract-select-order",
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            amount=Decimal("100"),
+        )
+
+    def test_creates_pay_slot_with_contract_billing_mode_and_recipient_address(self):
+        ok = self.invoice.select_method(self.crypto, self.chain)
+
+        self.assertTrue(ok)
+        slot = self.invoice.pay_slots.get()
+        self.assertEqual(slot.billing_mode, InvoiceBillingMode.CONTRACT)
+        self.assertEqual(slot.recipient_address, self.recipient_address)
+        self.assertEqual(slot.pay_amount, self.invoice.amount)

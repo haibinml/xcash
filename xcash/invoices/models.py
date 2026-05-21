@@ -323,11 +323,21 @@ class Invoice(models.Model):
         for _retry in range(self.MAX_ALLOCATION_RETRY):
             try:
                 with db_transaction.atomic():
-                    pay_address, pay_amount = self._allocate_differ_slot(
-                        crypto,
-                        chain,
-                        crypto_amount,
-                    )
+                    if self.billing_mode == InvoiceBillingMode.CONTRACT:
+                        pay_address, recipient_address, pay_amount = (
+                            self._allocate_contract_slot(
+                                crypto,
+                                chain,
+                                crypto_amount,
+                            )
+                        )
+                    else:
+                        pay_address, pay_amount = self._allocate_differ_slot(
+                            crypto,
+                            chain,
+                            crypto_amount,
+                        )
+                        recipient_address = None
 
                     created_at = timezone.now()
                     pay_slot = InvoicePaySlot.objects.create(
@@ -338,6 +348,8 @@ class Invoice(models.Model):
                         chain=chain,
                         pay_address=pay_address,
                         pay_amount=pay_amount,
+                        billing_mode=self.billing_mode,
+                        recipient_address=recipient_address,
                         status=InvoicePaySlotStatus.ACTIVE,
                     )
                     self._discard_excess_active_slots(created_slot=pay_slot)
