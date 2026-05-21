@@ -690,6 +690,13 @@ class ContractDeployCollection(UndeletableModel):
         blank=True,
         null=True,
     )
+    pay_slot = models.ForeignKey(
+        "invoices.InvoicePaySlot",
+        on_delete=models.PROTECT,
+        related_name="contract_deploy_collections",
+        blank=True,
+        null=True,
+    )
     status = models.CharField(
         choices=ContractDeployCollectionStatus,
         max_length=16,
