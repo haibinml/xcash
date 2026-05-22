@@ -59,6 +59,7 @@ class StressService:
         with transaction.atomic():
             _ensure_stress_crypto_prices()
             _ensure_native_scanner_enabled()
+            _ensure_local_create2_factory()
             _cleanup_orphan_stress_project(stress)
             project = _create_stress_project(stress)
             _setup_recipient_addresses(project)
@@ -420,6 +421,74 @@ def _ensure_native_scanner_enabled() -> None:
     settings.open_native_scanner = True
     settings.save(update_fields=["open_native_scanner"])
     cache.delete(PLATFORM_SETTINGS_CACHE_KEY)
+
+
+# PaymentCollectorFactory artifact 路径相对项目根（settings.BASE_DIR 已经是 manage.py 所在目录）。
+_FACTORY_ARTIFACT_DIR = "xcash/evm/contracts/artifacts"
+
+
+def _load_factory_artifact() -> tuple[list, str]:
+    """读取 PaymentCollectorFactory 的 ABI 与 bytecode。
+
+    artifact 通过 forge 编译产出，已提交到仓库；本函数只是简单解析两个文件，
+    避免在 stress 模块和 core 之间拉关系。
+    """
+    import json as _json
+    from pathlib import Path
+
+    base = Path(settings.BASE_DIR) / _FACTORY_ARTIFACT_DIR
+    abi_path = base / "PaymentCollectorFactory.abi.json"
+    bin_path = base / "PaymentCollectorFactory.bin"
+    abi = _json.loads(abi_path.read_text())
+    bytecode_text = bin_path.read_text().strip()
+    if not bytecode_text.startswith("0x"):
+        bytecode_text = "0x" + bytecode_text
+    return abi, bytecode_text
+
+
+def _get_w3():
+    """惰性绑定到 stress.evm._get_w3，便于测试 patch stress.service._get_w3。"""
+    from .evm import _get_w3 as _impl
+
+    return _impl()
+
+
+def _ensure_local_create2_factory() -> None:
+    """合约账单依赖 chain.create2_factory_address；prepare 阶段幂等部署。
+
+    已配置则直接返回；未配置则连 anvil 部署 PaymentCollectorFactory，
+    把地址写回 ethereum-local。失败时抛 RuntimeError 中止 prepare，
+    交给运维排查（防止 case 在 create_invoice 阶段大规模 FAIL）。
+    """
+    from chains.models import Chain
+
+    chain = Chain.objects.get(code="ethereum-local")
+    if chain.create2_factory_address:
+        return
+
+    abi, bytecode = _load_factory_artifact()
+    w3 = _get_w3()
+    try:
+        deployer = w3.eth.accounts[0]
+    except IndexError as exc:
+        raise RuntimeError("本地 anvil 未提供可用部署账户") from exc
+
+    contract_factory = w3.eth.contract(abi=abi, bytecode=bytecode)
+    tx_hash = contract_factory.constructor().transact({"from": deployer})
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+    factory_address = receipt.get("contractAddress")
+    if not factory_address:
+        raise RuntimeError("PaymentCollectorFactory 部署失败：回执缺少合约地址")
+
+    from web3 import Web3
+
+    chain.create2_factory_address = Web3.to_checksum_address(factory_address)
+    chain.save(update_fields=["create2_factory_address"])
+    logger.info(
+        "stress.factory_deployed",
+        chain=chain.code,
+        address=chain.create2_factory_address,
+    )
 
 
 def _cleanup_orphan_stress_project(stress: StressRun) -> None:

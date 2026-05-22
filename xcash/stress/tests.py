@@ -222,6 +222,7 @@ class StressServiceTests(SimpleTestCase):
                 "stress.service.Project.objects.create", return_value=created_project
             ),
             patch("stress.service._setup_recipient_addresses"),
+            patch("stress.service._ensure_local_create2_factory"),
             patch(
                 "stress.service.InvoiceStressCase.objects.bulk_create", bulk_create_mock
             ),
@@ -254,6 +255,7 @@ class StressServiceTests(SimpleTestCase):
                 "stress.service.Project.objects.create", return_value=created_project
             ),
             patch("stress.service._setup_recipient_addresses"),
+            patch("stress.service._ensure_local_create2_factory"),
             patch("stress.service.cache", create=True) as cache_mock,
             patch("stress.service.InvoiceStressCase.objects.bulk_create"),
             patch("stress.service.random.gauss", return_value=0.0),
@@ -282,6 +284,7 @@ class StressServiceTests(SimpleTestCase):
                 "stress.service._setup_recipient_addresses",
                 side_effect=RuntimeError("recipient setup failed"),
             ),
+            patch("stress.service._ensure_local_create2_factory"),
             patch("stress.service.cache", create=True) as cache_mock,
             patch(
                 "stress.service.InvoiceStressCase.objects.bulk_create"
@@ -1643,3 +1646,75 @@ class EnsureNativeScannerEnabledTests(TestCase):
         _ensure_native_scanner_enabled()
 
         self.assertTrue(PlatformSettings.objects.get().open_native_scanner)
+
+
+class EnsureLocalCreate2FactoryTests(TestCase):
+    """_ensure_local_create2_factory 在 chain 已配置时不连 anvil。"""
+
+    def setUp(self):
+        from chains.models import Chain
+        from chains.models import ChainType
+        from currencies.models import Crypto
+
+        eth, _ = Crypto.objects.update_or_create(
+            symbol="ETH",
+            defaults={"name": "Ethereum", "coingecko_id": "ethereum"},
+        )
+        Chain.objects.update_or_create(
+            code="ethereum-local",
+            defaults={
+                "name": "Ethereum Local",
+                "type": ChainType.EVM,
+                "native_coin": eth,
+                "chain_id": 31337,
+                "rpc": "http://127.0.0.1:8545",
+                "active": True,
+            },
+        )
+
+    def test_no_op_when_factory_address_set(self):
+        from chains.models import Chain
+        from stress.service import _ensure_local_create2_factory
+
+        preset = Web3.to_checksum_address("0x" + "ab" * 20)
+        chain = Chain.objects.get(code="ethereum-local")
+        chain.create2_factory_address = preset
+        chain.save(update_fields=["create2_factory_address"])
+
+        with patch("stress.service._get_w3") as w3_mock:
+            _ensure_local_create2_factory()
+
+        w3_mock.assert_not_called()
+        chain.refresh_from_db()
+        self.assertEqual(
+            chain.create2_factory_address.lower(),
+            preset.lower(),
+        )
+
+    def test_deploys_and_persists_when_address_missing(self):
+        from chains.models import Chain
+        from stress.service import _ensure_local_create2_factory
+
+        chain = Chain.objects.get(code="ethereum-local")
+        chain.create2_factory_address = ""
+        chain.save(update_fields=["create2_factory_address"])
+
+        fake_w3 = Mock()
+        fake_w3.eth.accounts = ["0x" + "11" * 20]
+        receipt = {"contractAddress": "0x" + "cc" * 20}
+        fake_w3.eth.wait_for_transaction_receipt.return_value = receipt
+        constructor_call = Mock()
+        constructor_call.transact.return_value = HexBytes("0x" + "dd" * 32)
+        contract = Mock()
+        contract.constructor.return_value = constructor_call
+        fake_w3.eth.contract.return_value = contract
+
+        with patch("stress.service._get_w3", return_value=fake_w3):
+            _ensure_local_create2_factory()
+
+        chain.refresh_from_db()
+        self.assertTrue(chain.create2_factory_address)
+        self.assertEqual(
+            chain.create2_factory_address.lower(),
+            ("0x" + "cc" * 20).lower(),
+        )
