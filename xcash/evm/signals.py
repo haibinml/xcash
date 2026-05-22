@@ -13,6 +13,8 @@ from evm.scanner.watchers import clear_evm_chain_tokens_cache
 from evm.scanner.watchers import clear_evm_watched_addresses_cache
 from evm.scanner.watchers import load_watch_set
 from evm.scanner.watchers import refresh_evm_watched_addresses
+from invoices.models import InvoiceBillingMode
+from invoices.models import InvoicePaySlot
 from projects.models import RecipientAddress
 
 
@@ -60,6 +62,18 @@ def refresh_watch_set_when_recipient_address_changes(
     instance: RecipientAddress,
     **kwargs,
 ):
+    _refresh_evm_watched_addresses_on_commit()
+
+
+@receiver(post_save, sender=InvoicePaySlot)
+@receiver(post_delete, sender=InvoicePaySlot)
+def refresh_watch_set_when_invoice_pay_slot_changes(
+    sender,
+    instance: InvoicePaySlot,
+    **kwargs,
+):
+    if instance.billing_mode != InvoiceBillingMode.CONTRACT:
+        return
     _refresh_evm_watched_addresses_on_commit()
 
 

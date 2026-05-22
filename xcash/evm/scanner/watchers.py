@@ -10,6 +10,10 @@ from chains.models import Address
 from chains.models import Chain
 from chains.models import ChainType
 from currencies.models import ChainToken
+from invoices.models import InvoiceBillingMode
+from invoices.models import InvoicePaySlot
+from invoices.models import InvoicePaySlotStatus
+from invoices.models import InvoiceStatus
 from projects.models import RecipientAddress
 from projects.models import RecipientAddressUsage
 
@@ -157,10 +161,24 @@ def _load_evm_watched_addresses_from_db() -> frozenset[str]:
         .values_list("address", flat=True)
         .iterator(chunk_size=EVM_WATCH_SET_ITERATOR_CHUNK_SIZE)
     )
+    contract_pay_slot_addresses = (
+        InvoicePaySlot.objects.filter(
+            chain__type=ChainType.EVM,
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            status=InvoicePaySlotStatus.ACTIVE,
+            invoice__status=InvoiceStatus.WAITING,
+        )
+        .values_list("pay_address", flat=True)
+        .iterator(chunk_size=EVM_WATCH_SET_ITERATOR_CHUNK_SIZE)
+    )
 
     return frozenset(
         _normalize_address(address)
-        for address in iter_chain(system_addresses, recipient_addresses)
+        for address in iter_chain(
+            system_addresses,
+            recipient_addresses,
+            contract_pay_slot_addresses,
+        )
     )
 
 
