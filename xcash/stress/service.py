@@ -139,6 +139,14 @@ class StressService:
             execute_deposit_case.apply_async(args=[case.pk], eta=eta)
             max_offset = max(max_offset, case.scheduled_offset)
 
+        # 合约账单归集验证兜底：max_offset + 20 分钟
+        # webhook 触发是主路径，此处是安全网，verify_invoice_collection 幂等。
+        if stress.count > 0:
+            from .tasks import verify_invoice_collection
+
+            invoice_eta = stress.started_at + timedelta(seconds=max_offset + 20 * 60)
+            verify_invoice_collection.apply_async(args=[stress.pk], eta=invoice_eta)
+
         # 充币归集验证兜底：最大调度偏移 + 20 分钟
         # webhook 触发是主路径，这里是安全网，verify_deposit_collection 本身幂等。
         if stress.deposit_count > 0:
