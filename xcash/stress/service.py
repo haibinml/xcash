@@ -63,9 +63,17 @@ class StressService:
             _cleanup_orphan_stress_project(stress)
             project = _create_stress_project(stress)
             _setup_recipient_addresses(project)
+            cases = _build_stress_cases(stress)
+            has_contract_invoice = any(
+                case.billing_mode == InvoiceBillingMode.CONTRACT for case in cases
+            )
 
-            # 提币或充币测试需要 Wallet + Vault 地址
-            if stress.withdrawal_count > 0 or stress.deposit_count > 0:
+            # 提币、充币和合约账单部署归集都需要 Wallet + EVM Vault。
+            if (
+                stress.withdrawal_count > 0
+                or stress.deposit_count > 0
+                or has_contract_invoice
+            ):
                 _setup_wallet_for_withdrawal(project)
 
             # 充币压测：到期即归集，并把首次窗口压到 1 分钟，避免验证阶段久等。
@@ -79,7 +87,6 @@ class StressService:
             stress.finished_at = None
             stress.save(update_fields=["project", "error", "finished_at"])
 
-            cases = _build_stress_cases(stress)
             InvoiceStressCase.objects.bulk_create(cases)
 
             if stress.withdrawal_count > 0:
@@ -94,7 +101,11 @@ class StressService:
             stress.save(update_fields=["status"])
 
         # Vault 注资在事务提交后执行，确保数据库记录已落库
-        if stress.withdrawal_count > 0 or stress.deposit_count > 0:
+        if (
+            stress.withdrawal_count > 0
+            or stress.deposit_count > 0
+            or has_contract_invoice
+        ):
             _fund_vault_for_withdrawal(stress.project)
 
         logger.info(

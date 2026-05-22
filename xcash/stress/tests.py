@@ -226,6 +226,7 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.InvoiceStressCase.objects.bulk_create", bulk_create_mock
             ),
+            patch("stress.service.random.random", return_value=0.9),
             patch("stress.service.random.gauss", return_value=0.0),
             patch("stress.service.random.shuffle"),
         ):
@@ -234,6 +235,44 @@ class StressServiceTests(SimpleTestCase):
         created_cases = bulk_create_mock.call_args.args[0]
         self.assertEqual(len(created_cases), 5)
         self.assertTrue(all(not hasattr(case, "scenario") for case in created_cases))
+
+    def test_prepare_funds_vault_when_invoice_cases_include_contract_billing(self):
+        from invoices.models import InvoiceBillingMode
+
+        stress = StressRun(
+            id=23,
+            count=1,
+            status=StressRunStatus.PREPARING,
+        )
+        stress.save = Mock()
+
+        created_project = Project(pk=99)
+
+        with (
+            patch(
+                "stress.service.Project.objects.create", return_value=created_project
+            ),
+            patch("stress.service._setup_recipient_addresses"),
+            patch("stress.service._ensure_local_create2_factory"),
+            patch(
+                "stress.service._setup_wallet_for_withdrawal"
+            ) as setup_wallet_mock,
+            patch(
+                "stress.service._fund_vault_for_withdrawal"
+            ) as fund_vault_mock,
+            patch(
+                "stress.service.InvoiceStressCase.objects.bulk_create"
+            ) as bulk_create_mock,
+            patch("stress.service.random.random", return_value=0.1),
+            patch("stress.service.random.gauss", return_value=0.0),
+            patch("stress.service.random.shuffle"),
+        ):
+            StressService.prepare(stress)
+
+        setup_wallet_mock.assert_called_once_with(created_project)
+        fund_vault_mock.assert_called_once_with(created_project)
+        created_cases = bulk_create_mock.call_args.args[0]
+        self.assertEqual(created_cases[0].billing_mode, InvoiceBillingMode.CONTRACT)
 
     def test_prepare_seeds_full_saas_permission_cache_for_created_project(self):
         stress = StressRun(
@@ -258,6 +297,7 @@ class StressServiceTests(SimpleTestCase):
             patch("stress.service._ensure_local_create2_factory"),
             patch("stress.service.cache", create=True) as cache_mock,
             patch("stress.service.InvoiceStressCase.objects.bulk_create"),
+            patch("stress.service.random.random", return_value=0.9),
             patch("stress.service.random.gauss", return_value=0.0),
             patch("stress.service.random.shuffle"),
         ):
@@ -690,6 +730,36 @@ class StressPaymentTaskTests(SimpleTestCase):
         self.assertIsNotNone(case.chain_paid_at)
         webhook_dispatch_mock.assert_called_once()
         # 成功路径不应触发 on_case_finished（由 webhook / timeout 推进）
+        on_finished_mock.assert_not_called()
+
+    def test_execute_stress_case_payment_keeps_webhook_ok_when_webhook_arrives_early(self):
+        """链上支付期间 webhook 可能先到，payment task 不得把 WEBHOOK_OK 回退为 PAID。"""
+        case = self._make_invoice_case()
+
+        def mark_webhook_ok(_case):
+            case.status = InvoiceStressCaseStatus.WEBHOOK_OK
+            return {
+                "tx_hash": "0xabc",
+                "payer_address": "0x2000000000000000000000000000000000000002",
+            }
+
+        with (
+            self._patch_invoice_get(case),
+            patch("stress.tasks._do_payment", side_effect=mark_webhook_ok),
+            patch(
+                "stress.tasks.check_webhook_timeout.apply_async"
+            ) as webhook_dispatch_mock,
+            patch("stress.tasks.StressService.on_case_finished") as on_finished_mock,
+        ):
+            execute_stress_case_payment.run(case.pk)
+
+        self.assertEqual(case.status, InvoiceStressCaseStatus.WEBHOOK_OK)
+        self.assertEqual(case.tx_hash, "0xabc")
+        self.assertEqual(
+            case.payer_address, "0x2000000000000000000000000000000000000002"
+        )
+        self.assertIsNotNone(case.chain_paid_at)
+        webhook_dispatch_mock.assert_not_called()
         on_finished_mock.assert_not_called()
 
     def test_execute_stress_case_payment_failure_path(self):
@@ -1818,6 +1888,28 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
         on_finish_mock.assert_not_called()
         trigger_mock.assert_called_once_with(case.stress_run_id)
 
+    def test_contract_invoice_webhook_can_arrive_while_payment_task_is_paying(self):
+        from invoices.models import InvoiceBillingMode
+
+        case = self._build_case(billing_mode=InvoiceBillingMode.CONTRACT)
+        case.status = InvoiceStressCaseStatus.PAYING
+        case.save(update_fields=["status"])
+
+        with (
+            patch("stress.views.StressService.on_case_finished") as on_finish_mock,
+            patch(
+                "stress.views._maybe_trigger_invoice_collection_verification"
+            ) as trigger_mock,
+        ):
+            self._post_webhook(case=case)
+
+        case.refresh_from_db()
+        self.assertEqual(case.status, InvoiceStressCaseStatus.WEBHOOK_OK)
+        self.assertTrue(case.webhook_received)
+        self.assertIsNone(case.finished_at)
+        on_finish_mock.assert_not_called()
+        trigger_mock.assert_called_once_with(case.stress_run_id)
+
     def test_contract_invoice_webhook_replay_does_not_flip_to_failed(self):
         from invoices.models import InvoiceBillingMode
 
@@ -1996,6 +2088,44 @@ class FinalizeInvoiceCollectionVerificationTests(TestCase):
         self.assertTrue(case.collection_verified)
         self.assertIsNotNone(case.collection_done_at)
         self.assertIsNotNone(case.finished_at)
+        on_finish.assert_called_once()
+
+    def test_verify_invoice_collection_does_not_block_ready_cases_on_created_sibling(self):
+        from chains.models import Chain
+        from currencies.models import Crypto
+        from evm.models import ContractDeployCollectionStatus
+        from invoices.models import InvoiceBillingMode
+        from stress.tasks import verify_invoice_collection
+
+        django_cache.clear()
+        chain = Chain.objects.get(code="ethereum-local")
+        crypto = Crypto.objects.get(symbol="ETH")
+        stress, ready_case = self._build_case_with_invoice(
+            chain=chain,
+            crypto=crypto,
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            collection_status=ContractDeployCollectionStatus.CONFIRMED,
+        )
+        stress.count = 2
+        stress.save(update_fields=["count"])
+        blocking_case = InvoiceStressCase.objects.create(
+            stress_run=stress,
+            sequence=2,
+            scheduled_offset=0,
+            invoice_sys_no="INV-BLOCKING",
+            invoice_out_no="OUT-BLOCKING",
+            status=InvoiceStressCaseStatus.CREATED,
+            billing_mode=InvoiceBillingMode.CONTRACT,
+        )
+
+        with patch("stress.tasks.StressService.on_case_finished") as on_finish:
+            verify_invoice_collection.run(stress.pk)
+
+        ready_case.refresh_from_db()
+        blocking_case.refresh_from_db()
+        self.assertEqual(ready_case.status, InvoiceStressCaseStatus.SUCCEEDED)
+        self.assertTrue(ready_case.collection_verified)
+        self.assertEqual(blocking_case.status, InvoiceStressCaseStatus.CREATED)
         on_finish.assert_called_once()
 
     def test_missing_collection_marks_failed(self):

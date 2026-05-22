@@ -152,24 +152,31 @@ def execute_stress_case_payment(case_id: int) -> None:
         case.save(update_fields=["status"])
 
         payment_result = _do_payment(case)
+        if hasattr(case, "refresh_from_db"):
+            case.refresh_from_db(fields=["status"])
         case.tx_hash = payment_result["tx_hash"]
         case.payer_address = payment_result["payer_address"]
-        case.status = InvoiceStressCaseStatus.PAID
         case.chain_paid_at = timezone.now()
-        case.save(
-            update_fields=[
-                "tx_hash",
-                "payer_address",
-                "status",
-                "chain_paid_at",
-            ]
-        )
+        update_fields = ["tx_hash", "payer_address", "chain_paid_at"]
 
-        # 派发 webhook 超时检查任务（15 分钟后）—— 必须在 PAID 状态确立后。
-        check_webhook_timeout.apply_async(
-            args=[case.pk],
-            eta=timezone.now() + timedelta(minutes=15),
-        )
+        # 本地测试链确认很快，webhook 可能在 _do_payment 返回前已经把 case
+        # 推进到 WEBHOOK_OK/SUCCEEDED。这里只在仍处于支付阶段时写 PAID，
+        # 避免把 webhook 已推进的状态回退，导致后续归集验证找不到 case。
+        if case.status == InvoiceStressCaseStatus.PAYING:
+            case.status = InvoiceStressCaseStatus.PAID
+            update_fields.append("status")
+            case.save(update_fields=update_fields)
+
+            # 派发 webhook 超时检查任务（15 分钟后）—— 必须在 PAID 状态确立后。
+            check_webhook_timeout.apply_async(
+                args=[case.pk],
+                eta=timezone.now() + timedelta(minutes=15),
+            )
+        elif case.status in {
+            InvoiceStressCaseStatus.WEBHOOK_OK,
+            InvoiceStressCaseStatus.SUCCEEDED,
+        }:
+            case.save(update_fields=update_fields)
     except Exception as exc:
         logger.exception("stress.case_payment.failed", case_id=case.pk)
         case.status = InvoiceStressCaseStatus.FAILED
@@ -821,26 +828,13 @@ def verify_invoice_collection(self, stress_run_id: int) -> None:
     from invoices.models import InvoicePaySlotStatus
     from evm.models import ContractDeployCollectionStatus
 
-    # ── 1. 前置条件：还有合约 case 没到 WEBHOOK_OK 则等下一轮 webhook 触发
-    pre_webhook_states = {
-        InvoiceStressCaseStatus.PENDING,
-        InvoiceStressCaseStatus.CREATING,
-        InvoiceStressCaseStatus.CREATED,
-        InvoiceStressCaseStatus.PAYING,
-        InvoiceStressCaseStatus.PAID,
-    }
-    if InvoiceStressCase.objects.filter(
-        stress_run_id=stress_run_id,
-        billing_mode=InvoiceBillingMode.CONTRACT,
-        status__in=pre_webhook_states,
-    ).exists():
-        return
-
     try:
         stress = StressRun.objects.select_related("project").get(pk=stress_run_id)
     except StressRun.DoesNotExist:
         return
 
+    # 只处理已经通过 webhook 验证的合约 case。压测并发下可能有少数 case
+    # 仍停留在 CREATED/PAYING；它们不应阻塞同轮其他已完成归集的 case。
     webhook_ok_cases = list(
         InvoiceStressCase.objects.filter(
             stress_run=stress,
