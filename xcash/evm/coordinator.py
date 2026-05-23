@@ -40,8 +40,6 @@ class InternalEvmTaskCoordinator:
         )
 
         for evm_task in queryset:
-            if not evm_task.base_task_id:
-                continue
 
             status, tx_hash, receipt = cls._find_receipt_across_hashes(evm_task=evm_task)
             if isinstance(status, Exception):
@@ -148,8 +146,6 @@ class InternalEvmTaskCoordinator:
         from evm.internal_tx.handlers import get_handler
 
         locked_task = EvmBroadcastTask.objects.select_for_update().get(pk=evm_task.pk)
-        if not locked_task.base_task_id:
-            return False
 
         base_task = locked_task.base_task
         if (

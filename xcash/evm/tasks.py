@@ -36,14 +36,13 @@ _RECONCILE_CANDIDATE_LIMIT = 50
 def broadcast_evm_task(pk: int) -> None:
     # 任务入口统一使用 BroadcastTask 命名，避免继续暴露旧的广播载荷概念。
     broadcast_task = EvmBroadcastTask.objects.select_related("base_task").get(pk=pk)
-    if broadcast_task.base_task_id:
-        # 普通 Celery 入口只负责 QUEUED 首次广播；PENDING_CHAIN 重播统一由
-        # coordinator 在超时与查 receipt 后触发，避免重复消息绕过重播间隔。
-        if (
-            broadcast_task.base_task.result != BroadcastTaskResult.UNKNOWN
-            or broadcast_task.base_task.stage != BroadcastTaskStage.QUEUED
-        ):
-            return
+    # 普通 Celery 入口只负责 QUEUED 首次广播；PENDING_CHAIN 重播统一由
+    # coordinator 在超时与查 receipt 后触发，避免重复消息绕过重播间隔。
+    if (
+        broadcast_task.base_task.result != BroadcastTaskResult.UNKNOWN
+        or broadcast_task.base_task.stage != BroadcastTaskStage.QUEUED
+    ):
+        return
     if broadcast_task.has_lower_queued_nonce() or broadcast_task.is_pipeline_full():
         logger.info(
             "EVM 广播被阻断",
@@ -58,8 +57,6 @@ def broadcast_evm_task(pk: int) -> None:
         return
     broadcast_task.broadcast()
     # 广播成功后，链式调度同地址下一个 QUEUED nonce，快速填充 pipeline。
-    if not broadcast_task.base_task_id:
-        return
     broadcast_task.base_task.refresh_from_db(fields=["stage", "result"])
     if (
         broadcast_task.base_task.stage != BroadcastTaskStage.PENDING_CHAIN
@@ -135,7 +132,7 @@ def dispatch_due_evm_broadcast_tasks() -> None:
         )
         .filter(
             Q(last_attempt_at__isnull=True) | Q(last_attempt_at__lt=ago(minutes=4)),
-            created_at__lt=ago(seconds=1),
+            created_at__lt=ago(seconds=4),
             base_task__stage=BroadcastTaskStage.QUEUED,
             has_lower_queued_task=False,
             has_pending_recharge=False,
@@ -378,8 +375,7 @@ def reconcile_stale_pending_chain_evm(chain_pk: int) -> None:
             stage=BroadcastTaskStage.PENDING_CHAIN,
             result=BroadcastTaskResult.UNKNOWN,
             updated_at__lt=ago(seconds=threshold_seconds),
-        )
-        .order_by("updated_at")[:_RECONCILE_CANDIDATE_LIMIT]
+        ).order_by("updated_at")[:_RECONCILE_CANDIDATE_LIMIT]
     )
 
     blocks_to_rescan: set[int] = set()
