@@ -154,12 +154,12 @@ class EvmBroadcastTask(UndeletableModel):
         ):
             return
 
+        self._record_broadcast_attempt()
         self._ensure_signed_with_latest_gas_price()
 
         if not self._passes_balance_preflight():
             return
 
-        self._record_broadcast_attempt()
         self._send_signed_payload()
 
     def _is_broadcast_order_blocked(
@@ -188,7 +188,8 @@ class EvmBroadcastTask(UndeletableModel):
                 self._request_gas_recharge(
                     expected_collection_gas_cost=expected_collection_gas_cost
                 )
-            # 不更新 last_attempt_at，避免 reconcile/dispatch 误判为活跃任务。
+            # last_attempt_at 已在进入 pre-flight 前更新；余额不足也需要节流，
+            # 避免老任务每轮占住 dispatch slice。
             return False
 
         return True

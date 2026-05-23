@@ -291,7 +291,7 @@ class EvmBroadcastTaskTests(TestCase):
 
     def test_broadcast_preflight_threshold_recharges_gas_for_collection(self):
         # 归集场景 native 余额低于阈值：pre-flight 主动补 gas，保持 QUEUED，
-        # 不调用 estimate_gas / send_raw_transaction，不更新 last_attempt_at。
+        # 不调用 estimate_gas / send_raw_transaction，但仍更新 last_attempt_at 做调度节流。
         native = Crypto.objects.create(
             name="Ethereum Broadcast Failure",
             symbol="ETHBF",
@@ -388,8 +388,9 @@ class EvmBroadcastTaskTests(TestCase):
         self.assertEqual(base_task.stage, BroadcastTaskStage.QUEUED)
         self.assertEqual(base_task.result, BroadcastTaskResult.UNKNOWN)
         self.assertEqual(base_task.failure_reason, "")
-        # last_attempt_at 未推进，等下一轮 dispatch 再试
-        self.assertIsNone(broadcast_task.last_attempt_at)
+        # 已进入本次执行流程，即使 pre-flight 触发补 gas 后保持 QUEUED，也要推进尝试时间，
+        # 避免老任务每轮占住 dispatch slice。
+        self.assertIsNotNone(broadcast_task.last_attempt_at)
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_not_called()
         # 核心证据：GasRechargeService.request_recharge 被触发，参数为 expected_collection_gas_cost
@@ -565,7 +566,7 @@ class EvmBroadcastTaskTests(TestCase):
         self.assertFalse(GasRecharge.objects.exists())
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_not_called()
-        self.assertIsNone(broadcast_task.last_attempt_at)
+        self.assertIsNotNone(broadcast_task.last_attempt_at)
 
     def test_broadcast_does_not_estimate_gas_before_send(self):
         native = Crypto.objects.create(

@@ -1,8 +1,8 @@
 # collector 合约部署 gas 上限。
 # NativeCollector: constructor 仅一个 selfdestruct,按原生币转账 21,000 x 4 倍预留。
 # ERC20Collector: constructor 包含 balanceOf + transfer + selfdestruct,按 ERC20 标准转账 65,000 x 2 倍预留。
-GAS_NATIVE_COLLECTOR = 4 * 21_000
-GAS_ERC20_COLLECTOR = 2 * 65_000
+GAS_NATIVE_COLLECTOR = 100_000
+GAS_ERC20_COLLECTOR = 200_000
 
 # 同一 (address, chain) 同时允许在 mempool 中等待确认的最大交易数。
 EVM_PIPELINE_DEPTH = 50
