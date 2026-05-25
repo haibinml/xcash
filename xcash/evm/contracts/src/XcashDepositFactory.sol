@@ -2,11 +2,11 @@
 pragma solidity 0.8.35;
 
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {XcashDepositTemplate} from "./XcashDepositTemplate.sol";
 
 /// @title XcashDepositFactory
 /// @notice Deploys XcashDepositSlot addresses with immutable vault args at deterministic CREATE2 addresses.
 contract XcashDepositFactory {
-    error ZeroDepositTemplate();
     error InvalidDepositTemplate();
     error ZeroVault();
 
@@ -17,8 +17,9 @@ contract XcashDepositFactory {
     address public immutable depositTemplate;
 
     constructor(address depositTemplate_) {
-        if (depositTemplate_ == address(0)) revert ZeroDepositTemplate();
-        if (depositTemplate_.code.length == 0) revert InvalidDepositTemplate();
+        if (depositTemplate_.codehash != keccak256(type(XcashDepositTemplate).runtimeCode)) {
+            revert InvalidDepositTemplate();
+        }
         depositTemplate = depositTemplate_;
     }
 
