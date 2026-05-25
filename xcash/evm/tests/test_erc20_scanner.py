@@ -11,40 +11,31 @@ from web3 import Web3
 
 from chains.models import Address
 from chains.models import AddressUsage
-from chains.models import BroadcastTask
-from chains.models import BroadcastTaskFailureReason
-from chains.models import BroadcastTaskResult
-from chains.models import BroadcastTaskStage
+from chains.models import TxTask
+from chains.models import TxTaskResult
+from chains.models import TxTaskStage
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import OnchainActionType
-from chains.models import OnchainTransfer
+from chains.models import TxTaskType
+from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import Wallet
 from core.models import PLATFORM_SETTINGS_CACHE_KEY
-from core.models import PlatformSettings
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.choices import TxKind
-from evm.models import EvmBroadcastTask
+from evm.models import EvmTxTask
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
 from evm.scanner.erc20 import EvmErc20ScanResult
 from evm.scanner.erc20 import EvmErc20TransferScanner
-from evm.scanner.native import EvmNativeDirectScanner
-from evm.scanner.native import EvmNativeScanResult
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.watchers import EvmWatchSet
 from evm.scanner.watchers import load_watch_set
 from evm.tasks import scan_active_evm_chains
 from evm.tasks import scan_active_evm_erc20_chains
-from evm.tasks import scan_active_evm_native_chains
 from evm.tasks import scan_evm_chain
 from evm.tasks import scan_evm_erc20_chain
-from evm.tasks import scan_evm_native_chain
-from projects.models import Project
-from projects.models import RecipientAddress
-from projects.models import RecipientAddressUsage
 
 
 class EvmErc20ScanWindowTests(SimpleTestCase):
@@ -92,54 +83,6 @@ class EvmErc20ScanWindowTests(SimpleTestCase):
         self.assertGreater(from_block, to_block)
 
 
-class EvmNativeScanWindowTests(SimpleTestCase):
-    def test_native_compute_scan_window_initial_cursor_starts_from_first_batch(self):
-        cursor = EvmScanCursor(last_scanned_block=0)
-        from_block, to_block = EvmNativeDirectScanner._compute_scan_window(
-            cursor=cursor,
-            latest_block=2000,
-            batch_size=16,
-        )
-
-        self.assertEqual(from_block, 1)
-        self.assertEqual(to_block, 16)
-
-    def test_native_compute_scan_window_batch_size_is_net_forward_progress(self):
-        # batch_size 表示本轮应向前追多少新块；replay_blocks 只增加旧块复扫范围，
-        # 不应吞掉净推进量，否则高确认数链会出现 last_scanned_block 缓慢推进但永远追不上。
-        cursor = EvmScanCursor(last_scanned_block=1000)
-        from_block, to_block = EvmNativeDirectScanner._compute_scan_window(
-            cursor=cursor,
-            latest_block=2000,
-            batch_size=16,
-        )
-
-        self.assertEqual(from_block, 999)
-        self.assertEqual(to_block, 1016)
-
-    def test_native_compute_scan_window_caps_to_latest_when_near_chain_head(self):
-        cursor = EvmScanCursor(last_scanned_block=1990)
-        from_block, to_block = EvmNativeDirectScanner._compute_scan_window(
-            cursor=cursor,
-            latest_block=2000,
-            batch_size=16,
-        )
-
-        self.assertEqual(from_block, 1989)
-        self.assertEqual(to_block, 2000)
-
-    def test_native_compute_scan_window_must_still_progress_when_far_behind(self):
-        cursor = EvmScanCursor(last_scanned_block=10_516_050)
-        from_block, to_block = EvmNativeDirectScanner._compute_scan_window(
-            cursor=cursor,
-            latest_block=10_516_343,
-            batch_size=12,
-        )
-
-        self.assertEqual(from_block, 10_516_049)
-        self.assertEqual(to_block, 10_516_062)
-
-
 @override_settings(DEBUG=False)
 class EvmErc20ScannerTests(TestCase):
     def setUp(self):
@@ -159,6 +102,7 @@ class EvmErc20ScannerTests(TestCase):
             confirm_block_count=6,
             active=True,
         )
+        self.chain.erc20_transfer_gas = 65_000
         self.token = Crypto.objects.create(
             name="Scanner Tether USD",
             symbol="USDT-SCANNER",
@@ -177,7 +121,7 @@ class EvmErc20ScannerTests(TestCase):
         self.addr = Address.objects.create(
             wallet=self.wallet,
             chain_type=ChainType.EVM,
-            usage=AddressUsage.Deposit,
+            usage=AddressUsage.Vault,
             bip44_account=0,
             address_index=0,
             address=Web3.to_checksum_address(
@@ -223,21 +167,21 @@ class EvmErc20ScannerTests(TestCase):
         tx_hash: str,
         recipient: str | None = None,
         value_raw: int = 123_000_000,
-    ) -> tuple[BroadcastTask, str]:
+    ) -> tuple[TxTask, str]:
         recipient = recipient or Web3.to_checksum_address("0x" + "52" * 20)
         encoded_args = (
             recipient.removeprefix("0x").rjust(64, "0")
             + hex(value_raw)[2:].rjust(64, "0")
         )
-        base_task = BroadcastTask.objects.create(
+        base_task = TxTask.objects.create(
             chain=self.chain,
             address=self.addr,
-            action_type=OnchainActionType.Withdrawal,
+            tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=BroadcastTaskStage.PENDING_CHAIN,
-            result=BroadcastTaskResult.UNKNOWN,
+            stage=TxTaskStage.PENDING_CHAIN,
+            result=TxTaskResult.UNKNOWN,
         )
-        EvmBroadcastTask.objects.create(
+        EvmTxTask.objects.create(
             base_task=base_task,
             address=self.addr,
             chain=self.chain,
@@ -251,36 +195,6 @@ class EvmErc20ScannerTests(TestCase):
             signed_payload="0x01",
         )
         return base_task, encoded_args
-
-    def _build_native_block(
-        self,
-        *,
-        txs: list[dict],
-        timestamp: int = 1_700_000_123,
-    ) -> dict:
-        return {
-            "number": 20,
-            "hash": bytes.fromhex("20" * 32),
-            "timestamp": timestamp,
-            "transactions": txs,
-        }
-
-    @staticmethod
-    def _build_native_tx(
-        *,
-        from_address: str,
-        to_address: str,
-        value: int,
-        tx_hash_hex: str,
-        input_data: str = "0x",
-    ) -> dict:
-        return {
-            "hash": bytes.fromhex(tx_hash_hex * 32),
-            "from": from_address,
-            "to": to_address,
-            "value": value,
-            "input": input_data,
-        }
 
     def _create_scan_dispatch_ignored_chains(self) -> None:
         Chain.objects.create(
@@ -300,7 +214,7 @@ class EvmErc20ScannerTests(TestCase):
             active=True,
         )
 
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
+    @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_transfer_logs")
@@ -328,7 +242,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(result.to_block, 100)
         self.assertEqual(cursor.last_scanned_block, 100)
 
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
+    @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_transfer_logs")
@@ -341,7 +255,7 @@ class EvmErc20ScannerTests(TestCase):
         _enqueue_processing_mock,
         _mark_pending_confirm_mock,
     ):
-        # 命中的 ERC20 OnchainTransfer 应落到统一 OnchainTransfer 表；首扫会直接对齐链头附近窗口。
+        # 命中的 ERC20 Transfer 应落到统一 Transfer 表；首扫会直接对齐链头附近窗口。
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
         get_transfer_logs_mock.return_value = [
@@ -355,7 +269,7 @@ class EvmErc20ScannerTests(TestCase):
 
         result = EvmErc20TransferScanner.scan_chain(chain=self.chain, batch_size=32)
 
-        transfer = OnchainTransfer.objects.get()
+        transfer = Transfer.objects.get()
         cursor = EvmScanCursor.objects.get(
             chain=self.chain,
             scanner_type=EvmScanCursorType.ERC20_TRANSFER,
@@ -371,7 +285,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(transfer.amount, Decimal("1"))
         self.assertEqual(cursor.last_scanned_block, 100)
 
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
+    @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_transfer_logs")
@@ -384,7 +298,7 @@ class EvmErc20ScannerTests(TestCase):
         _enqueue_processing_mock,
         _mark_pending_confirm_mock,
     ):
-        old_transfer = OnchainTransfer.objects.create(
+        old_transfer = Transfer.objects.create(
             chain=self.chain,
             block=100,
             block_hash="0x" + "99" * 32,
@@ -411,7 +325,7 @@ class EvmErc20ScannerTests(TestCase):
 
         result = EvmErc20TransferScanner.scan_chain(chain=self.chain, batch_size=32)
 
-        replacement = OnchainTransfer.objects.get(
+        replacement = Transfer.objects.get(
             chain=self.chain,
             hash=old_transfer.hash,
             event_id=old_transfer.event_id,
@@ -469,13 +383,9 @@ class EvmErc20ScannerTests(TestCase):
 
         base_task.refresh_from_db()
         self.assertEqual(created, 0)
-        self.assertFalse(OnchainTransfer.objects.filter(hash=tx_hash).exists())
-        self.assertEqual(base_task.stage, BroadcastTaskStage.FINALIZED)
-        self.assertEqual(base_task.result, BroadcastTaskResult.FAILED)
-        self.assertEqual(
-            base_task.failure_reason,
-            BroadcastTaskFailureReason.EXPECTED_TRANSFER_MISSING,
-        )
+        self.assertFalse(Transfer.objects.filter(hash=tx_hash).exists())
+        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.result, TxTaskResult.UNKNOWN)
 
     def test_erc20_scanner_counts_known_internal_hash_created_by_processor(self):
         tx_hash = "0x" + "5a" * 32
@@ -522,7 +432,7 @@ class EvmErc20ScannerTests(TestCase):
                 watch_set=watch_set,
             )
 
-        transfer = OnchainTransfer.objects.get(hash=tx_hash)
+        transfer = Transfer.objects.get(hash=tx_hash)
         self.assertEqual(created, 1)
         self.assertEqual(transfer.event_id, "erc20:11")
         self.assertEqual(transfer.from_address, self.addr.address)
@@ -554,7 +464,7 @@ class EvmErc20ScannerTests(TestCase):
             )
 
         rpc_client.get_block_timestamp.assert_not_called()
-        self.assertEqual(OnchainTransfer.objects.count(), 0)
+        self.assertEqual(Transfer.objects.count(), 0)
 
     def test_erc20_scanner_raises_when_known_internal_hash_missing_receipt(self):
         tx_hash = "0x" + "56" * 32
@@ -587,7 +497,7 @@ class EvmErc20ScannerTests(TestCase):
             )
 
         rpc_client.get_block_timestamp.assert_not_called()
-        self.assertEqual(OnchainTransfer.objects.count(), 0)
+        self.assertEqual(Transfer.objects.count(), 0)
 
     def test_erc20_scanner_processes_duplicate_internal_hash_once(self):
         tx_hash = "0x" + "58" * 32
@@ -638,9 +548,9 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(created, 0)
         rpc_client.get_transaction.assert_called_once_with(tx_hash=tx_hash)
         rpc_client.get_transaction_receipt.assert_called_once_with(tx_hash=tx_hash)
-        self.assertEqual(OnchainTransfer.objects.count(), 0)
+        self.assertEqual(Transfer.objects.count(), 0)
 
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
+    @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_transfer_logs")
@@ -674,7 +584,7 @@ class EvmErc20ScannerTests(TestCase):
         )
         self.assertEqual(first.created_transfers, 1)
         self.assertEqual(second.created_transfers, 0)
-        self.assertEqual(OnchainTransfer.objects.count(), 1)
+        self.assertEqual(Transfer.objects.count(), 1)
         self.assertEqual(cursor.last_scanned_block, 100)
 
     @override_settings(DEBUG=True)
@@ -715,7 +625,7 @@ class EvmErc20ScannerTests(TestCase):
         "currencies.models.Crypto.get_decimals",
         side_effect=AssertionError("scanner should use prefetched token decimals"),
     )
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
+    @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_transfer_logs")
@@ -746,7 +656,7 @@ class EvmErc20ScannerTests(TestCase):
 
         EvmErc20TransferScanner.scan_chain(chain=self.chain, batch_size=32)
 
-        transfer = OnchainTransfer.objects.get()
+        transfer = Transfer.objects.get()
         self.assertEqual(transfer.amount, Decimal("1"))
 
     @patch("chains.service.TransferService.create_observed_transfer")
@@ -777,7 +687,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(result.created_transfers, 0)
         self.assertEqual(result.observed_logs, 1)
         create_observed_transfer_mock.assert_not_called()
-        self.assertEqual(OnchainTransfer.objects.count(), 0)
+        self.assertEqual(Transfer.objects.count(), 0)
 
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_transfer_logs")
     @patch("evm.scanner.erc20.EvmScannerRpcClient.get_latest_block_number")
@@ -820,32 +730,32 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(cursor.last_scanned_block, 100)
         get_transfer_logs_mock.assert_not_called()
 
-    @patch("evm.tasks.scan_evm_native_chain")
-    @patch("evm.tasks.scan_evm_erc20_chain")
-    def test_scan_evm_chain_task_delegates_to_erc20_when_native_scanner_closed(
+    @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
+    @patch("evm.tasks.EvmChainScannerService.scan_chain")
+    def test_scan_evm_chain_task_dispatches_combined_scanner(
         self,
-        scan_erc20_mock,
-        scan_native_mock,
+        scan_chain_mock,
+        reconcile_chain_mock,
     ):
-        # 旧兼容入口不能绕过 native scanner 总开关。
+        scan_chain_mock.return_value = Mock(
+            native=Mock(
+                from_block=1,
+                to_block=2,
+                observed_logs=3,
+                created_transfers=1,
+            ),
+            erc20=Mock(
+                from_block=1,
+                to_block=2,
+                observed_logs=4,
+                created_transfers=2,
+            ),
+        )
+
         scan_evm_chain(self.chain.pk)
 
-        scan_erc20_mock.assert_called_once_with(self.chain.pk)
-        scan_native_mock.assert_not_called()
-
-    @patch("evm.tasks.scan_evm_native_chain")
-    @patch("evm.tasks.scan_evm_erc20_chain")
-    def test_scan_evm_chain_task_delegates_to_native_when_enabled(
-        self,
-        scan_erc20_mock,
-        scan_native_mock,
-    ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-
-        scan_evm_chain(self.chain.pk)
-
-        scan_erc20_mock.assert_called_once_with(self.chain.pk)
-        scan_native_mock.assert_called_once_with(self.chain.pk)
+        scan_chain_mock.assert_called_once()
+        reconcile_chain_mock.assert_called_once()
 
     @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
     @patch("evm.tasks.EvmChainScannerService.scan_erc20")
@@ -883,42 +793,6 @@ class EvmErc20ScannerTests(TestCase):
         scan_erc20_mock.assert_called_once()
         reconcile_chain_mock.assert_called_once()
 
-    @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
-    @patch("evm.tasks.EvmChainScannerService.scan_native")
-    def test_scan_evm_native_chain_task_dispatches_native_scanner(
-        self,
-        scan_native_mock,
-        reconcile_chain_mock,
-    ):
-        # native 扫描应有独立 Celery 入口，便于使用低于 ERC20 的扫描频率。
-        scan_native_mock.return_value = EvmNativeScanResult(
-            from_block=1,
-            to_block=2,
-            latest_block=100,
-            observed_transfers=1,
-            created_transfers=1,
-        )
-
-        scan_evm_native_chain(self.chain.pk)
-
-        scan_native_mock.assert_called_once()
-        reconcile_chain_mock.assert_called_once()
-
-    @patch("evm.tasks.InternalEvmTaskCoordinator.reconcile_chain")
-    @patch(
-        "evm.tasks.EvmChainScannerService.scan_native",
-        side_effect=EvmScannerRpcError("native rpc timeout"),
-    )
-    def test_scan_evm_native_chain_runs_coordinator_when_rpc_fails(
-        self,
-        scan_native_mock,
-        reconcile_chain_mock,
-    ):
-        scan_evm_native_chain(self.chain.pk)
-
-        scan_native_mock.assert_called_once()
-        reconcile_chain_mock.assert_called_once()
-
     @patch("evm.tasks.scan_evm_erc20_chain.delay")
     def test_scan_active_evm_erc20_chains_dispatches_erc20_task(
         self,
@@ -930,454 +804,22 @@ class EvmErc20ScannerTests(TestCase):
 
         delay_mock.assert_called_once_with(self.chain.pk)
 
-    @patch("evm.tasks.scan_evm_native_chain.delay")
-    @patch("evm.tasks.scan_evm_erc20_chain.delay")
-    def test_scan_active_evm_chains_compat_dispatches_split_tasks_when_enabled(
-        self,
-        erc20_delay_mock,
-        native_delay_mock,
-    ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-        self._create_scan_dispatch_ignored_chains()
-
-        scan_active_evm_chains()
-
-        erc20_delay_mock.assert_called_once_with(self.chain.pk)
-        native_delay_mock.assert_called_once_with(self.chain.pk)
-
-    @patch("evm.tasks.scan_evm_native_chain.delay")
-    @patch("evm.tasks.scan_evm_erc20_chain.delay")
-    def test_scan_active_evm_chains_compat_skips_native_when_closed(
-        self,
-        erc20_delay_mock,
-        native_delay_mock,
-    ):
-        self._create_scan_dispatch_ignored_chains()
-
-        scan_active_evm_chains()
-
-        erc20_delay_mock.assert_called_once_with(self.chain.pk)
-        native_delay_mock.assert_not_called()
-
-    @patch("evm.tasks.scan_evm_native_chain.delay")
-    def test_scan_active_evm_native_chains_skips_when_global_native_scanner_closed(
+    @patch("evm.tasks.scan_evm_chain.delay")
+    def test_scan_active_evm_chains_dispatches_combined_task(
         self,
         delay_mock,
     ):
         self._create_scan_dispatch_ignored_chains()
 
-        scan_active_evm_native_chains()
-
-        delay_mock.assert_not_called()
-
-    @patch("evm.tasks.scan_evm_native_chain.delay")
-    def test_scan_active_evm_native_chains_dispatches_native_task(
-        self,
-        delay_mock,
-    ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-        self._create_scan_dispatch_ignored_chains()
-
-        scan_active_evm_native_chains()
+        scan_active_evm_chains()
 
         delay_mock.assert_called_once_with(self.chain.pk)
 
-    @patch("evm.tasks.scan_evm_native_chain.delay")
-    def test_scan_active_evm_native_chains_skips_closed_native_scanner(
-        self,
-        delay_mock,
-    ):
-        self._create_scan_dispatch_ignored_chains()
-
-        scan_active_evm_native_chains()
-
-        delay_mock.assert_not_called()
-
-    def test_watch_set_includes_recipient_addresses(self):
-        # 收币地址同样属于系统观察集，后续 ERC20 扫描需要能命中这些地址。
-        RecipientAddress.objects.create(
-            name="project-recipient",
-            project_id=self._create_project_id(),
-            chain_type=ChainType.EVM,
-            address=Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000dd"
-            ),
-            usage=RecipientAddressUsage.INVOICE,
-        )
-
+    def test_watch_set_includes_system_addresses(self):
+        # 系统地址属于观察集，后续 ERC20 扫描需要能命中这些地址。
         watch_set = load_watch_set(chain=self.chain)
 
-        self.assertIn(
-            Web3.to_checksum_address("0x00000000000000000000000000000000000000dD"),
-            watch_set.watched_addresses,
-        )
-
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch(
-        "evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status",
-        return_value=None,
-    )
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_first_scan_without_cursor_starts_from_latest_tail_window(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        _get_receipt_status_mock,
-        _get_block_receipts_status_mock,
-        _enqueue_processing_mock,
-        _mark_pending_confirm_mock,
-    ):
-        # 原生币首扫若系统中没有游标，也应只覆盖链头附近窗口，不能从 1 开始全量爬。
-        get_latest_block_number_mock.return_value = 20
-        get_full_block_mock.side_effect = (
-            lambda *, block_number: self._build_native_block(txs=[])
-        )
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        cursor = EvmScanCursor.objects.get(
-            chain=self.chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-        )
-        # native replay_blocks = 2, from_block = 20 + 1 - 2 = 19
-        self.assertEqual(result.from_block, 19)
-        self.assertEqual(result.to_block, 20)
-        self.assertEqual(cursor.last_scanned_block, 20)
-
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch(
-        "evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status",
-        return_value=None,
-    )
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_creates_transfer_for_direct_value_transfer(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        _get_block_receipts_status_mock,
-        _enqueue_processing_mock,
-        _mark_pending_confirm_mock,
-    ):
-        # 顶层 input=0x 的 value transfer 若命中系统地址，应按 native:tx 统一落库。
-        # 首扫窗口直接对齐链头附近，因此命中交易也应位于最新尾部区间内。
-        get_latest_block_number_mock.return_value = 20
-        get_receipt_status_mock.return_value = 1
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000cc"
-                        ),
-                        to_address=self.addr.address,
-                        value=10**18,
-                        tx_hash_hex="cd",
-                    )
-                ]
-            )
-            if block_number == 20
-            else self._build_native_block(txs=[])
-        )
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        transfer = OnchainTransfer.objects.get(event_id="native:tx")
-        cursor = EvmScanCursor.objects.get(
-            chain=self.chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-        )
-
-        self.assertEqual(result.observed_transfers, 1)
-        self.assertEqual(result.created_transfers, 1)
-        self.assertEqual(transfer.hash, "0x" + "cd" * 32)
-        self.assertEqual(transfer.amount, Decimal("1"))
-        self.assertEqual(cursor.last_scanned_block, 20)
-
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch(
-        "evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status",
-        return_value=None,
-    )
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_replay_drops_unconfirmed_transfer_when_block_hash_changes(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        _get_block_receipts_status_mock,
-        _enqueue_processing_mock,
-        _mark_pending_confirm_mock,
-    ):
-        tx_hash = "0x" + "cd" * 32
-        old_transfer = OnchainTransfer.objects.create(
-            chain=self.chain,
-            block=20,
-            block_hash="0x" + "88" * 32,
-            hash=tx_hash,
-            event_id="native:tx",
-            crypto=self.native,
-            from_address=Web3.to_checksum_address("0x" + "cc" * 20),
-            to_address=self.addr.address,
-            value=Decimal(10**18),
-            amount=Decimal("1"),
-            timestamp=1_700_000_000,
-            datetime=timezone.now(),
-            status=TransferStatus.CONFIRMING,
-        )
-        get_latest_block_number_mock.return_value = 20
-        get_receipt_status_mock.return_value = 1
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=old_transfer.from_address,
-                        to_address=old_transfer.to_address,
-                        value=10**18,
-                        tx_hash_hex="cd",
-                    )
-                ]
-            )
-            if block_number == 20
-            else self._build_native_block(txs=[])
-        )
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        replacement = OnchainTransfer.objects.get(
-            chain=self.chain,
-            hash=tx_hash,
-            event_id="native:tx",
-        )
-        self.assertEqual(result.created_transfers, 1)
-        self.assertNotEqual(replacement.pk, old_transfer.pk)
-        self.assertEqual(replacement.block_hash, "0x" + "20" * 32)
-
-    @patch("chains.service.TransferService.create_observed_transfer")
-    @patch(
-        "evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status",
-        return_value=None,
-    )
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_ignores_failed_transaction_without_creating_transfer(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        _get_block_receipts_status_mock,
-        create_observed_transfer_mock,
-    ):
-        # status=0 的原生交易不应落成 OnchainTransfer；失败语义只属于内部任务协调器。
-        get_latest_block_number_mock.return_value = 12
-        get_receipt_status_mock.return_value = 0
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=self.addr.address,
-                        to_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000cc"
-                        ),
-                        value=10**18,
-                        tx_hash_hex="de",
-                    )
-                ]
-            )
-            if block_number == 1
-            else self._build_native_block(txs=[])
-        )
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=3)
-
-        self.assertEqual(result.observed_transfers, 0)
-        self.assertEqual(result.created_transfers, 0)
-        create_observed_transfer_mock.assert_not_called()
-        self.assertEqual(OnchainTransfer.objects.count(), 0)
-
-    @patch("chains.service.TransferService.create_observed_transfer")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_ignores_contract_calls_with_calldata(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        create_observed_transfer_mock,
-    ):
-        # 原生币扫描首版只认直转；带 calldata 的合约调用即使 value>0 也必须跳过。
-        get_latest_block_number_mock.return_value = 12
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000cc"
-                        ),
-                        to_address=self.addr.address,
-                        value=10**18,
-                        tx_hash_hex="ef",
-                        input_data="0xa9059cbb",
-                    )
-                ]
-            )
-            if block_number == 1
-            else self._build_native_block(txs=[])
-        )
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=3)
-
-        self.assertEqual(result.observed_transfers, 0)
-        self.assertEqual(result.created_transfers, 0)
-        create_observed_transfer_mock.assert_not_called()
-
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch(
-        "evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status",
-        return_value=None,
-    )
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_rewind_window_is_idempotent(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        _get_block_receipts_status_mock,
-        _enqueue_processing_mock,
-        _mark_pending_confirm_mock,
-    ):
-        # 原生币尾部重扫会重复看到同一笔交易，但 OnchainTransfer 唯一键必须保证不重复落库。
-        get_latest_block_number_mock.return_value = 12
-        get_receipt_status_mock.return_value = 1
-        repeated_block = self._build_native_block(
-            txs=[
-                self._build_native_tx(
-                    from_address=Web3.to_checksum_address(
-                        "0x00000000000000000000000000000000000000cc"
-                    ),
-                    to_address=self.addr.address,
-                    value=10**18,
-                    tx_hash_hex="fa",
-                )
-            ]
-        )
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            repeated_block if block_number == 11 else self._build_native_block(txs=[])
-        )
-
-        first = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=12)
-        second = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=12)
-
-        self.assertEqual(first.created_transfers, 1)
-        self.assertEqual(second.created_transfers, 0)
-        self.assertEqual(
-            OnchainTransfer.objects.filter(event_id="native:tx").count(), 1
-        )
-
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_uses_block_receipts_when_supported(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        get_block_receipts_status_mock,
-        _enqueue_processing_mock,
-        _mark_pending_confirm_mock,
-    ):
-        # 节点支持 eth_getBlockReceipts 时，命中块只调一次整块 receipt 拉取，
-        # 不应再走逐笔 eth_getTransactionReceipt 的老路径。
-        tx_hash_hex = "ab"
-        tx_hash = "0x" + tx_hash_hex * 32
-        get_latest_block_number_mock.return_value = 20
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000cc"
-                        ),
-                        to_address=self.addr.address,
-                        value=10**18,
-                        tx_hash_hex=tx_hash_hex,
-                    )
-                ]
-            )
-            if block_number == 20
-            else self._build_native_block(txs=[])
-        )
-        get_block_receipts_status_mock.return_value = {tx_hash: 1}
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        self.assertEqual(result.created_transfers, 1)
-        get_receipt_status_mock.assert_not_called()
-        self.assertTrue(
-            OnchainTransfer.objects.filter(hash=tx_hash, event_id="native:tx").exists()
-        )
-
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_falls_back_when_block_receipts_misses_matched_tx(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        get_block_receipts_status_mock,
-        _enqueue_processing_mock,
-        _mark_pending_confirm_mock,
-    ):
-        # 部分 RPC provider 的 eth_getBlockReceipts 可能返回缺项/缺 status；
-        # 对已命中的 tx 必须单笔 fallback，否则会漏扫成功转账并推进游标。
-        tx_hash_hex = "ac"
-        tx_hash = "0x" + tx_hash_hex * 32
-        get_latest_block_number_mock.return_value = 20
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000cc"
-                        ),
-                        to_address=self.addr.address,
-                        value=10**18,
-                        tx_hash_hex=tx_hash_hex,
-                    )
-                ]
-            )
-            if block_number == 20
-            else self._build_native_block(txs=[])
-        )
-        get_block_receipts_status_mock.return_value = {}
-        get_receipt_status_mock.return_value = 1
-
-        result = EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        self.assertEqual(result.created_transfers, 1)
-        get_receipt_status_mock.assert_called_once_with(tx_hash=tx_hash)
-        self.assertTrue(
-            OnchainTransfer.objects.filter(hash=tx_hash, event_id="native:tx").exists()
-        )
+        self.assertIn(self.addr.address, watch_set.watched_addresses)
 
     def test_erc20_cursor_advance_never_rewinds_database_value(self):
         cursor = EvmScanCursor.objects.create(
@@ -1398,64 +840,6 @@ class EvmErc20ScannerTests(TestCase):
 
         cursor.refresh_from_db()
         self.assertEqual(cursor.last_scanned_block, 150)
-
-    def test_native_cursor_advance_never_rewinds_database_value(self):
-        cursor = EvmScanCursor.objects.create(
-            chain=self.chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-            last_scanned_block=100,
-        )
-        stale_cursor = EvmScanCursor.objects.get(pk=cursor.pk)
-        EvmScanCursor.objects.filter(pk=cursor.pk).update(
-            last_scanned_block=150,
-        )
-
-        EvmNativeDirectScanner._advance_cursor(
-            cursor=stale_cursor,
-            latest_block=120,
-            scanned_to_block=120,
-        )
-
-        cursor.refresh_from_db()
-        self.assertEqual(cursor.last_scanned_block, 150)
-
-    @patch("chains.service.TransferService.create_observed_transfer")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_block_receipts_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_transaction_receipt_status")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_full_block")
-    @patch("evm.scanner.native.EvmScannerRpcClient.get_latest_block_number")
-    def test_native_scan_skips_block_receipts_for_blocks_without_matches(
-        self,
-        get_latest_block_number_mock,
-        get_full_block_mock,
-        get_receipt_status_mock,
-        get_block_receipts_status_mock,
-        _create_observed_transfer_mock,
-    ):
-        # 空块 / 无命中的块不应再多付一次 eth_getBlockReceipts；
-        # 老路径每块只 1 次 eth_getBlockByNumber，新路径必须保持相同上限。
-        get_latest_block_number_mock.return_value = 20
-        get_full_block_mock.side_effect = lambda *, block_number: (
-            self._build_native_block(
-                txs=[
-                    self._build_native_tx(
-                        from_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000cc"
-                        ),
-                        to_address=Web3.to_checksum_address(
-                            "0x00000000000000000000000000000000000000dd"
-                        ),
-                        value=10**18,
-                        tx_hash_hex="ee",
-                    )
-                ]
-            )
-        )
-
-        EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        get_block_receipts_status_mock.assert_not_called()
-        get_receipt_status_mock.assert_not_called()
 
     @patch(
         "evm.scanner.erc20.EvmScannerRpcClient.get_latest_block_number",
@@ -1501,7 +885,7 @@ class EvmErc20ScannerTests(TestCase):
         get_transfer_logs_mock,
         create_observed_transfer_mock,
     ):
-        # ERC20 OnchainTransfer 事件 value=0 无业务意义（如某些代币的 approve 触发），应在扫描层过滤。
+        # ERC20 Transfer 事件 value=0 无业务意义（如某些代币的 approve 触发），应在扫描层过滤。
         get_latest_block_number_mock.return_value = 40
         get_transfer_logs_mock.return_value = [
             self._build_transfer_log(
@@ -1518,30 +902,3 @@ class EvmErc20ScannerTests(TestCase):
 
         self.assertEqual(result.created_transfers, 0)
         create_observed_transfer_mock.assert_not_called()
-
-    @patch(
-        "evm.scanner.native.EvmScannerRpcClient.get_latest_block_number",
-        side_effect=EvmScannerRpcError("node unreachable"),
-    )
-    def test_native_scan_records_cursor_error_when_rpc_fails(
-        self, _get_latest_block_number_mock
-    ):
-        # 原生币扫描 RPC 失败后必须把错误留在游标上，与 ERC20 扫描行为一致。
-        with self.assertRaises(EvmScannerRpcError):
-            EvmNativeDirectScanner.scan_chain(chain=self.chain, batch_size=4)
-
-        cursor = EvmScanCursor.objects.get(
-            chain=self.chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-        )
-        self.assertEqual(cursor.last_scanned_block, 0)
-        self.assertEqual(cursor.last_error, "node unreachable")
-        self.assertIsNotNone(cursor.last_error_at)
-
-    def _create_project_id(self) -> int:
-        project = Project.objects.create(
-            name="scanner-project",
-            wallet=Wallet.objects.create(),
-            webhook="https://example.com/webhook",
-        )
-        return project.pk

@@ -2,37 +2,245 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db import models
 from django.db import transaction as db_transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from eth_utils import keccak
 from web3 import Web3
 
-import evm.intents
 from chains.models import AddressChainState
-from chains.models import BroadcastTask
-from chains.models import BroadcastTaskFailureReason
-from chains.models import BroadcastTaskResult
-from chains.models import BroadcastTaskStage
+from chains.models import AddressUsage
+from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxHash
+from chains.models import TxTask
+from chains.models import TxTaskResult
+from chains.models import TxTaskStage
+from chains.models import TxTaskType
 from chains.signer import get_signer_backend
+from chains.types import AddressStr
+from common.fields import AddressField
 from common.fields import EvmAddressField
 from common.models import UndeletableModel
 from evm.choices import TxKind
 from evm.constants import EVM_PIPELINE_DEPTH
-from evm.intents import assert_action_type_implemented
+from evm.contracts_codec import predict_xcash_deposit_slot_address
+from evm.deployments import get_xcash_deposit_deployment
+from evm.intents import build_deposit_slot_collect_intent
+from evm.intents import build_deposit_slot_deploy_intent
 from evm.intents import get_preflight_buffer_multiplier
+from users.models import Customer
 
 if TYPE_CHECKING:
     from evm.intents import EvmTxIntent
 
 
+class DepositSlot(models.Model):
+    """客户在指定 EVM 链上的 XcashDeposit DepositSlot。"""
+
+    customer = models.ForeignKey(
+        Customer, on_delete=models.CASCADE, verbose_name=_("客户")
+    )
+    chain = models.ForeignKey(Chain, on_delete=models.CASCADE, verbose_name=_("链"))
+    address = AddressField(_("DepositSlot 地址"), unique=True)
+    vault_address = AddressField(_("Vault 地址"))
+    salt = models.BinaryField(_("CREATE2 Salt"), max_length=32)
+    created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("customer", "chain"),
+                name="uniq_evm_deposit_slot_customer_chain",
+            ),
+        ]
+        verbose_name = _("DepositSlot")
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return self.address
+
+    @staticmethod
+    def build_customer_salt(*, customer: Customer, chain: Chain) -> bytes:
+        return keccak(
+            b"xcash:deposit-slot:customer:"
+            + str(customer.project_id).encode()
+            + b":"
+            + customer.uid.encode()
+            + b":"
+            + chain.code.encode()
+        )
+
+    @staticmethod
+    def get_address(chain: Chain, customer: Customer) -> AddressStr:
+        if chain.type != ChainType.EVM:
+            raise ValueError("DepositSlot 仅支持 EVM 链")
+
+        existing = DepositSlot.objects.filter(
+            chain=chain,
+            customer=customer,
+        ).first()
+        if existing is not None:
+            db_transaction.on_commit(
+                lambda slot_pk=existing.pk: DepositSlot.schedule_deploy(slot_pk)
+            )
+            return existing.address
+
+        deployment = get_xcash_deposit_deployment(chain.code)
+        vault = customer.project.wallet.get_address(
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.Vault,
+        )
+        salt = DepositSlot.build_customer_salt(customer=customer, chain=chain)
+        slot_address = predict_xcash_deposit_slot_address(
+            factory=deployment.deposit_factory,
+            deposit_template=deployment.deposit_template,
+            vault=vault.address,
+            salt=salt,
+        )
+        try:
+            slot, created = DepositSlot.objects.get_or_create(
+                chain=chain,
+                customer=customer,
+                defaults={
+                    "address": slot_address,
+                    "vault_address": vault.address,
+                    "salt": salt,
+                },
+            )
+        except IntegrityError as exc:
+            try:
+                slot = DepositSlot.objects.get(chain=chain, customer=customer)
+            except DepositSlot.DoesNotExist as not_exist_exc:
+                raise exc from not_exist_exc
+        else:
+            if created:
+                db_transaction.on_commit(
+                    lambda slot_pk=slot.pk: DepositSlot.schedule_deploy(slot_pk)
+                )
+        return slot.address
+
+    @staticmethod
+    def schedule_deploy(slot_pk: int) -> EvmTxTask:
+        slot = DepositSlot.objects.select_related(
+            "chain",
+            "customer__project__wallet",
+        ).get(pk=slot_pk)
+        vault = slot.customer.project.wallet.get_address(
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.Vault,
+        )
+        current_vault_address = Web3.to_checksum_address(vault.address)
+        slot_vault_address = Web3.to_checksum_address(slot.vault_address)
+        if current_vault_address != slot_vault_address:
+            raise RuntimeError(
+                "DepositSlot Vault 地址不一致："
+                f"slot_id={slot.pk} expected={slot_vault_address} "
+                f"actual={current_vault_address}"
+            )
+
+        deployment = get_xcash_deposit_deployment(slot.chain.code)
+        intent = build_deposit_slot_deploy_intent(
+            address=vault,
+            chain=slot.chain,
+            factory_address=deployment.deposit_factory,
+            vault_address=slot_vault_address,
+            salt=bytes(slot.salt),
+        )
+        existing_task = (
+            EvmTxTask.objects.filter(
+                address=vault,
+                chain=slot.chain,
+                to=intent.to,
+                data=intent.data,
+                base_task__tx_type=TxTaskType.DepositSlotDeploy,
+                base_task__result=TxTaskResult.UNKNOWN,
+            )
+            .exclude(base_task__stage=TxTaskStage.FINALIZED)
+            .first()
+        )
+        if existing_task is not None:
+            return existing_task
+
+        return EvmTxTask.schedule(intent)
+
+    @staticmethod
+    def schedule_collect_for_deposit(deposit_pk: int) -> EvmTxTask | None:
+        from deposits.models import Deposit
+
+        deposit = Deposit.objects.select_related(
+            "customer__project__wallet",
+            "transfer__chain",
+            "transfer__crypto",
+        ).get(pk=deposit_pk)
+        transfer = deposit.transfer
+        chain = transfer.chain
+        crypto = transfer.crypto
+
+        if crypto.pk == chain.native_coin_id:
+            return None
+
+        try:
+            slot = DepositSlot.objects.get(
+                chain=chain,
+                customer=deposit.customer,
+                address=transfer.to_address,
+            )
+        except DepositSlot.DoesNotExist as exc:
+            raise RuntimeError(
+                "DepositSlot 不存在："
+                f"deposit_id={deposit.pk} chain={chain.code} "
+                f"customer_id={deposit.customer_id} address={transfer.to_address}"
+            ) from exc
+
+        vault = deposit.customer.project.wallet.get_address(
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.Vault,
+        )
+        current_vault_address = Web3.to_checksum_address(vault.address)
+        slot_vault_address = Web3.to_checksum_address(slot.vault_address)
+        if current_vault_address != slot_vault_address:
+            raise RuntimeError(
+                "DepositSlot Vault 地址不一致："
+                f"slot_id={slot.pk} expected={slot_vault_address} actual={current_vault_address}"
+            )
+
+        token_address = crypto.address(chain)
+        if not token_address:
+            raise RuntimeError(
+                f"Crypto {crypto.symbol} 未部署在链 {chain.code}，无法调度 DepositSlot 归集"
+            )
+
+        intent = build_deposit_slot_collect_intent(
+            address=vault,
+            chain=chain,
+            deposit_slot_address=slot.address,
+            token_address=token_address,
+        )
+        existing_task = (
+            EvmTxTask.objects.filter(
+                address=vault,
+                chain=chain,
+                to=intent.to,
+                data=intent.data,
+                base_task__tx_type=TxTaskType.DepositSlotCollect,
+                base_task__result=TxTaskResult.UNKNOWN,
+            )
+            .exclude(base_task__stage=TxTaskStage.FINALIZED)
+            .first()
+        )
+        if existing_task is not None:
+            return existing_task
+
+        return EvmTxTask.schedule(intent)
+
+
 class EvmScanCursorType(models.TextChoices):
     """定义 EVM 自扫描器的游标类型。"""
 
-    NATIVE_DIRECT = "native_direct", _("原生币直转")
+    NATIVE_DEPOSIT = "native_deposit", _("原生币充值")
     ERC20_TRANSFER = "erc20_transfer", _("ERC20 转账")
 
 
@@ -77,10 +285,10 @@ class EvmScanCursor(models.Model):
         return f"{self.chain.code}:{self.scanner_type}"
 
 
-class EvmBroadcastTask(UndeletableModel):
+class EvmTxTask(UndeletableModel):
     # base_task 是跨链统一锚点；EVM 子表继续保存 nonce/gas/data 等链特有执行参数。
     base_task = models.OneToOneField(
-        "chains.BroadcastTask",
+        "chains.TxTask",
         on_delete=models.CASCADE,
         related_name="evm_task",
         verbose_name=_("通用链上任务"),
@@ -121,8 +329,8 @@ class EvmBroadcastTask(UndeletableModel):
         constraints = [
             models.UniqueConstraint(
                 fields=("address", "chain", "nonce"),
-                # 约束名直接采用 BroadcastTask 语义，保持当前模型命名一致。
-                name="uniq_evm_broadcast_task_address_chain_nonce",
+                # 约束名直接采用 TxTask 语义，保持当前模型命名一致。
+                name="uniq_evm_tx_task_address_chain_nonce",
             ),
             models.CheckConstraint(
                 condition=models.Q(
@@ -131,11 +339,11 @@ class EvmBroadcastTask(UndeletableModel):
                         TxKind.CONTRACT_CALL,
                     ]
                 ),
-                name="ck_evm_broadcast_task_tx_kind_valid",
+                name="ck_evm_tx_task_tx_kind_valid",
             ),
         ]
         ordering = ("created_at",)
-        # EVM 主执行对象统一命名为 BroadcastTask，避免继续把稳定任务对象写成历史别名。
+        # EVM 主执行对象统一命名为 TxTask，避免继续把稳定任务对象写成历史别名。
         verbose_name = _("链上任务")
         verbose_name_plural = verbose_name
 
@@ -179,20 +387,9 @@ class EvmBroadcastTask(UndeletableModel):
         current_native_balance = self.chain.w3.eth.get_balance(self.address.address)  # noqa: SLF001
         signed_gas_price = int(self.gas_price)
         multiplier = get_preflight_buffer_multiplier(TxKind(self.tx_kind))
-        expected_collection_gas_cost = signed_gas_price * self.chain.erc20_transfer_gas
         buffer_required = int(self.value) + multiplier * self.gas * signed_gas_price
-        if current_native_balance < buffer_required:
-            # 仅归集场景补 gas；Withdrawal 的 address 是 Vault 本身，补 gas 无意义，
-            # 保持 QUEUED 静默返回，等运营向 Vault 注资即可。
-            if self._is_eligible_for_gas_recharge():
-                self._request_gas_recharge(
-                    expected_collection_gas_cost=expected_collection_gas_cost
-                )
-            # last_attempt_at 已在进入 pre-flight 前更新；余额不足也需要节流，
-            # 避免老任务每轮占住 dispatch slice。
-            return False
-
-        return True
+        # 余额不足时保持 QUEUED，等待运营向发起地址补充 gas。
+        return current_native_balance >= buffer_required
 
     def _record_broadcast_attempt(self) -> None:
         self.last_attempt_at = timezone.now()
@@ -218,7 +415,7 @@ class EvmBroadcastTask(UndeletableModel):
         """返回当前任务所有已知 tx_hash，按新版本优先查询。"""
         hashes: list[str] = []
         base_tx_hash = (
-            BroadcastTask.objects.filter(pk=self.base_task_id)
+            TxTask.objects.filter(pk=self.base_task_id)
             .values_list("tx_hash", flat=True)
             .first()
         )
@@ -226,7 +423,7 @@ class EvmBroadcastTask(UndeletableModel):
             hashes.append(base_tx_hash)
 
         for tx_hash in (
-            TxHash.objects.filter(broadcast_task_id=self.base_task_id)
+            TxHash.objects.filter(tx_task_id=self.base_task_id)
             .order_by("-version")
             .values_list("hash", flat=True)
         ):
@@ -256,12 +453,12 @@ class EvmBroadcastTask(UndeletableModel):
         中断。再次执行时不能盲目重发或让 nonce too low 卡住队列，应先用历史
         hash 观察链上事实，再回到统一 coordinator/业务管线。
         """
-        base_task = BroadcastTask.objects.only("stage", "result", "tx_hash").get(
+        base_task = TxTask.objects.only("stage", "result", "tx_hash").get(
             pk=self.base_task_id
         )
         if (
-            base_task.stage != BroadcastTaskStage.QUEUED
-            or base_task.result != BroadcastTaskResult.UNKNOWN
+            base_task.stage != TxTaskStage.QUEUED
+            or base_task.result != TxTaskResult.UNKNOWN
         ):
             return False
 
@@ -290,56 +487,12 @@ class EvmBroadcastTask(UndeletableModel):
         self, *, allow_pending_chain_rebroadcast: bool
     ) -> bool:
         """校验当前父任务阶段是否允许进入真实广播副作用。"""
-        base_task = BroadcastTask.objects.only("stage", "result").get(
-            pk=self.base_task_id
-        )
-        if base_task.result != BroadcastTaskResult.UNKNOWN:
+        base_task = TxTask.objects.only("stage", "result").get(pk=self.base_task_id)
+        if base_task.result != TxTaskResult.UNKNOWN:
             return False
-        if base_task.stage == BroadcastTaskStage.PENDING_CHAIN:
+        if base_task.stage == TxTaskStage.PENDING_CHAIN:
             return allow_pending_chain_rebroadcast
-        return base_task.stage == BroadcastTaskStage.QUEUED
-
-    def _is_eligible_for_gas_recharge(self) -> bool:
-        """判断当前任务是否适用"向其 address 补 gas"。
-
-        条件：
-        - base_task.action_type 在 EVM gas 补给派发表中允许补给
-        - self.address 已登记为有效 DepositAddress（排除其它用途的地址）
-
-        Withdrawal 任务的 address 本身即 Vault，补 gas 会形成 vault→vault 死循环，
-        故排除；非归集类型直接返回 False。
-        """
-        if not evm.intents.is_gas_rechargeable(self.base_task.action_type):
-            return False
-
-        from deposits.models import DepositAddress  # noqa: PLC0415
-
-        return DepositAddress.objects.filter(address=self.address).exists()
-
-    def _request_gas_recharge(self, *, expected_collection_gas_cost: int) -> None:
-        """pre-flight 阈值不足时，委托 GasRechargeService 幂等补 gas。
-
-        调用此方法前须已通过 _is_eligible_for_gas_recharge 校验，确保
-        self.address 存在对应 DepositAddress。内部再 select_related 拉齐
-        Vault 派生所需字段；若 DB 关系异常（极端情况）记录日志静默跳过，
-        让上层保持 QUEUED 等下一轮再试，而不是把 pre-flight 打成硬错误。
-        """
-        from deposits.models import DepositAddress  # noqa: PLC0415
-        from deposits.service import GasRechargeService  # noqa: PLC0415
-
-        try:
-            deposit_address = DepositAddress.objects.select_related(
-                "customer__project__wallet",
-                "address",
-            ).get(address=self.address)
-        except DepositAddress.DoesNotExist:
-            return
-
-        GasRechargeService.request_recharge(
-            deposit_address=deposit_address,
-            chain=self.chain,
-            expected_collection_gas_cost=expected_collection_gas_cost,
-        )
+        return base_task.stage == TxTaskStage.QUEUED
 
     @staticmethod
     def _replacement_gas_price(*, old_gas_price: int, current_gas_price: int) -> int:
@@ -394,12 +547,12 @@ class EvmBroadcastTask(UndeletableModel):
 
     def _mark_pending_chain(self) -> None:
         # 首次成功提交到节点后，统一父任务从"待广播"进入"待上链"。
-        BroadcastTask.objects.filter(
+        TxTask.objects.filter(
             pk=self.base_task_id,
-            stage=BroadcastTaskStage.QUEUED,
-            result=BroadcastTaskResult.UNKNOWN,
+            stage=TxTaskStage.QUEUED,
+            result=TxTaskResult.UNKNOWN,
         ).update(
-            stage=BroadcastTaskStage.PENDING_CHAIN,
+            stage=TxTaskStage.PENDING_CHAIN,
             updated_at=timezone.now(),
         )
 
@@ -409,22 +562,22 @@ class EvmBroadcastTask(UndeletableModel):
 
     def has_lower_queued_nonce(self) -> bool:
         """同账户更低 nonce 尚未提交到节点（QUEUED）时阻断，保证 nonce 按顺序进入 mempool。"""
-        return EvmBroadcastTask.objects.filter(
+        return EvmTxTask.objects.filter(
             address=self.address,
             chain=self.chain,
             nonce__lt=self.nonce,
-            base_task__stage=BroadcastTaskStage.QUEUED,
-            base_task__result=BroadcastTaskResult.UNKNOWN,
+            base_task__stage=TxTaskStage.QUEUED,
+            base_task__result=TxTaskResult.UNKNOWN,
         ).exists()
 
     def is_pipeline_full(self) -> bool:
         """同地址同链已有 >=EVM_PIPELINE_DEPTH 笔在 mempool 中等待确认时阻断。"""
         return (
-            EvmBroadcastTask.objects.filter(
+            EvmTxTask.objects.filter(
                 address=self.address,
                 chain=self.chain,
-                base_task__stage=BroadcastTaskStage.PENDING_CHAIN,
-                base_task__result=BroadcastTaskResult.UNKNOWN,
+                base_task__stage=TxTaskStage.PENDING_CHAIN,
+                base_task__result=TxTaskResult.UNKNOWN,
             ).count()
             >= EVM_PIPELINE_DEPTH
         )
@@ -456,18 +609,16 @@ class EvmBroadcastTask(UndeletableModel):
         return "nonce too low" in str(exc).lower()
 
     @classmethod
-    def schedule(cls, intent: EvmTxIntent) -> EvmBroadcastTask:
-        """按 EvmTxIntent 原子创建待执行广播任务。
+    def schedule(cls, intent: EvmTxIntent) -> EvmTxTask:
+        """按 EvmTxIntent 原子创建待执行交易任务。
 
         通过 AddressChainState 行锁对 (address, chain) 串行化，杜绝并发 nonce
         冲突。verify_fn 必须在行锁内、nonce 分配前执行；验证失败时整个事务
-        回滚，避免留下未通过业务二次校验的 BroadcastTask 或 nonce 空洞。
+        回滚，避免留下未通过业务二次校验的 TxTask 或 nonce 空洞。
 
         首次签名和首个 tx_hash 生成延后到 broadcast()；内部稳定身份只依赖
         (address, chain, nonce)。
         """
-        assert_action_type_implemented(intent.action_type)
-
         with db_transaction.atomic():
             AddressChainState.acquire_for_update(
                 address=intent.address,
@@ -479,15 +630,15 @@ class EvmBroadcastTask(UndeletableModel):
                 intent.verify_fn()
 
             nonce = cls._next_nonce(intent.address, intent.chain)
-            base_task = BroadcastTask.objects.create(
+            base_task = TxTask.objects.create(
                 chain=intent.chain,
                 address=intent.address,
-                action_type=intent.action_type,
-                stage=BroadcastTaskStage.QUEUED,
-                result=BroadcastTaskResult.UNKNOWN,
+                tx_type=intent.tx_type,
+                stage=TxTaskStage.QUEUED,
+                result=TxTaskResult.UNKNOWN,
             )
 
-            return EvmBroadcastTask.objects.create(
+            return EvmTxTask.objects.create(
                 base_task=base_task,
                 address=intent.address,
                 chain=intent.chain,
@@ -504,203 +655,11 @@ class EvmBroadcastTask(UndeletableModel):
         """为 (address, chain) 维度分配严格递增的下一个 nonce。
 
         调用方必须已通过 AddressChainState.acquire_for_update() 持有行锁，
-        确保基于 EvmBroadcastTask 推导 nonce 与创建任务处于同一串行化区间。
+        确保基于 EvmTxTask 推导 nonce 与创建任务处于同一串行化区间。
         """
         latest_nonce = (
-            EvmBroadcastTask.objects.filter(address=address, chain=chain)
+            EvmTxTask.objects.filter(address=address, chain=chain)
             .aggregate(max_nonce=models.Max("nonce"))
             .get("max_nonce")
         )
         return 0 if latest_nonce is None else int(latest_nonce) + 1
-
-
-class X402FacilitationStatus(models.TextChoices):
-    CREATED = "created", _("已创建")
-    BROADCASTED = "broadcasted", _("已广播")
-    CONFIRMED = "confirmed", _("已确认")
-    FAILED = "failed", _("已失败")
-    DROPPED = "dropped", _("已回退")
-
-
-class X402Facilitation(UndeletableModel):
-    """x402 EIP-3009 代付的最小业务实体。"""
-
-    broadcast_task = models.OneToOneField(
-        "chains.BroadcastTask",
-        on_delete=models.PROTECT,
-        related_name="x402_facilitation",
-        blank=True,
-        null=True,
-        verbose_name=_("广播任务"),
-    )
-    chain = models.ForeignKey("chains.Chain", on_delete=models.PROTECT)
-    crypto = models.ForeignKey("currencies.Crypto", on_delete=models.PROTECT)
-    facilitator_address = models.ForeignKey(
-        "chains.Address",
-        on_delete=models.PROTECT,
-        verbose_name=_("代付地址"),
-    )
-    authorization_from_address = EvmAddressField(_("授权方"))
-    authorization_to_address = EvmAddressField(_("收款方"))
-    authorization_value_raw = models.DecimalField(
-        _("授权额度（最小单位）"),
-        max_digits=32,
-        decimal_places=0,
-    )
-    valid_after = models.PositiveBigIntegerField(_("生效起始时间"))
-    valid_before = models.PositiveBigIntegerField(_("生效结束时间"))
-    authorization_nonce = models.BinaryField(_("授权 nonce"), max_length=32)
-    authorization_v = models.PositiveSmallIntegerField(_("v"))
-    authorization_r = models.BinaryField(_("r"), max_length=32)
-    authorization_s = models.BinaryField(_("s"), max_length=32)
-    transfer = models.OneToOneField(
-        "chains.OnchainTransfer",
-        on_delete=models.PROTECT,
-        related_name="x402_facilitation",
-        blank=True,
-        null=True,
-    )
-    status = models.CharField(
-        _("状态"),
-        choices=X402FacilitationStatus,
-        max_length=16,
-        default=X402FacilitationStatus.CREATED,
-    )
-    failure_reason = models.CharField(
-        _("失败原因"),
-        blank=True,
-        default="",
-        max_length=64,
-        choices=BroadcastTaskFailureReason,
-    )
-    created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
-    updated_at = models.DateTimeField(_("更新时间"), auto_now=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=(
-                    "chain",
-                    "crypto",
-                    "authorization_from_address",
-                    "authorization_nonce",
-                ),
-                condition=models.Q(
-                    status__in=[
-                        X402FacilitationStatus.CREATED,
-                        X402FacilitationStatus.BROADCASTED,
-                        X402FacilitationStatus.CONFIRMED,
-                    ],
-                ),
-                name="uniq_active_x402_authorization_nonce",
-            ),
-        ]
-        verbose_name = _("x402 代付")
-        verbose_name_plural = verbose_name
-
-    def clean(self):
-        super().clean()
-        if self.facilitator_address.chain_type != ChainType.EVM:
-            raise ValidationError({"facilitator_address": _("必须是系统 EVM 地址")})
-        if (
-            self.broadcast_task_id
-            and self.broadcast_task.address_id != self.facilitator_address_id
-        ):
-            raise ValidationError(
-                {"facilitator_address": _("必须等于 BroadcastTask.address")}
-            )
-
-
-class ContractDeployCollectionStatus(models.TextChoices):
-    CREATED = "created", _("已创建")
-    BROADCASTED = "broadcasted", _("已广播")
-    CONFIRMED = "confirmed", _("已确认")
-    FAILED = "failed", _("已失败")
-    DROPPED = "dropped", _("已回退")
-
-
-class ContractDeployCollection(UndeletableModel):
-    """CREATE2 部署收款合约并归集 ERC20 的最小业务实体。"""
-
-    broadcast_task = models.OneToOneField(
-        "chains.BroadcastTask",
-        on_delete=models.PROTECT,
-        related_name="contract_deploy_collection",
-        blank=True,
-        null=True,
-    )
-    chain = models.ForeignKey("chains.Chain", on_delete=models.PROTECT)
-    crypto = models.ForeignKey("currencies.Crypto", on_delete=models.PROTECT)
-    deployer_address = models.ForeignKey("chains.Address", on_delete=models.PROTECT)
-    factory_address = EvmAddressField()
-    collector_address = EvmAddressField()
-    recipient_address = EvmAddressField()
-    salt = models.BinaryField(max_length=32)
-    collector_init_code = models.BinaryField(max_length=512)
-    collector_init_code_hash = models.BinaryField(max_length=32)
-    expected_collect_value_raw = models.DecimalField(max_digits=32, decimal_places=0)
-    transfer = models.OneToOneField(
-        "chains.OnchainTransfer",
-        on_delete=models.PROTECT,
-        related_name="contract_deploy_collection",
-        blank=True,
-        null=True,
-    )
-    pay_slot = models.ForeignKey(
-        "invoices.InvoicePaySlot",
-        on_delete=models.PROTECT,
-        related_name="contract_deploy_collections",
-        blank=True,
-        null=True,
-    )
-    status = models.CharField(
-        choices=ContractDeployCollectionStatus,
-        max_length=16,
-        default=ContractDeployCollectionStatus.CREATED,
-    )
-    failure_reason = models.CharField(
-        blank=True,
-        default="",
-        max_length=64,
-        choices=BroadcastTaskFailureReason,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("chain", "factory_address", "salt"),
-                condition=models.Q(
-                    status__in=[
-                        ContractDeployCollectionStatus.CREATED,
-                        ContractDeployCollectionStatus.BROADCASTED,
-                        ContractDeployCollectionStatus.CONFIRMED,
-                    ],
-                ),
-                name="uniq_active_create2_chain_factory_salt",
-            ),
-            models.UniqueConstraint(
-                fields=("chain", "collector_address"),
-                condition=models.Q(
-                    status__in=[
-                        ContractDeployCollectionStatus.CREATED,
-                        ContractDeployCollectionStatus.BROADCASTED,
-                        ContractDeployCollectionStatus.CONFIRMED,
-                    ],
-                ),
-                name="uniq_active_create2_chain_collector",
-            ),
-        ]
-
-    def clean(self):
-        super().clean()
-        if self.deployer_address.chain_type != ChainType.EVM:
-            raise ValidationError({"deployer_address": _("必须是系统 EVM 地址")})
-        if (
-            self.broadcast_task_id
-            and self.broadcast_task.address_id != self.deployer_address_id
-        ):
-            raise ValidationError(
-                {"deployer_address": _("必须等于 BroadcastTask.address")}
-            )

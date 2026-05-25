@@ -4,13 +4,12 @@ from dataclasses import dataclass
 
 from chains.models import Chain
 from chains.models import ChainType
-from core.runtime_settings import get_open_native_scanner
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
 from evm.scanner.erc20 import EvmErc20ScanResult
 from evm.scanner.erc20 import EvmErc20TransferScanner
-from evm.scanner.native import EvmNativeDirectScanner
-from evm.scanner.native import EvmNativeScanResult
+from evm.scanner.native_deposits import EvmNativeDepositScanner
+from evm.scanner.native_deposits import EvmNativeDepositScanResult
 from evm.scanner.rpc import EvmScannerRpcClient
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.watchers import load_watch_set
@@ -22,7 +21,7 @@ RECONCILE_SCAN_MAX_BLOCK_SPAN = 64
 class EvmScanSummary:
     """汇总单条链一次自扫描任务的结果。"""
 
-    native: EvmNativeScanResult
+    native: EvmNativeDepositScanResult
     erc20: EvmErc20ScanResult
 
 
@@ -36,8 +35,8 @@ class EvmReconcileScanResult:
     from_block: int
     to_block: int
     observed_native: int
-    observed_erc20: int
     created_native: int
+    observed_erc20: int
     created_erc20: int
 
 
@@ -84,18 +83,18 @@ class EvmChainScannerService:
         return True if enabled is None else bool(enabled)
 
     @staticmethod
-    def _empty_native_result(*, chain: Chain) -> EvmNativeScanResult:
-        return EvmNativeScanResult(
+    def _empty_erc20_result(*, chain: Chain) -> EvmErc20ScanResult:
+        return EvmErc20ScanResult(
             from_block=0,
             to_block=0,
             latest_block=chain.latest_block_number,
-            observed_transfers=0,
+            observed_logs=0,
             created_transfers=0,
         )
 
     @staticmethod
-    def _empty_erc20_result(*, chain: Chain) -> EvmErc20ScanResult:
-        return EvmErc20ScanResult(
+    def _empty_native_result(*, chain: Chain) -> EvmNativeDepositScanResult:
+        return EvmNativeDepositScanResult(
             from_block=0,
             to_block=0,
             latest_block=chain.latest_block_number,
@@ -108,27 +107,27 @@ class EvmChainScannerService:
         if chain.type != ChainType.EVM:
             raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.code}")
 
-        # 单 tick 内 native + erc20 共用同一个 client，由 client 内部缓存 latest_block，
-        # 把每 tick 的 eth_blockNumber 从 2 次降到 1 次；client 也是 eth_getBlockReceipts
-        # 特性探测结果的缓存载体，两侧扫描共享探测结论。
         rpc_client = EvmScannerRpcClient(chain=chain)
 
         try:
-            native_result = EvmChainScannerService.scan_native(
+            native = EvmChainScannerService.scan_native(
                 chain=chain,
                 rpc_client=rpc_client,
             )
         except EvmScannerRpcError:
-            # 原生币逐块拉完整区块，RPC 压力和套餐限制都独立于 ERC20 日志扫描；
-            # native 失败不能阻断 ERC20，否则会把一个扫描面的故障扩散到另一个扫描面。
-            native_result = EvmChainScannerService._empty_native_result(chain=chain)
+            native = EvmChainScannerService._empty_native_result(chain=chain)
 
-        return EvmScanSummary(
-            native=native_result,
-            erc20=EvmChainScannerService.scan_erc20(
+        try:
+            erc20 = EvmChainScannerService.scan_erc20(
                 chain=chain,
                 rpc_client=rpc_client,
-            ),
+            )
+        except EvmScannerRpcError:
+            erc20 = EvmChainScannerService._empty_erc20_result(chain=chain)
+
+        return EvmScanSummary(
+            native=native,
+            erc20=erc20,
         )
 
     @staticmethod
@@ -136,17 +135,15 @@ class EvmChainScannerService:
         *,
         chain: Chain,
         rpc_client: EvmScannerRpcClient | None = None,
-    ) -> EvmNativeScanResult:
+    ) -> EvmNativeDepositScanResult:
         if chain.type != ChainType.EVM:
             raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.code}")
-        if not get_open_native_scanner():
-            return EvmChainScannerService._empty_native_result(chain=chain)
         if not EvmChainScannerService._is_enabled(
             chain=chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
+            scanner_type=EvmScanCursorType.NATIVE_DEPOSIT,
         ):
             return EvmChainScannerService._empty_native_result(chain=chain)
-        return EvmNativeDirectScanner.scan_chain(chain=chain, rpc_client=rpc_client)
+        return EvmNativeDepositScanner.scan_chain(chain=chain, rpc_client=rpc_client)
 
     @staticmethod
     def scan_erc20(
@@ -173,7 +170,7 @@ class EvmChainScannerService:
         """对指定块集合执行一次兜底复扫，不推进任何游标。
 
         - 按连续块段和最大跨度拆分窗口，避免稀疏块被扩成巨大 [min..max] 区间。
-        - 复用 watch_set + OnchainTransfer 创建 + on_commit 派发 process 的既有管线，
+        - 复用 watch_set + Transfer 创建 + on_commit 派发 process 的既有管线，
           (chain, hash, event_id) 唯一约束天然保证复扫幂等。
         - 禁止读写 EvmScanCursor；主扫描负责游标管理，兜底只产生观测副作用。
         """
@@ -184,8 +181,8 @@ class EvmChainScannerService:
                 from_block=0,
                 to_block=-1,
                 observed_native=0,
-                observed_erc20=0,
                 created_native=0,
+                observed_erc20=0,
                 created_erc20=0,
             )
 
@@ -197,9 +194,9 @@ class EvmChainScannerService:
         observed_native, created_native = 0, 0
         observed_erc20, created_erc20 = 0, 0
 
-        native_enabled = get_open_native_scanner() and cls._is_enabled(
+        native_enabled = cls._is_enabled(
             chain=chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
+            scanner_type=EvmScanCursorType.NATIVE_DEPOSIT,
         )
         erc20_enabled = cls._is_enabled(
             chain=chain,
@@ -210,8 +207,8 @@ class EvmChainScannerService:
             block_numbers
         ):
             if native_enabled:
-                range_observed_native, range_created_native = (
-                    EvmNativeDirectScanner.scan_range_without_cursor(
+                logs, range_created_native = (
+                    EvmNativeDepositScanner.scan_range_without_cursor(
                         chain=chain,
                         rpc_client=rpc_client,
                         watch_set=watch_set,
@@ -219,7 +216,7 @@ class EvmChainScannerService:
                         to_block=range_to_block,
                     )
                 )
-                observed_native += range_observed_native
+                observed_native += len(logs)
                 created_native += range_created_native
 
             if not erc20_enabled:
@@ -240,7 +237,7 @@ class EvmChainScannerService:
             from_block=from_block,
             to_block=to_block,
             observed_native=observed_native,
-            observed_erc20=observed_erc20,
             created_native=created_native,
+            observed_erc20=observed_erc20,
             created_erc20=created_erc20,
         )

@@ -10,28 +10,28 @@ from web3 import Web3
 
 from chains.models import Address
 from chains.models import AddressUsage
-from chains.models import BroadcastTask
-from chains.models import BroadcastTaskResult
-from chains.models import BroadcastTaskStage
+from chains.models import TxTask
+from chains.models import TxTaskResult
+from chains.models import TxTaskStage
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import OnchainActionType
+from chains.models import TxTaskType
 from chains.models import TxHash
 from chains.models import Wallet
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
 from core.models import PLATFORM_SETTINGS_CACHE_KEY
-from core.models import PlatformSettings
 from currencies.models import Crypto
 from evm.choices import TxKind
 from evm.intents import build_native_transfer_intent
-from evm.models import EvmBroadcastTask
+from evm.models import EvmTxTask
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
 from evm.scanner.erc20 import EvmErc20ScanResult
-from evm.scanner.native import EvmNativeScanResult
+from evm.scanner.native_deposits import EvmNativeDepositScanResult
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.service import EvmChainScannerService
+from evm.scanner.watchers import EvmWatchSet
 
 
 class EvmChainScannerServiceTests(TestCase):
@@ -57,102 +57,39 @@ class EvmChainScannerServiceTests(TestCase):
         cache.delete(PLATFORM_SETTINGS_CACHE_KEY)
         super().tearDown()
 
+    @patch("evm.scanner.service.EvmNativeDepositScanner.scan_chain")
     @patch("evm.scanner.service.EvmErc20TransferScanner.scan_chain")
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
-    def test_scan_chain_skips_native_when_global_native_scanner_is_closed(
-        self,
-        native_scan_mock,
-        erc20_scan_mock,
-    ):
-        erc20_scan_mock.return_value = EvmErc20ScanResult(
-            from_block=1,
-            to_block=2,
-            latest_block=88,
-            observed_logs=3,
-            created_transfers=1,
-        )
-
-        result = EvmChainScannerService.scan_chain(chain=self.chain)
-
-        native_scan_mock.assert_not_called()
-        # 服务层会注入共享 rpc_client，断言时用 ANY 兜住第二个参数。
-        erc20_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.native.created_transfers, 0)
-        self.assertEqual(result.erc20.created_transfers, 1)
-
-    @patch("evm.scanner.service.EvmErc20TransferScanner.scan_chain")
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
-    def test_scan_chain_skips_disabled_native_cursor(
-        self,
-        native_scan_mock,
-        erc20_scan_mock,
-    ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-        EvmScanCursor.objects.create(
-            chain=self.chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-            enabled=False,
-        )
-        erc20_scan_mock.return_value = EvmErc20ScanResult(
-            from_block=1,
-            to_block=2,
-            latest_block=88,
-            observed_logs=3,
-            created_transfers=1,
-        )
-
-        result = EvmChainScannerService.scan_chain(chain=self.chain)
-
-        native_scan_mock.assert_not_called()
-        # 服务层会注入共享 rpc_client，断言时用 ANY 兜住第二个参数。
-        erc20_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.native.created_transfers, 0)
-        self.assertEqual(result.native.latest_block, 88)
-        self.assertEqual(result.erc20.created_transfers, 1)
-
-    @patch("evm.scanner.service.EvmErc20TransferScanner.scan_chain")
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
     def test_scan_chain_skips_disabled_erc20_cursor(
         self,
-        native_scan_mock,
         erc20_scan_mock,
+        native_scan_mock,
     ):
-        PlatformSettings.objects.create(open_native_scanner=True)
         EvmScanCursor.objects.create(
             chain=self.chain,
             scanner_type=EvmScanCursorType.ERC20_TRANSFER,
             enabled=False,
         )
-        native_scan_mock.return_value = EvmNativeScanResult(
-            from_block=5,
-            to_block=8,
-            latest_block=88,
-            observed_transfers=2,
-            created_transfers=1,
-        )
 
         result = EvmChainScannerService.scan_chain(chain=self.chain)
 
-        native_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
         erc20_scan_mock.assert_not_called()
+        native_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
         self.assertEqual(result.erc20.created_transfers, 0)
         self.assertEqual(result.erc20.latest_block, 88)
-        self.assertEqual(result.native.created_transfers, 1)
 
+    @patch("evm.scanner.service.EvmNativeDepositScanner.scan_chain")
     @patch("evm.scanner.service.EvmErc20TransferScanner.scan_chain")
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
-    def test_scan_chain_scans_native_when_chain_native_scanner_is_open(
+    def test_scan_chain_scans_native_and_erc20(
         self,
-        native_scan_mock,
         erc20_scan_mock,
+        native_scan_mock,
     ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-        native_scan_mock.return_value = EvmNativeScanResult(
+        native_scan_mock.return_value = EvmNativeDepositScanResult(
             from_block=1,
             to_block=1,
             latest_block=88,
-            observed_transfers=1,
-            created_transfers=1,
+            observed_logs=2,
+            created_transfers=2,
         )
         erc20_scan_mock.return_value = EvmErc20ScanResult(
             from_block=1,
@@ -165,112 +102,74 @@ class EvmChainScannerServiceTests(TestCase):
         result = EvmChainScannerService.scan_chain(chain=self.chain)
 
         native_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        # 服务层会注入共享 rpc_client，断言时用 ANY 兜住第二个参数。
         erc20_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.native.created_transfers, 1)
+        self.assertEqual(result.native.created_transfers, 2)
         self.assertEqual(result.erc20.created_transfers, 1)
 
+    @patch(
+        "evm.scanner.service.EvmNativeDepositScanner.scan_chain",
+        side_effect=EvmScannerRpcError("native rpc timeout"),
+    )
     @patch("evm.scanner.service.EvmErc20TransferScanner.scan_chain")
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
-    def test_scan_chain_skips_native_when_chain_native_scanner_is_closed_by_default(
+    def test_scan_chain_keeps_erc20_when_native_rpc_fails(
         self,
-        native_scan_mock,
         erc20_scan_mock,
-    ):
-        native = Crypto.objects.create(
-            name="Ethereum Native Closed",
-            symbol="ETHNC",
-            coingecko_id="ethereum-native-closed",
-        )
-        chain = Chain.objects.create(
-            code="eth-native-closed",
-            name="Ethereum Native Closed",
-            type=ChainType.EVM,
-            chain_id=20002,
-            rpc="http://localhost:8545",
-            native_coin=native,
-            active=True,
-            latest_block_number=99,
-        )
-        erc20_scan_mock.return_value = EvmErc20ScanResult(
-            from_block=1,
-            to_block=2,
-            latest_block=99,
-            observed_logs=3,
-            created_transfers=1,
-        )
-
-        result = EvmChainScannerService.scan_chain(chain=chain)
-
-        native_scan_mock.assert_not_called()
-        erc20_scan_mock.assert_called_once_with(chain=chain, rpc_client=ANY)
-        self.assertEqual(result.native.created_transfers, 0)
-        self.assertEqual(result.native.latest_block, 99)
-        self.assertEqual(result.erc20.created_transfers, 1)
-
-    def test_closing_global_native_scanner_deletes_native_cursor(self):
-        settings = PlatformSettings.objects.create(open_native_scanner=True)
-        EvmScanCursor.objects.create(
-            chain=self.chain,
-            scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-            last_scanned_block=88,
-        )
-
-        settings.open_native_scanner = False
-        settings.save(update_fields=["open_native_scanner"])
-
-        self.assertFalse(
-            EvmScanCursor.objects.filter(
-                chain=self.chain,
-                scanner_type=EvmScanCursorType.NATIVE_DIRECT,
-            ).exists()
-        )
-
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
-    def test_opening_global_native_scanner_does_not_require_existing_cursor(
-        self,
         native_scan_mock,
     ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-        native_scan_mock.return_value = EvmNativeScanResult(
-            from_block=1,
-            to_block=1,
-            latest_block=88,
-            observed_transfers=1,
-            created_transfers=1,
-        )
-
-        result = EvmChainScannerService.scan_native(chain=self.chain)
-
-        native_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.created_transfers, 1)
-
-    @patch("evm.scanner.service.EvmErc20TransferScanner.scan_chain")
-    @patch("evm.scanner.service.EvmNativeDirectScanner.scan_chain")
-    def test_native_rpc_failure_does_not_block_erc20_scan(
-        self,
-        native_scan_mock,
-        erc20_scan_mock,
-    ):
-        PlatformSettings.objects.create(open_native_scanner=True)
-        native_scan_mock.side_effect = EvmScannerRpcError("archive plan denied")
         erc20_scan_mock.return_value = EvmErc20ScanResult(
-            from_block=10,
-            to_block=12,
+            from_block=3,
+            to_block=4,
             latest_block=88,
-            observed_logs=4,
-            created_transfers=2,
+            observed_logs=1,
+            created_transfers=1,
         )
 
         result = EvmChainScannerService.scan_chain(chain=self.chain)
 
         native_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        # 服务层会注入共享 rpc_client，断言时用 ANY 兜住第二个参数。
         erc20_scan_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.native.observed_transfers, 0)
         self.assertEqual(result.native.created_transfers, 0)
-        self.assertEqual(result.erc20.observed_logs, 4)
-        self.assertEqual(result.erc20.created_transfers, 2)
+        self.assertEqual(result.erc20.created_transfers, 1)
+
+    @patch("evm.scanner.service.load_watch_set")
+    @patch("evm.scanner.service.EvmNativeDepositScanner.scan_range_without_cursor")
+    @patch("evm.scanner.service.EvmErc20TransferScanner.scan_range_without_cursor")
+    def test_scan_blocks_for_reconcile_scans_native_and_erc20_ranges(
+        self,
+        erc20_scan_range_mock,
+        native_scan_range_mock,
+        load_watch_set_mock,
+    ):
+        load_watch_set_mock.return_value = EvmWatchSet(
+            watched_addresses=frozenset(),
+            tokens_by_address={},
+        )
+        native_scan_range_mock.return_value = ([{"kind": "native"}], 1)
+        erc20_scan_range_mock.return_value = ([{"kind": "erc20"}], 2)
+
+        result = EvmChainScannerService.scan_blocks_for_reconcile(
+            chain=self.chain,
+            block_numbers={10},
+        )
+
+        native_scan_range_mock.assert_called_once_with(
+            chain=self.chain,
+            rpc_client=ANY,
+            watch_set=load_watch_set_mock.return_value,
+            from_block=10,
+            to_block=10,
+        )
+        erc20_scan_range_mock.assert_called_once_with(
+            chain=self.chain,
+            rpc_client=ANY,
+            watch_set=load_watch_set_mock.return_value,
+            from_block=10,
+            to_block=10,
+        )
+        self.assertEqual(result.observed_native, 1)
+        self.assertEqual(result.created_native, 1)
+        self.assertEqual(result.observed_erc20, 1)
+        self.assertEqual(result.created_erc20, 2)
 
     @override_settings(SIGNER_BACKEND="remote")
     def test_broadcast_rejects_local_fallback_when_remote_signer_enabled(self):
@@ -303,14 +202,14 @@ class EvmChainScannerServiceTests(TestCase):
                 "0x0000000000000000000000000000000000000001"
             ),
         )
-        base_task = BroadcastTask.objects.create(
+        base_task = TxTask.objects.create(
             chain=chain,
             address=addr,
-            action_type=OnchainActionType.Withdrawal,
-            stage=BroadcastTaskStage.QUEUED,
-            result=BroadcastTaskResult.UNKNOWN,
+            tx_type=TxTaskType.Withdrawal,
+            stage=TxTaskStage.QUEUED,
+            result=TxTaskResult.UNKNOWN,
         )
-        broadcast_task = EvmBroadcastTask.objects.create(
+        tx_task = EvmTxTask.objects.create(
             base_task=base_task,
             address=addr,
             chain=chain,
@@ -324,11 +223,11 @@ class EvmChainScannerServiceTests(TestCase):
         )
 
         with self.assertRaisesMessage(Exception, "远端 signer 请求失败"):
-            broadcast_task.broadcast()
+            tx_task.broadcast()
 
         chain.w3.eth.account.sign_transaction.assert_not_called()
 
-    @patch.object(EvmBroadcastTask, "_next_nonce", return_value=0)
+    @patch.object(EvmTxTask, "_next_nonce", return_value=0)
     def test_schedule_defers_signing_until_first_broadcast(
         self,
         _next_nonce_mock,
@@ -348,6 +247,7 @@ class EvmChainScannerServiceTests(TestCase):
             native_coin=native,
             active=True,
         )
+        chain.base_transfer_gas = 21_000
         wallet = Wallet.objects.create()
         addr = Address.objects.create(
             wallet=wallet,
@@ -359,7 +259,7 @@ class EvmChainScannerServiceTests(TestCase):
                 "0x00000000000000000000000000000000000000f1"
             ),
         )
-        task = EvmBroadcastTask.schedule(
+        task = EvmTxTask.schedule(
             build_native_transfer_intent(
                 address=addr,
                 chain=chain,
@@ -367,7 +267,7 @@ class EvmChainScannerServiceTests(TestCase):
                     "0x00000000000000000000000000000000000000f2"
                 ),
                 value=123,
-                action_type=OnchainActionType.Withdrawal,
+                tx_type=TxTaskType.Withdrawal,
             )
         )
 
@@ -375,11 +275,11 @@ class EvmChainScannerServiceTests(TestCase):
         self.assertIsNone(task.gas_price)
         self.assertIsNone(task.base_task.tx_hash)
         self.assertFalse(
-            TxHash.objects.filter(broadcast_task=task.base_task).exists()
+            TxHash.objects.filter(tx_task=task.base_task).exists()
         )
 
     @patch("evm.models.get_signer_backend")
-    @patch.object(EvmBroadcastTask, "_next_nonce", return_value=0)
+    @patch.object(EvmTxTask, "_next_nonce", return_value=0)
     def test_first_broadcast_creates_initial_tx_hash_history(
         self,
         _next_nonce_mock,
@@ -399,6 +299,7 @@ class EvmChainScannerServiceTests(TestCase):
             native_coin=native,
             active=True,
         )
+        chain.base_transfer_gas = 21_000
         addr = Address.objects.create(
             wallet=Wallet.objects.create(),
             chain_type=ChainType.EVM,
@@ -417,7 +318,7 @@ class EvmChainScannerServiceTests(TestCase):
         )
         get_signer_backend_mock.return_value = signer_backend
 
-        task = EvmBroadcastTask.schedule(
+        task = EvmTxTask.schedule(
             build_native_transfer_intent(
                 address=addr,
                 chain=chain,
@@ -425,12 +326,12 @@ class EvmChainScannerServiceTests(TestCase):
                     "0x00000000000000000000000000000000000000fb"
                 ),
                 value=123,
-                action_type=OnchainActionType.Withdrawal,
+                tx_type=TxTaskType.Withdrawal,
             )
         )
 
         self.assertIsNone(task.base_task.tx_hash)
-        self.assertFalse(TxHash.objects.filter(broadcast_task=task.base_task).exists())
+        self.assertFalse(TxHash.objects.filter(tx_task=task.base_task).exists())
 
         chain.__dict__["w3"].eth.send_raw_transaction = Mock()
         # 提供 get_balance，让主动阈值通过 pre-flight 进入真实广播。
@@ -439,7 +340,7 @@ class EvmChainScannerServiceTests(TestCase):
 
         task.refresh_from_db()
         task.base_task.refresh_from_db()
-        history = TxHash.objects.get(broadcast_task=task.base_task, version=1)
+        history = TxHash.objects.get(tx_task=task.base_task, version=1)
         self.assertEqual(history.hash, task.base_task.tx_hash)
         self.assertEqual(history.chain_id, chain.pk)
         self.assertEqual(task.signed_payload, "0xdeadbeef")
@@ -464,6 +365,7 @@ class EvmChainScannerServiceTests(TestCase):
             native_coin=native,
             active=True,
         )
+        chain.base_transfer_gas = 21_000
         wallet = Wallet.objects.create()
         addr = Address.objects.create(
             wallet=wallet,
@@ -477,14 +379,14 @@ class EvmChainScannerServiceTests(TestCase):
         )
         # 填充 nonce 0-4，满足触发器连续性约束
         for n in range(5):
-            filler_base = BroadcastTask.objects.create(
+            filler_base = TxTask.objects.create(
                 chain=chain,
                 address=addr,
-                action_type=OnchainActionType.Withdrawal,
-                stage=BroadcastTaskStage.FINALIZED,
-                result=BroadcastTaskResult.SUCCESS,
+                tx_type=TxTaskType.Withdrawal,
+                stage=TxTaskStage.FINALIZED,
+                result=TxTaskResult.SUCCESS,
             )
-            EvmBroadcastTask.objects.create(
+            EvmTxTask.objects.create(
                 base_task=filler_base,
                 address=addr,
                 chain=chain,
@@ -497,15 +399,15 @@ class EvmChainScannerServiceTests(TestCase):
                 tx_kind=TxKind.NATIVE_TRANSFER,
                 gas_price=1,
             )
-        base_task = BroadcastTask.objects.create(
+        base_task = TxTask.objects.create(
             chain=chain,
             address=addr,
-            action_type=OnchainActionType.Withdrawal,
+            tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "ef" * 32,
-            stage=BroadcastTaskStage.QUEUED,
-            result=BroadcastTaskResult.UNKNOWN,
+            stage=TxTaskStage.QUEUED,
+            result=TxTaskResult.UNKNOWN,
         )
-        EvmBroadcastTask.objects.create(
+        EvmTxTask.objects.create(
             base_task=base_task,
             address=addr,
             chain=chain,
@@ -525,7 +427,7 @@ class EvmChainScannerServiceTests(TestCase):
         )
         get_signer_backend_mock.return_value = signer_backend
 
-        task = EvmBroadcastTask.schedule(
+        task = EvmTxTask.schedule(
             build_native_transfer_intent(
                 address=addr,
                 chain=chain,
@@ -533,13 +435,13 @@ class EvmChainScannerServiceTests(TestCase):
                     "0x00000000000000000000000000000000000000f7"
                 ),
                 value=123,
-                action_type=OnchainActionType.Withdrawal,
+                tx_type=TxTaskType.Withdrawal,
             )
         )
 
         self.assertEqual(task.nonce, 6)
 
-    @patch.object(EvmBroadcastTask, "_next_nonce", return_value=0)
+    @patch.object(EvmTxTask, "_next_nonce", return_value=0)
     @patch("evm.models.AddressChainState.acquire_for_update")
     def test_schedule_no_longer_reads_gas_price_before_acquiring_account_chain_state_lock(
         self,
@@ -560,6 +462,7 @@ class EvmChainScannerServiceTests(TestCase):
             native_coin=native,
             active=True,
         )
+        chain.base_transfer_gas = 21_000
         wallet = Wallet.objects.create()
         addr = Address.objects.create(
             wallet=wallet,
@@ -585,7 +488,7 @@ class EvmChainScannerServiceTests(TestCase):
             SimpleNamespace(),
         )[1]
 
-        EvmBroadcastTask.schedule(
+        EvmTxTask.schedule(
             build_native_transfer_intent(
                 address=addr,
                 chain=chain,
@@ -593,15 +496,15 @@ class EvmChainScannerServiceTests(TestCase):
                     "0x00000000000000000000000000000000000000f9"
                 ),
                 value=123,
-                action_type=OnchainActionType.Withdrawal,
+                tx_type=TxTaskType.Withdrawal,
             )
         )
 
         self.assertEqual(order[:1], ["lock"])
 
-    @patch("chains.service.OnchainTransfer.objects.create")
-    @patch("chains.service.TransferService._mark_broadcast_task_pending_confirm")
-    def test_create_observed_transfer_marks_matching_broadcast_task_pending_confirm(
+    @patch("chains.service.Transfer.objects.create")
+    @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
+    def test_create_observed_transfer_marks_matching_tx_task_pending_confirm(
         self,
         mark_pending_confirm_mock,
         transfer_create_mock,

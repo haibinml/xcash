@@ -57,34 +57,55 @@ class EvmScannerRpcClient:
         token_addresses: list[str],
         topic0: str,
     ) -> list[dict[str, Any]]:
-        if from_block > to_block or not token_addresses:
+        return self.get_logs(
+            from_block=from_block,
+            to_block=to_block,
+            addresses=token_addresses,
+            topic0=topic0,
+            summary="获取 ERC20 日志失败",
+        )
+
+    def get_logs(
+        self,
+        *,
+        from_block: int,
+        to_block: int,
+        addresses: list[str],
+        topic0: str,
+        summary: str = "获取 EVM 日志失败",
+    ) -> list[dict[str, Any]]:
+        if from_block > to_block or not addresses:
             return []
 
-        max_block_range = max(1, int(getattr(self.chain, "evm_log_max_block_range", 10)))
+        max_block_range = max(
+            1, int(getattr(self.chain, "evm_log_max_block_range", 10))
+        )
         logs: list[dict[str, Any]] = []
         chunk_from = from_block
 
         while chunk_from <= to_block:
             chunk_to = min(to_block, chunk_from + max_block_range - 1)
             logs.extend(
-                self._get_transfer_logs_chunk(
+                self._get_logs_chunk(
                     from_block=chunk_from,
                     to_block=chunk_to,
-                    token_addresses=token_addresses,
+                    addresses=addresses,
                     topic0=topic0,
+                    summary=summary,
                 )
             )
             chunk_from = chunk_to + 1
 
         return logs
 
-    def _get_transfer_logs_chunk(
+    def _get_logs_chunk(
         self,
         *,
         from_block: int,
         to_block: int,
-        token_addresses: list[str],
+        addresses: list[str],
         topic0: str,
+        summary: str,
     ) -> list[dict[str, Any]]:
         return list(
             self._call_with_retry(
@@ -92,11 +113,11 @@ class EvmScannerRpcClient:
                     {
                         "fromBlock": from_block,
                         "toBlock": to_block,
-                        "address": token_addresses,
+                        "address": addresses,
                         "topics": [topic0],
                     }
                 ),
-                summary="获取 ERC20 日志失败",
+                summary=summary,
                 method="eth_getLogs",
                 context=f"from={from_block} to={to_block}",
             )
@@ -113,6 +134,18 @@ class EvmScannerRpcClient:
             context=f"block={block_number}",
         )
         return int(block["timestamp"])
+
+    def get_block_hash(self, *, block_number: int) -> str:
+        block = self._call_with_retry(
+            fn=lambda: self._get_block_with_poa_retry(
+                block_number=block_number,
+                full_transactions=False,
+            ),
+            summary="获取区块哈希失败",
+            method="eth_getBlockByNumber",
+            context=f"block={block_number}",
+        )
+        return self._normalize_receipt_hash(block["hash"])
 
     def get_full_block(self, *, block_number: int) -> dict[str, Any]:
         return dict(
@@ -143,7 +176,9 @@ class EvmScannerRpcClient:
             return None
         try:
             receipts = self._call_with_retry(
-                fn=lambda: self.chain.w3.eth.get_block_receipts(block_number),  # noqa: SLF001
+                fn=lambda: self.chain.w3.eth.get_block_receipts(
+                    block_number
+                ),  # noqa: SLF001
                 summary="获取整块 receipt 失败",
                 method="eth_getBlockReceipts",
                 context=f"block={block_number}",
@@ -166,7 +201,9 @@ class EvmScannerRpcClient:
             return None
         try:
             receipts = self._call_with_retry(
-                fn=lambda: self.chain.w3.eth.get_block_receipts(block_number),  # noqa: SLF001
+                fn=lambda: self.chain.w3.eth.get_block_receipts(
+                    block_number
+                ),  # noqa: SLF001
                 summary="获取整块 receipt 失败",
                 method="eth_getBlockReceipts",
                 context=f"block={block_number}",
@@ -240,7 +277,9 @@ class EvmScannerRpcClient:
 
     def get_transaction_receipt_status(self, *, tx_hash: str) -> int | None:
         receipt = self._call_with_retry(
-            fn=lambda: self.chain.w3.eth.get_transaction_receipt(tx_hash),  # noqa: SLF001
+            fn=lambda: self.chain.w3.eth.get_transaction_receipt(
+                tx_hash
+            ),  # noqa: SLF001
             summary="获取交易回执失败",
             method="eth_getTransactionReceipt",
             context=f"tx_hash={tx_hash}",
@@ -261,7 +300,9 @@ class EvmScannerRpcClient:
 
     def get_transaction_receipt(self, *, tx_hash: str) -> dict[str, Any] | None:
         receipt = self._call_with_retry(
-            fn=lambda: self.chain.w3.eth.get_transaction_receipt(tx_hash),  # noqa: SLF001
+            fn=lambda: self.chain.w3.eth.get_transaction_receipt(
+                tx_hash
+            ),  # noqa: SLF001
             summary="获取交易回执失败",
             method="eth_getTransactionReceipt",
             context=f"tx_hash={tx_hash}",

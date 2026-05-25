@@ -27,7 +27,6 @@ from common.models import UndeletableModel
 if TYPE_CHECKING:
     from currencies.models import Crypto
     from deposits.models import Deposit
-    from deposits.models import DepositCollection
     from invoices.models import Invoice
     from withdrawals.models import Withdrawal
 
@@ -42,6 +41,11 @@ class ChainType(models.TextChoices):
 
 
 class Chain(models.Model):
+    DEFAULT_BASE_TRANSFER_GAS = 21_000
+    DEFAULT_ERC20_TRANSFER_GAS = 65_000
+    base_transfer_gas = DEFAULT_BASE_TRANSFER_GAS
+    erc20_transfer_gas = DEFAULT_ERC20_TRANSFER_GAS
+
     name = models.CharField(
         _("名称"),
         unique=True,
@@ -71,19 +75,9 @@ class Chain(models.Model):
     active = models.BooleanField(default=False, verbose_name=_("启用"))
 
     # For EVM
-    base_transfer_gas = models.PositiveIntegerField(
-        _("原生币转账 Gas Limit"),
-        default=50_000,
-        help_text=_("原生币（ETH/BNB 等）转账的 gas 上限"),
-    )
-    erc20_transfer_gas = models.PositiveIntegerField(
-        _("ERC20 转账 Gas Limit"),
-        default=100_000,
-        help_text=_("ERC-20 代币 transfer 调用的 gas 上限"),
-    )
     # CREATE2 工厂合约地址：未启用合约支付收款的链留空
-    create2_factory_address = EvmAddressField(
-        _("CREATE2 工厂合约地址"),
+    deposit_factory_address = EvmAddressField(
+        _("Deposit 工厂合约地址"),
         blank=True,
         null=True,
     )
@@ -99,8 +93,10 @@ class Chain(models.Model):
         null=True,
     )
     rpc = models.CharField(_("RPC"), blank=True, default="")
-    tron_api_key = models.CharField(_("Tron API Key"), blank=True, default="")
     is_poa = models.BooleanField(_("POA"), blank=True, null=True)
+
+    # For Tron
+    tron_api_key = models.CharField(_("Tron API Key"), blank=True, default="")
 
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
 
@@ -117,6 +113,15 @@ class Chain(models.Model):
 
     # 当前产品允许创建 EVM / Tron 两类链。
     PRODUCT_ENABLED_TYPES = (ChainType.EVM, ChainType.TRON)
+
+    def __init__(self, *args, **kwargs):
+        base_transfer_gas = kwargs.pop("base_transfer_gas", None)
+        erc20_transfer_gas = kwargs.pop("erc20_transfer_gas", None)
+        super().__init__(*args, **kwargs)
+        if base_transfer_gas is not None:
+            self.base_transfer_gas = base_transfer_gas
+        if erc20_transfer_gas is not None:
+            self.erc20_transfer_gas = erc20_transfer_gas
 
     def __str__(self):
         return self.name
@@ -194,9 +199,7 @@ class Chain(models.Model):
         """限制后台和脚本只能创建当前产品阶段启用的链类型。"""
         super().clean()
         if self.type and self.type not in self.PRODUCT_ENABLED_TYPES:
-            raise ValidationError(
-                {"type": _("当前版本仅支持创建 EVM / Tron 链。")}
-            )
+            raise ValidationError({"type": _("当前版本仅支持创建 EVM / Tron 链。")})
 
     def _detect_chain_id(self) -> int | None:
         """通过 RPC 获取链的 chain_id。"""
@@ -287,11 +290,6 @@ class Chain(models.Model):
         raise NotImplementedError(msg)
 
 
-class AddressUsage(models.TextChoices):
-    Deposit = "deposit", _("充币帐户")
-    Vault = "vault", _("金库账户")
-
-
 class AddressChainState(models.Model):
     """按 (address, chain) 维护串行化状态。"""
 
@@ -341,9 +339,12 @@ class AddressChainState(models.Model):
 
 
 # BIP44 account' 层级与业务用途的映射，直接用于派生路径 m/44'/coin'/account'/0/address_index。
+class AddressUsage(models.TextChoices):
+    Vault = "vault", _("金库钱包")
+
+
 BIP44_ACCOUNT_MAP: dict[str, int] = {
     AddressUsage.Vault: 0,
-    AddressUsage.Deposit: 1,
 }
 
 
@@ -403,6 +404,7 @@ class Wallet(UndeletableModel):
 
         from chains.signer import SignerServiceError
         from chains.signer import get_signer_backend
+
         try:
             expected_address = get_signer_backend().derive_address(
                 wallet=self,
@@ -501,17 +503,17 @@ class Address(UndeletableModel):
         chain: Chain,
         to: str,
         amount: Decimal,
-        action_type: OnchainActionType,
+        tx_type: TxTaskType,
     ) -> str:
         """使用本账户私钥签名并发送转账，返回 tx hash / signature。
 
         EVM：仅创建内部任务，首次广播时才生成首个 tx_hash。
         """
         if chain.type == ChainType.EVM:
-            # EvmBroadcastTask 内部管理锁，不在此处获取，避免双重加锁。
+            # EvmTxTask 内部管理锁，不在此处获取，避免双重加锁。
             from evm.intents import build_erc20_transfer_intent  # noqa: PLC0415
             from evm.intents import build_native_transfer_intent  # noqa: PLC0415
-            from evm.models import EvmBroadcastTask  # noqa: PLC0415
+            from evm.models import EvmTxTask  # noqa: PLC0415
 
             decimals = crypto.get_decimals(chain)
             value_raw = int(amount * Decimal(10**decimals))
@@ -521,7 +523,7 @@ class Address(UndeletableModel):
                     chain=chain,
                     to=to,
                     value=value_raw,
-                    action_type=action_type,
+                    tx_type=tx_type,
                 )
             else:
                 intent = build_erc20_transfer_intent(
@@ -530,55 +532,48 @@ class Address(UndeletableModel):
                     crypto=crypto,
                     to=to,
                     value_raw=value_raw,
-                    action_type=action_type,
+                    tx_type=tx_type,
                 )
-            task = EvmBroadcastTask.schedule(intent)
+            task = EvmTxTask.schedule(intent)
             return task.base_task.tx_hash
 
         msg = f"Unsupported chain type for send_crypto: {chain.type}"
         raise NotImplementedError(msg)
 
 
+class TxTaskType(models.TextChoices):
+    """TxTask.tx_type 的枚举：仅描述系统内部主动发起的链上交易。"""
 
-class OnchainActionType(models.TextChoices):
+    Withdrawal = "withdrawal", "🏧 提币"
+    DepositSlotDeploy = "deposit_slot_deploy", "🏦 DepositSlot 部署"
+    DepositSlotCollect = "deposit_slot_collect", "💰 DepositSlot 归集"
+
+
+class TransferType(models.TextChoices):
+    """Transfer.type 的枚举：仅描述对一笔链上转账的业务归属。"""
+
     Invoice = "iv", _("💳 支付")
     Deposit = "deposit", "💰 充币"
     Withdrawal = "withdrawal", "🏧 提币"
-
-    GasRecharge = "gas-recharge", "⛽ Gas分发"
-    DepositCollection = "deposit-collection", "💵 归集充币"
     Prefunding = "prefunding", "🏦 注入金库资金"
-    X402Facilitate = "x402_facilitate", _("x402 代付")
-    ContractDeployCollect = "contract_deploy_collect", _("合约部署归集")
 
 
-class BroadcastTaskStage(models.TextChoices):
+class TxTaskStage(models.TextChoices):
     QUEUED = "queued", _("待广播")
     PENDING_CHAIN = "pending_chain", _("待上链")
     PENDING_CONFIRM = "pending_confirm", _("确认中")
-    FINALIZED = "finalized", _("已终结")
+    FINALIZED = "finalized", _("已完结")
 
 
-class BroadcastTaskResult(models.TextChoices):
+class TxTaskResult(models.TextChoices):
     UNKNOWN = "unknown", _("未知")
     SUCCESS = "success", _("成功")
     FAILED = "failed", _("失败")
 
 
-class BroadcastTaskFailureReason(models.TextChoices):
-    # 通用失败原因：适用于所有链共享的提交与调度失败路径。
-    RPC_REJECTED = "rpc_rejected", _("节点拒绝")
-    INSUFFICIENT_BALANCE = "insufficient_balance", _("余额不足")
-    FEE_TOO_LOW = "fee_too_low", _("手续费过低")
-
-    # EVM 特有失败原因：当前只保留真正可能落到已创建 BroadcastTask 终局的链上失败原因。
-    EXECUTION_REVERTED = "execution_reverted", _("链上执行回退")
-    EXPECTED_TRANSFER_MISSING = "expected_transfer_missing", _("链上执行成功但预期资产移动缺失")
-
-
 class TxHash(models.Model):
-    broadcast_task = models.ForeignKey(
-        "BroadcastTask",
+    tx_task = models.ForeignKey(
+        "TxTask",
         on_delete=models.CASCADE,
         related_name="tx_hashes",
         verbose_name=_("链上任务"),
@@ -594,14 +589,14 @@ class TxHash(models.Model):
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
 
     class Meta:
-        ordering = ("broadcast_task_id", "version")
+        ordering = ("tx_task_id", "version")
         constraints = [
             models.UniqueConstraint(
                 fields=("chain", "hash"),
                 name="uniq_tx_hash_chain_hash",
             ),
             models.UniqueConstraint(
-                fields=("broadcast_task", "version"),
+                fields=("tx_task", "version"),
                 name="uniq_tx_hash_task_version",
             ),
         ]
@@ -613,35 +608,35 @@ class TxHash(models.Model):
 
     def clean(self) -> None:
         super().clean()
-        if self.broadcast_task_id and self.chain_id != self.broadcast_task.chain_id:
+        if self.tx_task_id and self.chain_id != self.tx_task.chain_id:
             raise ValidationError(
-                {"chain": _("TxHash.chain 必须与 BroadcastTask.chain 保持一致。")}
+                {"chain": _("TxHash.chain 必须与 TxTask.chain 保持一致。")}
             )
 
 
-class BroadcastTask(UndeletableModel):
+class TxTask(UndeletableModel):
     """跨链统一的链上任务锚点。
 
     设计原则：
-    - stage 只描述当前所处阶段：待广播 / 待上链 / 确认中 / 已终结。
+    - stage 只描述当前所处阶段：待广播 / 待上链 / 确认中 / 已完结。
     - result 只描述终局结果：未知 / 成功 / 失败。
     - 广播重试等实现细节继续留在各链子表，避免把"是否广播"污染到统一领域模型。
     - Withdrawal 等业务对象统一外键到该模型，不再直接依赖具体链实现或 tx hash。
     """
 
-    chain = models.ForeignKey(
-        "Chain",
-        on_delete=models.PROTECT,
-        verbose_name=_("链"),
-    )
     address = models.ForeignKey(
         "Address",
         on_delete=models.PROTECT,
         verbose_name=_("地址"),
     )
-    action_type = models.CharField(
+    chain = models.ForeignKey(
+        "Chain",
+        on_delete=models.PROTECT,
+        verbose_name=_("链"),
+    )
+    tx_type = models.CharField(
         _("类型"),
-        choices=OnchainActionType,
+        choices=TxTaskType,
     )
     tx_hash = HashField(
         unique=False,
@@ -651,21 +646,13 @@ class BroadcastTask(UndeletableModel):
     )
     stage = models.CharField(
         _("阶段"),
-        choices=BroadcastTaskStage,
-        default=BroadcastTaskStage.QUEUED,
+        choices=TxTaskStage,
+        default=TxTaskStage.QUEUED,
     )
     result = models.CharField(
         _("结果"),
-        choices=BroadcastTaskResult,
-        default=BroadcastTaskResult.UNKNOWN,
-    )
-    # failure_reason 使用统一枚举，便于跨链统计失败来源与后台筛选。
-    failure_reason = models.CharField(
-        _("失败原因"),
-        max_length=64,
-        choices=BroadcastTaskFailureReason,
-        blank=True,
-        default="",
+        choices=TxTaskResult,
+        default=TxTaskResult.UNKNOWN,
     )
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
     updated_at = models.DateTimeField(_("更新时间"), auto_now=True)
@@ -675,65 +662,44 @@ class BroadcastTask(UndeletableModel):
         constraints = [
             models.UniqueConstraint(
                 fields=("chain", "tx_hash"),
-                name="uniq_broadcast_task_chain_hash",
+                name="uniq_tx_task_chain_hash",
             ),
             models.CheckConstraint(
-                # 只要出现成功/失败终局结果，就必须已经进入已终结阶段。
-                condition=models.Q(result=BroadcastTaskResult.UNKNOWN)
-                | models.Q(stage=BroadcastTaskStage.FINALIZED),
-                name="ck_broadcast_task_result_requires_finalized_stage",
+                # 只要出现成功/失败终局结果，就必须已经进入已完结阶段。
+                condition=models.Q(result=TxTaskResult.UNKNOWN)
+                | models.Q(stage=TxTaskStage.FINALIZED),
+                name="ck_tx_task_result_requires_finalized_stage",
             ),
             models.CheckConstraint(
-                # 已终结任务不能继续保留未知结果，否则会把阶段和结果语义混在一起。
-                condition=~models.Q(stage=BroadcastTaskStage.FINALIZED)
-                | ~models.Q(result=BroadcastTaskResult.UNKNOWN),
-                name="ck_broadcast_task_finalized_requires_known_result",
-            ),
-            models.CheckConstraint(
-                # 失败时必须明确记录失败原因；非失败任务不得携带失败原因。
-                condition=(
-                    models.Q(result=BroadcastTaskResult.FAILED)
-                    & ~models.Q(failure_reason="")
-                )
-                | (
-                    ~models.Q(result=BroadcastTaskResult.FAILED)
-                    & models.Q(failure_reason="")
-                ),
-                name="ck_broadcast_task_failure_reason_matches_result",
+                # 已完结任务不能继续保留未知结果，否则会把阶段和结果语义混在一起。
+                condition=~models.Q(stage=TxTaskStage.FINALIZED)
+                | ~models.Q(result=TxTaskResult.UNKNOWN),
+                name="ck_tx_task_finalized_requires_known_result",
             ),
         ]
         verbose_name = _("链上任务")
         verbose_name_plural = verbose_name
 
     def __str__(self):
-        return self.tx_hash or f"broadcast-task-{self.pk or 'unsaved'}"
+        return self.tx_hash or f"tx-task-{self.pk or 'unsaved'}"
 
     def clean(self) -> None:
-        """在模型层显式约束阶段、结果、失败原因三者的一致性。"""
+        """在模型层显式约束阶段、结果二者的一致性。"""
         super().clean()
         errors = {}
 
-        if self.result in {BroadcastTaskResult.SUCCESS, BroadcastTaskResult.FAILED}:
-            if self.stage != BroadcastTaskStage.FINALIZED:
-                errors["stage"] = _("成功/失败结果只能出现在已终结阶段。")
+        if self.result in {TxTaskResult.SUCCESS, TxTaskResult.FAILED}:
+            if self.stage != TxTaskStage.FINALIZED:
+                errors["stage"] = _("成功/失败结果只能出现在已完结阶段。")
 
-        if (
-            self.stage == BroadcastTaskStage.FINALIZED
-            and self.result == BroadcastTaskResult.UNKNOWN
-        ):
-            errors["result"] = _("已终结任务必须给出成功或失败结果。")
-
-        if self.result == BroadcastTaskResult.FAILED:
-            if not self.failure_reason:
-                errors["failure_reason"] = _("失败任务必须填写失败原因。")
-        elif self.failure_reason:
-            errors["failure_reason"] = _("仅失败任务允许填写失败原因。")
+        if self.stage == TxTaskStage.FINALIZED and self.result == TxTaskResult.UNKNOWN:
+            errors["result"] = _("已完结任务必须给出成功或失败结果。")
 
         if errors:
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        # BroadcastTask 是跨链主锚点，统一在保存前执行 full_clean，避免后台和脚本写入脏状态。
+        # TxTask 是跨链主锚点，统一在保存前执行 full_clean，避免后台和脚本写入脏状态。
         self.full_clean()
         return super().save(*args, **kwargs)
 
@@ -742,48 +708,45 @@ class BroadcastTask(UndeletableModel):
         """把阶段与结果合成为一个稳定的人类可读状态。"""
         # 使用 Django 自动生成的 get_FOO_display()，既能保留 choices 语义，
         # 也能避免 IDE 对 TextChoices.label 静态推断不准确导致的误报。
-        if self.stage != BroadcastTaskStage.FINALIZED:
+        if self.stage != TxTaskStage.FINALIZED:
             return self.get_stage_display()
         return self.get_result_display()
 
     @property
     def is_confirmed(self) -> bool:
         return (
-            self.stage == BroadcastTaskStage.FINALIZED
-            and self.result == BroadcastTaskResult.SUCCESS
+            self.stage == TxTaskStage.FINALIZED and self.result == TxTaskResult.SUCCESS
         )
 
     @db_transaction.atomic
     def append_tx_hash(self, tx_hash: str) -> TxHash:
-        locked_task = BroadcastTask.objects.select_for_update().get(pk=self.pk)
+        locked_task = TxTask.objects.select_for_update().get(pk=self.pk)
         # 并发广播可能产生相同 tx_hash（相同 nonce + gas_price 签名结果相同），
         # 若已存在则视为幂等，直接返回。
-        existing = TxHash.objects.filter(
-            chain=locked_task.chain, hash=tx_hash
-        ).first()
+        existing = TxHash.objects.filter(chain=locked_task.chain, hash=tx_hash).first()
         if existing:
             self.tx_hash = tx_hash
             return existing
         max_version = (
-            TxHash.objects.filter(broadcast_task=locked_task)
+            TxHash.objects.filter(tx_task=locked_task)
             .aggregate(max_version=models.Max("version"))
             .get("max_version")
         )
         next_version = 1 if max_version is None else int(max_version) + 1
         created = TxHash.objects.create(
-            broadcast_task=locked_task,
+            tx_task=locked_task,
             chain=locked_task.chain,
             hash=tx_hash,
             version=next_version,
         )
-        BroadcastTask.objects.filter(pk=locked_task.pk).update(
+        TxTask.objects.filter(pk=locked_task.pk).update(
             tx_hash=tx_hash,
             updated_at=timezone.now(),
         )
-        if locked_task.action_type == OnchainActionType.Withdrawal:
+        if locked_task.tx_type == TxTaskType.Withdrawal:
             from withdrawals.models import Withdrawal
 
-            Withdrawal.objects.filter(broadcast_task=locked_task).update(
+            Withdrawal.objects.filter(tx_task=locked_task).update(
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
@@ -791,25 +754,25 @@ class BroadcastTask(UndeletableModel):
         return created
 
     @staticmethod
-    def resolve_by_hash(*, chain: Chain, tx_hash: str) -> BroadcastTask | None:
-        """通过 tx_hash 查找对应的 BroadcastTask。
+    def resolve_by_hash(*, chain: Chain, tx_hash: str) -> TxTask | None:
+        """通过 tx_hash 查找对应的 TxTask。
 
         优先从 TxHash 历史记录匹配（覆盖 gas 重签后的旧 hash），
-        未命中时回退到 BroadcastTask.tx_hash（当前 hash）。
+        未命中时回退到 TxTask.tx_hash（当前 hash）。
         两张表均有 (chain, hash) 唯一约束，无需额外去重。
         """
         if not tx_hash:
             return None
         # 优先查历史记录（gas 重签后旧 hash 只存在于 TxHash 表）
         history = (
-            TxHash.objects.select_related("broadcast_task")
+            TxHash.objects.select_related("tx_task")
             .filter(chain=chain, hash=tx_hash)
             .first()
         )
         if history is not None:
-            return history.broadcast_task
+            return history.tx_task
         # 回退到当前 tx_hash
-        return BroadcastTask.objects.filter(chain=chain, tx_hash=tx_hash).first()
+        return TxTask.objects.filter(chain=chain, tx_hash=tx_hash).first()
 
     @staticmethod
     def mark_finalized_success(*, chain: Chain, tx_hash: str) -> int:
@@ -820,24 +783,23 @@ class BroadcastTask(UndeletableModel):
         """
         if not tx_hash:
             return 0
-        task = BroadcastTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
+        task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
             return 0
         updated = (
-            BroadcastTask.objects.filter(pk=task.pk, result=BroadcastTaskResult.UNKNOWN)
-            .exclude(stage=BroadcastTaskStage.FINALIZED)
+            TxTask.objects.filter(pk=task.pk, result=TxTaskResult.UNKNOWN)
+            .exclude(stage=TxTaskStage.FINALIZED)
             .update(
                 tx_hash=tx_hash,
-                stage=BroadcastTaskStage.FINALIZED,
-                result=BroadcastTaskResult.SUCCESS,
-                failure_reason="",
+                stage=TxTaskStage.FINALIZED,
+                result=TxTaskResult.SUCCESS,
                 updated_at=timezone.now(),
             )
         )
-        if updated and task.action_type == OnchainActionType.Withdrawal:
+        if updated and task.tx_type == TxTaskType.Withdrawal:
             from withdrawals.models import Withdrawal
 
-            Withdrawal.objects.filter(broadcast_task=task).update(
+            Withdrawal.objects.filter(tx_task=task).update(
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
@@ -847,23 +809,18 @@ class BroadcastTask(UndeletableModel):
     def mark_finalized_failed(
         *,
         task_id: int,
-        reason: BroadcastTaskFailureReason,
-        expected_stage: BroadcastTaskStage | None = None,
+        expected_stage: TxTaskStage | None = None,
     ) -> int:
-        """将匹配的任务标记为失败终局。
-
-        失败终局必须保留失败原因，便于后续按失败类型统计和排查。
-        """
-        queryset = BroadcastTask.objects.filter(
+        """将匹配的任务标记为失败终局。"""
+        queryset = TxTask.objects.filter(
             pk=task_id,
-            result=BroadcastTaskResult.UNKNOWN,
-        ).exclude(stage=BroadcastTaskStage.FINALIZED)
+            result=TxTaskResult.UNKNOWN,
+        ).exclude(stage=TxTaskStage.FINALIZED)
         if expected_stage is not None:
             queryset = queryset.filter(stage=expected_stage)
         return queryset.update(
-            stage=BroadcastTaskStage.FINALIZED,
-            result=BroadcastTaskResult.FAILED,
-            failure_reason=reason,
+            stage=TxTaskStage.FINALIZED,
+            result=TxTaskResult.FAILED,
             updated_at=timezone.now(),
         )
 
@@ -874,24 +831,23 @@ class BroadcastTask(UndeletableModel):
         使用 .update() 绕过 save()/full_clean() 以避免逐行加载，
         依赖 DB CheckConstraint 保证状态三元组一致性。
         """
-        task = BroadcastTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
+        task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
             return 0
-        updated = BroadcastTask.objects.filter(
+        updated = TxTask.objects.filter(
             pk=task.pk,
-            stage=BroadcastTaskStage.PENDING_CONFIRM,
-            result=BroadcastTaskResult.UNKNOWN,
+            stage=TxTaskStage.PENDING_CONFIRM,
+            result=TxTaskResult.UNKNOWN,
         ).update(
             tx_hash=tx_hash,
-            stage=BroadcastTaskStage.PENDING_CHAIN,
-            result=BroadcastTaskResult.UNKNOWN,
-            failure_reason="",
+            stage=TxTaskStage.PENDING_CHAIN,
+            result=TxTaskResult.UNKNOWN,
             updated_at=timezone.now(),
         )
-        if updated and task.action_type == OnchainActionType.Withdrawal:
+        if updated and task.tx_type == TxTaskType.Withdrawal:
             from withdrawals.models import Withdrawal
 
-            Withdrawal.objects.filter(broadcast_task=task).update(
+            Withdrawal.objects.filter(tx_task=task).update(
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
@@ -906,24 +862,23 @@ class BroadcastTask(UndeletableModel):
         """
         if not tx_hash:
             return 0
-        task = BroadcastTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
+        task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
             return 0
         updated = (
-            BroadcastTask.objects.filter(pk=task.pk)
-            .exclude(stage=BroadcastTaskStage.FINALIZED)
+            TxTask.objects.filter(pk=task.pk)
+            .exclude(stage=TxTaskStage.FINALIZED)
             .update(
                 tx_hash=tx_hash,
-                stage=BroadcastTaskStage.PENDING_CONFIRM,
-                result=BroadcastTaskResult.UNKNOWN,
-                failure_reason="",
+                stage=TxTaskStage.PENDING_CONFIRM,
+                result=TxTaskResult.UNKNOWN,
                 updated_at=timezone.now(),
             )
         )
-        if updated and task.action_type == OnchainActionType.Withdrawal:
+        if updated and task.tx_type == TxTaskType.Withdrawal:
             from withdrawals.models import Withdrawal
 
-            Withdrawal.objects.filter(broadcast_task=task).update(
+            Withdrawal.objects.filter(tx_task=task).update(
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
@@ -946,12 +901,11 @@ class _EvmSenderClass(enum.Enum):
     UNKNOWN = "unknown"
 
 
-class OnchainTransfer(models.Model):
+class Transfer(models.Model):
     if TYPE_CHECKING:
         # Django 反向 OneToOne 描述符在运行时动态挂载；这里显式声明给 IDE 做静态解析。
         invoice: Invoice
         deposit: Deposit
-        deposit_collection: DepositCollection
         withdrawal: Withdrawal
 
     chain = models.ForeignKey(Chain, on_delete=models.CASCADE, verbose_name=_("链"))
@@ -982,7 +936,7 @@ class OnchainTransfer(models.Model):
 
     type = models.CharField(
         _("类型"),
-        choices=OnchainActionType,
+        choices=TransferType,
         blank=True,
         default="",
     )
@@ -991,7 +945,9 @@ class OnchainTransfer(models.Model):
         default=ConfirmMode.FULL,
         max_length=8,
         verbose_name=_("确认模式"),
-        help_text=_("当前仅 Invoice 业务根据 fast_confirm_threshold 动态设置 QUICK/FULL；Deposit 与 Withdrawal 始终使用默认 FULL，走完整区块确认流程。"),
+        help_text=_(
+            "当前仅 Invoice 业务根据 fast_confirm_threshold 动态设置 QUICK/FULL；Deposit 与 Withdrawal 始终使用默认 FULL，走完整区块确认流程。"
+        ),
     )
     timestamp = models.PositiveIntegerField(verbose_name=_("时间戳"), db_index=True)
     datetime = models.DateTimeField(verbose_name=_("日期"))
@@ -1021,18 +977,16 @@ class OnchainTransfer(models.Model):
     @db_transaction.atomic
     def process(self):
         # 先加行锁再刷新，防止两个 Celery worker 并发处理同一笔转账
-        OnchainTransfer.objects.select_for_update().get(pk=self.pk)
+        Transfer.objects.select_for_update().get(pk=self.pk)
         self.refresh_from_db()
         if self.processed_at:
             return
 
-        # 优先通过 TxHash 匹配内部广播交易（gas补充、归集、提币），
+        # 优先通过 TxHash 匹配内部交易任务（提币等），
         # 一次 resolve 即可定位业务类型，避免逐一 try_match 重复查询。
-        broadcast_task = BroadcastTask.resolve_by_hash(
-            chain=self.chain, tx_hash=self.hash
-        )
-        if broadcast_task is not None:
-            if self._match_internal(broadcast_task):
+        tx_task = TxTask.resolve_by_hash(chain=self.chain, tx_hash=self.hash)
+        if tx_task is not None:
+            if self._match_internal(tx_task):
                 self._mark_processed()
                 if self.confirm_mode == ConfirmMode.QUICK:
                     from .tasks import confirm_transfer
@@ -1041,9 +995,9 @@ class OnchainTransfer(models.Model):
                 return
 
             logger.warning(
-                "OnchainTransfer 命中 BroadcastTask 但内部 handler 未认领，跳过外部匹配",
+                "Transfer 命中 TxTask 但内部 handler 未认领，跳过外部匹配",
                 transfer_id=self.pk,
-                broadcast_task_id=broadcast_task.pk,
+                tx_task_id=tx_task.pk,
                 tx_hash=self.hash,
             )
             self._mark_processed()
@@ -1053,7 +1007,7 @@ class OnchainTransfer(models.Model):
             sender_class = self._classify_evm_sender()
             if sender_class == _EvmSenderClass.SYSTEM:
                 logger.warning(
-                    "EVM OnchainTransfer 原交易发送方是系统地址但无 BroadcastTask，跳过外部匹配",
+                    "EVM Transfer 原交易发送方是系统地址但无 TxTask，跳过外部匹配",
                     transfer_id=self.pk,
                     tx_hash=self.hash,
                 )
@@ -1092,7 +1046,9 @@ class OnchainTransfer(models.Model):
             if isinstance(tx, dict):
                 raw_from = tx.get("from")
             if raw_from is None:
-                raw_from = getattr(tx, "from_", None) or getattr(tx, "fromAddress", None)
+                raw_from = getattr(tx, "from_", None) or getattr(
+                    tx, "fromAddress", None
+                )
             if raw_from is None and hasattr(tx, "__getitem__"):
                 try:
                     raw_from = tx["from"]
@@ -1118,56 +1074,47 @@ class OnchainTransfer(models.Model):
 
     def _mark_processed(self) -> None:
         self.processed_at = timezone.now()
-        OnchainTransfer.objects.filter(pk=self.pk).update(
-            processed_at=self.processed_at
-        )
+        Transfer.objects.filter(pk=self.pk).update(processed_at=self.processed_at)
 
-    def _match_internal(self, broadcast_task: BroadcastTask) -> bool:
-        """通过已解析的 BroadcastTask 直接分发到对应内部业务处理器。"""
+    def _match_internal(self, tx_task: TxTask) -> bool:
+        """通过已解析的 TxTask 直接分发到对应内部业务处理器。"""
         if self.chain.type == ChainType.EVM:
             try:
                 from evm.internal_tx.handlers import get_handler
 
-                handler = get_handler(OnchainActionType(broadcast_task.action_type))
+                handler = get_handler(TxTaskType(tx_task.tx_type))
             except (KeyError, ValueError):
                 logger.warning(
                     "EVM 内部交易缺少 handler 注册",
                     transfer_id=self.pk,
-                    action_type=broadcast_task.action_type,
+                    tx_type=tx_task.tx_type,
                 )
                 return False
-            return handler.match(self, broadcast_task)
+            return handler.match(self, tx_task)
 
-        return self._legacy_match_internal_non_evm(broadcast_task)
+        return self._legacy_match_internal_non_evm(tx_task)
 
-    def _legacy_match_internal_non_evm(self, broadcast_task: BroadcastTask) -> bool:
-        from deposits.service import DepositService
+    def _legacy_match_internal_non_evm(self, tx_task: TxTask) -> bool:
         from withdrawals.service import WithdrawalService
 
-        tt = broadcast_task.action_type
-        if tt == OnchainActionType.GasRecharge:
-            return DepositService.try_match_gas_recharge(self, broadcast_task)
-        if tt == OnchainActionType.DepositCollection:
-            return DepositService.try_match_collection(self, broadcast_task)
-        if tt == OnchainActionType.Withdrawal:
-            return WithdrawalService.try_match_withdrawal(self, broadcast_task)
+        tt = tx_task.tx_type
+        if tt == TxTaskType.Withdrawal:
+            return WithdrawalService.try_match_withdrawal(self, tx_task)
         return False
 
     @db_transaction.atomic
     def confirm(self):
         # 修复：确认前先加行锁并刷新，避免多个 worker 对同一笔转账重复确认和重复计费。
-        OnchainTransfer.objects.select_for_update().get(pk=self.pk)
+        Transfer.objects.select_for_update().get(pk=self.pk)
         self.refresh_from_db()
         if self.status == TransferStatus.CONFIRMED:
             return
 
         self.status = TransferStatus.CONFIRMED
         # Transfer 状态推进不依赖 post_save 更新逻辑，直接 update 可减少并发覆盖面。
-        OnchainTransfer.objects.filter(pk=self.pk).update(
-            status=TransferStatus.CONFIRMED
-        )
+        Transfer.objects.filter(pk=self.pk).update(status=TransferStatus.CONFIRMED)
         # 统一父任务在确认后进入稳定成功终局；业务层不需要感知广播细节。
-        BroadcastTask.mark_finalized_success(chain=self.chain, tx_hash=self.hash)
+        TxTask.mark_finalized_success(chain=self.chain, tx_hash=self.hash)
 
         self._dispatch_business_confirm()
 
@@ -1179,7 +1126,7 @@ class OnchainTransfer(models.Model):
         使 reorg 后同一笔 tx 被重新打包时, 扫描器可以自然重建 Transfer。
         """
         # 先加行锁，防止并发处理；已删除的 Transfer 直接跳过。
-        if not OnchainTransfer.objects.select_for_update().filter(pk=self.pk).exists():
+        if not Transfer.objects.select_for_update().filter(pk=self.pk).exists():
             return
         self.refresh_from_db()
 
@@ -1187,7 +1134,7 @@ class OnchainTransfer(models.Model):
 
         # 当确认前已观察到的交易后来又查不到时, 按"回退到待上链"处理;
         # 让任务继续通过重广播自愈, 而不是直接进入失败终局。
-        BroadcastTask.reset_to_pending_chain(chain=self.chain, tx_hash=self.hash)
+        TxTask.reset_to_pending_chain(chain=self.chain, tx_hash=self.hash)
 
         self.delete()
 
@@ -1216,12 +1163,18 @@ class OnchainTransfer(models.Model):
 
     def _dispatch_business_confirm(self) -> None:
         """统一按已归类的业务类型分发确认动作，confirm() 专用。"""
-        if self.chain.type == ChainType.EVM and self.type:
-            try:
-                from evm.internal_tx.handlers import get_handler
+        # 系统主动发起的链上交易（当前只有 Withdrawal）走 EVM 内部处理器，
+        # 由其感知 receipt 状态后再走对应 service。其余 TransferType 是外部触达的
+        # 链上事件（Invoice/Deposit/Prefunding），直接按业务归属下发即可。
+        if (
+            self.chain.type == ChainType.EVM
+            and self.type == TransferType.Withdrawal
+        ):
+            from evm.internal_tx.handlers import get_handler
 
-                handler = get_handler(OnchainActionType(self.type))
-            except (KeyError, ValueError):
+            try:
+                handler = get_handler(TxTaskType.Withdrawal)
+            except KeyError:
                 handler = None
             if handler is not None:
                 handler.confirm(self)
@@ -1234,22 +1187,11 @@ class OnchainTransfer(models.Model):
         from invoices.service import InvoiceService
         from withdrawals.service import WithdrawalService
 
-        if self.type == OnchainActionType.Invoice:
+        if self.type == TransferType.Invoice:
             InvoiceService.confirm_invoice(self.invoice)
-        elif self.type == OnchainActionType.Deposit:
+        elif self.type == TransferType.Deposit:
             DepositService.confirm_deposit(self.deposit)
-        elif self.type == OnchainActionType.DepositCollection:
-            from deposits.models import DepositCollection
-
-            with contextlib.suppress(DepositCollection.DoesNotExist):
-                DepositService.confirm_collection(self.deposit_collection)
-        elif self.type == OnchainActionType.GasRecharge:
-            from deposits.models import GasRecharge
-
-            GasRecharge.objects.filter(transfer=self).update(
-                recharged_at=timezone.now()
-            )
-        elif self.type == OnchainActionType.Withdrawal:
+        elif self.type == TransferType.Withdrawal:
             from withdrawals.models import Withdrawal
 
             with contextlib.suppress(Withdrawal.DoesNotExist):
@@ -1257,12 +1199,15 @@ class OnchainTransfer(models.Model):
 
     def _dispatch_business_drop(self) -> None:
         """统一按已归类的业务类型分发回退动作，drop() 专用。"""
-        if self.chain.type == ChainType.EVM and self.type:
-            try:
-                from evm.internal_tx.handlers import get_handler
+        if (
+            self.chain.type == ChainType.EVM
+            and self.type == TransferType.Withdrawal
+        ):
+            from evm.internal_tx.handlers import get_handler
 
-                handler = get_handler(OnchainActionType(self.type))
-            except (KeyError, ValueError):
+            try:
+                handler = get_handler(TxTaskType.Withdrawal)
+            except KeyError:
                 handler = None
             if handler is not None:
                 handler.drop(self)
@@ -1275,16 +1220,11 @@ class OnchainTransfer(models.Model):
         from invoices.service import InvoiceService
         from withdrawals.service import WithdrawalService
 
-        if self.type == OnchainActionType.Invoice:
+        if self.type == TransferType.Invoice:
             InvoiceService.drop_invoice(self.invoice)
-        elif self.type == OnchainActionType.Deposit:
+        elif self.type == TransferType.Deposit:
             DepositService.drop_deposit(self.deposit)
-        elif self.type == OnchainActionType.DepositCollection:
-            from deposits.models import DepositCollection
-
-            with contextlib.suppress(DepositCollection.DoesNotExist):
-                DepositService.drop_collection(self.deposit_collection)
-        elif self.type == OnchainActionType.Withdrawal:
+        elif self.type == TransferType.Withdrawal:
             from withdrawals.models import Withdrawal
 
             with contextlib.suppress(Withdrawal.DoesNotExist):

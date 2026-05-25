@@ -6,20 +6,20 @@ from web3 import Web3
 from chains.models import Address
 from chains.models import AddressChainState
 from chains.models import AddressUsage
-from chains.models import BroadcastTask
-from chains.models import BroadcastTaskResult
-from chains.models import BroadcastTaskStage
+from chains.models import TxTask
+from chains.models import TxTaskResult
+from chains.models import TxTaskStage
+from chains.models import TxTaskType
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import OnchainActionType
 from chains.models import Wallet
 from currencies.models import Crypto
 from evm.choices import TxKind
 from evm.intents import EvmTxIntent
-from evm.models import EvmBroadcastTask
+from evm.models import EvmTxTask
 
 
-class EvmBroadcastTaskScheduleTests(TestCase):
+class EvmTxTaskScheduleTests(TestCase):
     def setUp(self):
         self.native = Crypto.objects.create(
             name="Schedule Ether",
@@ -34,10 +34,10 @@ class EvmBroadcastTaskScheduleTests(TestCase):
             chain_id=999_901,
             rpc="http://localhost:8545",
             native_coin=self.native,
-            base_transfer_gas=21_000,
-            erc20_transfer_gas=65_000,
             active=True,
         )
+        self.chain.base_transfer_gas = 21_000
+        self.chain.erc20_transfer_gas = 65_000
         self.wallet = Wallet.objects.create()
         self.address = Address.objects.create(
             wallet=self.wallet,
@@ -62,7 +62,7 @@ class EvmBroadcastTaskScheduleTests(TestCase):
             "value": 1_230_000_000_000_000_000,
             "data": "",
             "gas": 21_000,
-            "action_type": OnchainActionType.Withdrawal,
+            "tx_type": TxTaskType.Withdrawal,
             "verify_fn": None,
         }
         values.update(overrides)
@@ -77,7 +77,7 @@ class EvmBroadcastTaskScheduleTests(TestCase):
             tx_kind=TxKind.CONTRACT_CALL,
         )
 
-        task = EvmBroadcastTask.schedule(intent)
+        task = EvmTxTask.schedule(intent)
 
         self.assertEqual(task.address, intent.address)
         self.assertEqual(task.chain, intent.chain)
@@ -91,9 +91,9 @@ class EvmBroadcastTaskScheduleTests(TestCase):
         base_task = task.base_task
         self.assertEqual(base_task.chain, intent.chain)
         self.assertEqual(base_task.address, intent.address)
-        self.assertEqual(base_task.action_type, intent.action_type)
-        self.assertEqual(base_task.stage, BroadcastTaskStage.QUEUED)
-        self.assertEqual(base_task.result, BroadcastTaskResult.UNKNOWN)
+        self.assertEqual(base_task.tx_type, intent.tx_type)
+        self.assertEqual(base_task.stage, TxTaskStage.QUEUED)
+        self.assertEqual(base_task.result, TxTaskResult.UNKNOWN)
 
         state = AddressChainState.objects.get(address=self.address, chain=self.chain)
         self.assertEqual(state.address, self.address)
@@ -122,9 +122,9 @@ class EvmBroadcastTaskScheduleTests(TestCase):
                 "acquire_for_update",
                 side_effect=acquire_for_update,
             ),
-            patch.object(EvmBroadcastTask, "_next_nonce", side_effect=next_nonce),
+            patch.object(EvmTxTask, "_next_nonce", side_effect=next_nonce),
         ):
-            task = EvmBroadcastTask.schedule(intent)
+            task = EvmTxTask.schedule(intent)
 
         self.assertEqual(events, ["lock", "verify", "nonce"])
         self.assertEqual(task.nonce, 0)
@@ -137,42 +137,8 @@ class EvmBroadcastTaskScheduleTests(TestCase):
             raise RuntimeError("balance changed")
 
         with self.assertRaisesRegex(RuntimeError, "balance changed"):
-            EvmBroadcastTask.schedule(self._intent(verify_fn=reject))
+            EvmTxTask.schedule(self._intent(verify_fn=reject))
 
-        self.assertEqual(BroadcastTask.objects.count(), 0)
-        self.assertEqual(EvmBroadcastTask.objects.count(), 0)
+        self.assertEqual(TxTask.objects.count(), 0)
+        self.assertEqual(EvmTxTask.objects.count(), 0)
         self.assertEqual(AddressChainState.objects.count(), 0)
-
-    def test_schedule_allows_x402_facilitate_to_reach_lock(self):
-        intent = self._intent(action_type=OnchainActionType.X402Facilitate)
-
-        with (
-            patch.object(
-                AddressChainState,
-                "acquire_for_update",
-                side_effect=RuntimeError("lock reached"),
-            ) as acquire_mock,
-            self.assertRaisesRegex(RuntimeError, "lock reached"),
-        ):
-            EvmBroadcastTask.schedule(intent)
-
-        acquire_mock.assert_called_once()
-        self.assertEqual(BroadcastTask.objects.count(), 0)
-        self.assertEqual(EvmBroadcastTask.objects.count(), 0)
-
-    def test_schedule_allows_contract_deploy_collect_to_reach_lock(self):
-        intent = self._intent(action_type=OnchainActionType.ContractDeployCollect)
-
-        with (
-            patch.object(
-                AddressChainState,
-                "acquire_for_update",
-                side_effect=RuntimeError("lock reached"),
-            ) as acquire_mock,
-            self.assertRaisesRegex(RuntimeError, "lock reached"),
-        ):
-            EvmBroadcastTask.schedule(intent)
-
-        acquire_mock.assert_called_once()
-        self.assertEqual(BroadcastTask.objects.count(), 0)
-        self.assertEqual(EvmBroadcastTask.objects.count(), 0)

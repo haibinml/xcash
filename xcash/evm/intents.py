@@ -8,9 +8,8 @@ from typing import TYPE_CHECKING
 import eth_abi
 from web3 import Web3
 
-from chains.models import OnchainActionType
+from chains.models import TxTaskType
 from evm.choices import TxKind
-from evm.constants import get_x402_eip3009_facilitate_gas
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,7 +30,7 @@ class EvmTxIntent:
     value: int
     data: str
     gas: int
-    action_type: OnchainActionType
+    tx_type: TxTaskType
     verify_fn: Callable[[], None] | None = None
 
 
@@ -39,12 +38,6 @@ _PREFLIGHT_BUFFER_MULTIPLIER = {
     TxKind.NATIVE_TRANSFER: 2,
     TxKind.CONTRACT_CALL: 2,
 }
-
-_GAS_RECHARGEABLE_ACTION_TYPES = frozenset({OnchainActionType.DepositCollection})
-
-# §11 前的显式业务闸门：builder 已能构造低层 calldata，但业务回执匹配、
-# 状态流转与调用方接线尚未接通前，schedule 入口必须继续阻断这些类型。
-_UNIMPLEMENTED_BUSINESS_ACTION_TYPES: frozenset[OnchainActionType] = frozenset()
 
 
 def _normalize_hex_calldata(data: str) -> str:
@@ -68,28 +61,17 @@ def _normalize_hex_calldata(data: str) -> str:
     return normalized
 
 
-def _require_bytes32(name: str, value: object) -> None:
-    """要求传入值为 32 字节二进制，常用于哈希、salt、nonce 等字段。"""
-    if not isinstance(value, bytes | bytearray) or len(value) != 32:
-        raise ValueError(f"{name} must be bytes32")
-
-
 def get_preflight_buffer_multiplier(tx_kind: TxKind) -> int:
     return _PREFLIGHT_BUFFER_MULTIPLIER[tx_kind]
 
 
-def is_gas_rechargeable(action_type: OnchainActionType) -> bool:
-    return action_type in _GAS_RECHARGEABLE_ACTION_TYPES
-
-
-def assert_action_type_implemented(action_type: OnchainActionType) -> None:
-    if action_type in _UNIMPLEMENTED_BUSINESS_ACTION_TYPES:
-        raise NotImplementedError(
-            f"{action_type.label} EVM builder will be implemented in §11"
-        )
-
-
 _ERC20_TRANSFER_SELECTOR = "0xa9059cbb"
+DEFAULT_DEPOSIT_SLOT_DEPLOY_GAS = 160_000
+DEFAULT_DEPOSIT_SLOT_COLLECT_GAS = 90_000
+
+
+def _function_selector(signature: str) -> str:
+    return bytes(Web3.keccak(text=signature)[:4]).hex()
 
 
 def build_native_transfer_intent(
@@ -98,7 +80,7 @@ def build_native_transfer_intent(
     chain: Chain,
     to: str,
     value: int,
-    action_type: OnchainActionType,
+    tx_type: TxTaskType,
     verify_fn: Callable[[], None] | None = None,
 ) -> EvmTxIntent:
     if value < 0:
@@ -113,7 +95,7 @@ def build_native_transfer_intent(
         value=value,
         data="",
         gas=chain.base_transfer_gas,
-        action_type=action_type,
+        tx_type=tx_type,
         verify_fn=verify_fn,
     )
 
@@ -125,7 +107,7 @@ def build_erc20_transfer_intent(
     crypto: Crypto,
     to: str,
     value_raw: int,
-    action_type: OnchainActionType,
+    tx_type: TxTaskType,
     verify_fn: Callable[[], None] | None = None,
 ) -> EvmTxIntent:
     if value_raw < 0:
@@ -149,7 +131,7 @@ def build_erc20_transfer_intent(
         value=0,
         data=f"{_ERC20_TRANSFER_SELECTOR}{encoded_args}",
         gas=chain.erc20_transfer_gas,
-        action_type=action_type,
+        tx_type=tx_type,
         verify_fn=verify_fn,
     )
 
@@ -161,7 +143,7 @@ def build_contract_call_intent(
     contract_address: str,
     data: str,
     gas: int,
-    action_type: OnchainActionType,
+    tx_type: TxTaskType,
     value: int = 0,
     verify_fn: Callable[[], None] | None = None,
 ) -> EvmTxIntent:
@@ -178,147 +160,63 @@ def build_contract_call_intent(
         value=value,
         data=_normalize_hex_calldata(data),
         gas=gas,
-        action_type=action_type,
+        tx_type=tx_type,
         verify_fn=verify_fn,
     )
 
 
-_EIP3009_TRANSFER_WITH_AUTH_SELECTOR = "0xe3ee160e"
-
-
-@dataclass(frozen=True)
-class X402Authorization:
-    pass
-
-
-@dataclass(frozen=True)
-class Eip3009Authorization(X402Authorization):
-    from_address: str
-    to: str
-    value: int
-    valid_after: int
-    valid_before: int
-    nonce: bytes
-    v: int
-    r: bytes
-    s: bytes
-
-
-def build_x402_eip3009_facilitate_intent(
+def build_deposit_slot_deploy_intent(
     *,
     address: Address,
     chain: Chain,
-    crypto: Crypto,
-    authorization: Eip3009Authorization,
-) -> EvmTxIntent:
-    if authorization.value < 0:
-        raise ValueError("authorization.value must be >= 0")
-    if authorization.valid_after >= authorization.valid_before:
-        raise ValueError("authorization.valid_after must be < authorization.valid_before")
-
-    _require_bytes32("authorization.nonce", authorization.nonce)
-    _require_bytes32("authorization.r", authorization.r)
-    _require_bytes32("authorization.s", authorization.s)
-
-    if authorization.v not in {27, 28}:
-        raise ValueError("authorization.v must be 27 or 28")
-
-    token_addr = crypto.address(chain)
-    if not token_addr:
-        raise ValueError(
-            f"Crypto {crypto.symbol} is not deployed on chain {chain.code}"
-        )
-
-    contract_addr = Web3.to_checksum_address(token_addr)
-    auth_from = Web3.to_checksum_address(authorization.from_address)
-    auth_to = Web3.to_checksum_address(authorization.to)
-    encoded_args = eth_abi.encode(
-        [
-            "address",
-            "address",
-            "uint256",
-            "uint256",
-            "uint256",
-            "bytes32",
-            "uint8",
-            "bytes32",
-            "bytes32",
-        ],
-        [
-            auth_from,
-            auth_to,
-            authorization.value,
-            authorization.valid_after,
-            authorization.valid_before,
-            authorization.nonce,
-            authorization.v,
-            authorization.r,
-            authorization.s,
-        ],
-    ).hex()
-
-    return build_contract_call_intent(
-        address=address,
-        chain=chain,
-        contract_address=contract_addr,
-        data=f"{_EIP3009_TRANSFER_WITH_AUTH_SELECTOR}{encoded_args}",
-        gas=get_x402_eip3009_facilitate_gas(chain),
-        action_type=OnchainActionType.X402Facilitate,
-    )
-
-
-_PAYMENT_COLLECTOR_FACTORY_SELECTOR = (
-    "0x" + Web3.keccak(text="deploy(bytes32,bytes)")[:4].hex()
-)
-
-
-def compute_create2_address(
-    *,
     factory_address: str,
+    vault_address: str,
     salt: bytes,
-    init_code_hash: bytes,
-) -> str:
-    """按 EIP-1014 公式计算 CREATE2 部署后的合约地址。"""
-    _require_bytes32("salt", salt)
-    _require_bytes32("init_code_hash", init_code_hash)
+    verify_fn: Callable[[], None] | None = None,
+) -> EvmTxIntent:
+    if len(salt) != 32:
+        raise ValueError("salt must be 32 bytes")
 
     factory_checksum = Web3.to_checksum_address(factory_address)
-    payload = (
-        b"\xff"
-        + Web3.to_bytes(hexstr=factory_checksum)
-        + bytes(salt)
-        + bytes(init_code_hash)
-    )
-    digest = Web3.keccak(payload)
-    return Web3.to_checksum_address(f"0x{digest[12:].hex()}")
-
-
-def build_payment_collector_deploy_intent(
-    *,
-    address: Address,
-    chain: Chain,
-    salt: bytes,
-    collector_init_code: bytes,
-    gas: int,
-) -> EvmTxIntent:
-    if not chain.create2_factory_address:
-        raise ValueError(f"Chain {chain.code} 未配置 create2_factory_address")
-    if not collector_init_code:
-        raise ValueError("collector_init_code must not be empty")
-
-    _require_bytes32("salt", salt)
-
-    factory_address = Web3.to_checksum_address(chain.create2_factory_address)
+    vault_checksum = Web3.to_checksum_address(vault_address)
+    selector = _function_selector("deployDepositSlot(address,bytes32)")
     encoded_args = eth_abi.encode(
-        ["bytes32", "bytes"],
-        [bytes(salt), bytes(collector_init_code)],
+        ["address", "bytes32"],
+        [vault_checksum, salt],
     ).hex()
 
     return build_contract_call_intent(
         address=address,
         chain=chain,
-        contract_address=factory_address,
-        data=f"{_PAYMENT_COLLECTOR_FACTORY_SELECTOR}{encoded_args}",
-        gas=gas,
-        action_type=OnchainActionType.ContractDeployCollect,
+        contract_address=factory_checksum,
+        data=f"0x{selector}{encoded_args}",
+        gas=DEFAULT_DEPOSIT_SLOT_DEPLOY_GAS,
+        tx_type=TxTaskType.DepositSlotDeploy,
+        value=0,
+        verify_fn=verify_fn,
+    )
+
+
+def build_deposit_slot_collect_intent(
+    *,
+    address: Address,
+    chain: Chain,
+    deposit_slot_address: str,
+    token_address: str,
+    verify_fn: Callable[[], None] | None = None,
+) -> EvmTxIntent:
+    deposit_slot_checksum = Web3.to_checksum_address(deposit_slot_address)
+    token_checksum = Web3.to_checksum_address(token_address)
+    selector = _function_selector("collect(address)")
+    encoded_args = eth_abi.encode(["address"], [token_checksum]).hex()
+
+    return build_contract_call_intent(
+        address=address,
+        chain=chain,
+        contract_address=deposit_slot_checksum,
+        data=f"0x{selector}{encoded_args}",
+        gas=DEFAULT_DEPOSIT_SLOT_COLLECT_GAS,
+        tx_type=TxTaskType.DepositSlotCollect,
+        value=0,
+        verify_fn=verify_fn,
     )
