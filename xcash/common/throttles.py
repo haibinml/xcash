@@ -37,10 +37,10 @@ class WithdrawalCreateThrottle(AppidThrottle):
     scope = "withdrawal_create"
 
 
-class DepositSlotThrottle(AppidThrottle):
-    """DepositSlot 地址获取接口的频率限制，防止批量占用槽位。"""
+class VaultSlotThrottle(AppidThrottle):
+    """VaultSlot 地址获取接口的频率限制，防止批量占用槽位。"""
 
-    scope = "deposit_slot"
+    scope = "vault_slot"
 
 
 class InvoiceSelectMethodThrottle(BaseInvoiceThrottle):

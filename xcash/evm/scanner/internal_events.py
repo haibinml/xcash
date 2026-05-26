@@ -13,7 +13,7 @@ from chains.models import ChainType
 from evm.internal_tx import processor as internal_tx_processor
 from evm.internal_tx.routing import UnknownInternalBroadcastError
 from evm.scanner.constants import XCASH_COLLECTED_TOPIC0
-from evm.scanner.constants import XCASH_DEPOSIT_SLOT_DEPLOYED_TOPIC0
+from evm.scanner.constants import XCASH_VAULT_SLOT_DEPLOYED_TOPIC0
 from evm.scanner.rpc import EvmScannerRpcClient
 
 logger = structlog.get_logger()
@@ -88,7 +88,7 @@ class EvmContractEventObserver:
             topic0 = cls._normalize_hash(topics[0])
             if topic0 not in {
                 XCASH_COLLECTED_TOPIC0.lower(),
-                XCASH_DEPOSIT_SLOT_DEPLOYED_TOPIC0.lower(),
+                XCASH_VAULT_SLOT_DEPLOYED_TOPIC0.lower(),
             }:
                 continue
             try:

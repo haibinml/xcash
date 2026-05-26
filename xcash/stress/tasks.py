@@ -551,7 +551,7 @@ def _verify_collection_cache_key(stress_run_id: int) -> str:
 @shared_task(bind=True, ignore_result=True, soft_time_limit=120, time_limit=180)
 @singleton_task(timeout=180, use_params=True)
 def verify_deposit_collection(self, stress_run_id: int) -> None:
-    """Phase 2：DepositSlot 体系下轮询 Deposit 是否完成。
+    """Phase 2：VaultSlot 体系下轮询 Deposit 是否完成。
 
     幂等保证：
     - singleton_task(use_params=True) 用 stress_run_id 区分锁，同一 run 同时只有
@@ -715,7 +715,7 @@ def _finalize_collection_verification(
     webhook_ok_cases: list[DepositStressCase],
     reason: str,
 ) -> None:
-    """DepositSlot 体系下，Deposit 完成即代表入账验证完成。"""
+    """VaultSlot 体系下，Deposit 完成即代表入账验证完成。"""
     from deposits.models import Deposit
 
     logger.info(
@@ -776,7 +776,7 @@ def _verify_invoice_collection_cache_key(stress_run_id: int) -> str:
 @shared_task(bind=True, ignore_result=True, soft_time_limit=120, time_limit=180)
 @singleton_task(timeout=180, use_params=True)
 def verify_invoice_collection(self, stress_run_id: int) -> None:
-    """DepositSlot 合约账单不再执行旧 collector 归集，webhook OK 后直接收口。"""
+    """VaultSlot 合约账单不再执行旧 collector 归集，webhook OK 后直接收口。"""
     from invoices.models import InvoiceBillingMode
 
     try:
@@ -806,7 +806,7 @@ def _finalize_invoice_collection_verification(
     webhook_ok_cases: list[InvoiceStressCase],
     reason: str,
 ) -> None:
-    """DepositSlot 合约账单不再检查旧合约归集记录。"""
+    """VaultSlot 合约账单不再检查旧合约归集记录。"""
     from invoices.models import Invoice
 
     logger.info(
@@ -840,7 +840,7 @@ def _finalize_invoice_collection_verification(
             if invoice is None:
                 case.error = "未找到对应 Invoice"
             else:
-                case.error = f"DepositSlot 账单未完成（reason={reason}）"
+                case.error = f"VaultSlot 账单未完成（reason={reason}）"
         case.finished_at = now
         case.save(update_fields=update_fields)
         StressService.on_case_finished(case)

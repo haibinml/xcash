@@ -9,7 +9,7 @@ from web3 import Web3
 from chains.models import Chain
 from chains.models import ChainType
 from currencies.models import ChainToken
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from invoices.models import InvoiceBillingMode
 from invoices.models import InvoicePaySlot
 from invoices.models import InvoicePaySlotStatus
@@ -36,7 +36,7 @@ def _normalize_address(address: str) -> str:
 
 
 def load_watch_set(*, chain: Chain, refresh: bool = False) -> EvmWatchSet:
-    """加载某条链上需要监听的 DepositSlot 地址与受支持 ERC20 合约集合。"""
+    """加载某条链上需要监听的 VaultSlot 地址与受支持 ERC20 合约集合。"""
 
     if refresh:
         watched_addresses = refresh_evm_watched_addresses()
@@ -64,7 +64,7 @@ def load_watch_set(*, chain: Chain, refresh: bool = False) -> EvmWatchSet:
 def refresh_evm_watched_addresses() -> frozenset[str]:
     """重建 EVM 全局观察地址缓存。
 
-    DepositSlot 和 contract InvoicePaySlot 是当前 EVM 入账观察面。
+    VaultSlot 和 contract InvoicePaySlot 是当前 EVM 入账观察面。
     系统 Address 只作为部署、归集、提现等内部交易的发起账户，不进入 scanner。
     """
 
@@ -118,8 +118,8 @@ def _chain_tokens_cache_key(*, chain: Chain) -> str:
 
 
 def _load_evm_watched_addresses_from_db() -> frozenset[str]:
-    deposit_slot_addresses = (
-        DepositSlot.objects.filter(
+    vault_slot_addresses = (
+        VaultSlot.objects.filter(
             chain__type=ChainType.EVM,
         )
         .values_list("address", flat=True)
@@ -138,7 +138,7 @@ def _load_evm_watched_addresses_from_db() -> frozenset[str]:
 
     return frozenset(
         _normalize_address(address)
-        for address in iter_chain(deposit_slot_addresses, contract_pay_slot_addresses)
+        for address in iter_chain(vault_slot_addresses, contract_pay_slot_addresses)
     )
 
 

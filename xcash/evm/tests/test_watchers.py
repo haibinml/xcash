@@ -10,7 +10,7 @@ from chains.models import ChainType
 from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from evm.scanner.watchers import clear_evm_watch_set_cache
 from evm.scanner.watchers import load_watch_set
 from invoices.models import Invoice
@@ -79,7 +79,7 @@ class EvmWatchSetCacheTests(TestCase):
             project=self.project,
             uid="watcher-customer",
         )
-        self.deposit_slot = DepositSlot.objects.create(
+        self.vault_slot = VaultSlot.objects.create(
             customer=self.customer,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -93,22 +93,22 @@ class EvmWatchSetCacheTests(TestCase):
         clear_evm_watch_set_cache()
         cache.clear()
 
-    def test_load_watch_set_refreshes_when_deposit_slot_is_deleted(self):
+    def test_load_watch_set_refreshes_when_vault_slot_is_deleted(self):
         initial_watch_set = load_watch_set(chain=self.chain, refresh=True)
-        self.assertIn(self.deposit_slot.address, initial_watch_set.watched_addresses)
+        self.assertIn(self.vault_slot.address, initial_watch_set.watched_addresses)
 
-        DepositSlot.objects.filter(pk=self.deposit_slot.pk).delete()
+        VaultSlot.objects.filter(pk=self.vault_slot.pk).delete()
 
         watch_set = load_watch_set(chain=self.chain)
-        self.assertNotIn(self.deposit_slot.address, watch_set.watched_addresses)
+        self.assertNotIn(self.vault_slot.address, watch_set.watched_addresses)
 
     def test_load_watch_set_excludes_system_hot_wallet_addresses(self):
         watch_set = load_watch_set(chain=self.chain, refresh=True)
 
         self.assertNotIn(self.address.address, watch_set.watched_addresses)
-        self.assertIn(self.deposit_slot.address, watch_set.watched_addresses)
+        self.assertIn(self.vault_slot.address, watch_set.watched_addresses)
 
-    def test_deposit_slot_save_refreshes_cached_watch_set_after_commit(self):
+    def test_vault_slot_save_refreshes_cached_watch_set_after_commit(self):
         load_watch_set(chain=self.chain, refresh=True)
         new_slot_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000d01"
@@ -119,7 +119,7 @@ class EvmWatchSetCacheTests(TestCase):
         )
 
         with self.captureOnCommitCallbacks(execute=True):
-            DepositSlot.objects.create(
+            VaultSlot.objects.create(
                 customer=new_customer,
                 chain=self.chain,
                 address=new_slot_address,

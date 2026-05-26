@@ -19,7 +19,7 @@ from common.internal_callback import send_internal_callback
 from common.utils.math import format_decimal_stripped
 from currencies.service import CryptoService
 from currencies.service import FiatService
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from webhooks.service import WebhookService
 
 from .exceptions import InvoiceStatusError
@@ -298,9 +298,9 @@ class InvoiceService:
         invoice.refresh_from_db()
 
         try:
-            DepositSlot.schedule_collect_for_invoice(invoice.pk)
+            VaultSlot.schedule_collect_for_invoice(invoice.pk)
         except Exception:
-            logger.exception("调度 Invoice DepositSlot 归集任务失败", invoice_id=invoice.pk)
+            logger.exception("调度 Invoice VaultSlot 归集任务失败", invoice_id=invoice.pk)
 
         if invoice.protocol == InvoiceProtocol.EPAY_V1:
             from .epay_service import EpaySubmitService

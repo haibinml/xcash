@@ -21,7 +21,7 @@ from evm.internal_tx.routing import get_matcher
 logger = structlog.get_logger()
 
 NO_TRANSFER_SUCCESS_TASK_TYPES = {
-    TxTaskType.DepositSlotDeploy,
+    TxTaskType.VaultSlotDeploy,
 }
 
 

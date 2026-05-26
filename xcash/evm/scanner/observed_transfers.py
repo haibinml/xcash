@@ -16,7 +16,7 @@ from chains.models import TransferStatus
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
-from evm.scanner.constants import XCASH_NATIVE_DEPOSITED_TOPIC0
+from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.rpc import EvmScannerRpcClient
 from evm.scanner.watchers import EvmWatchSet
 
@@ -116,7 +116,7 @@ class EvmObservedTransferProcessor:
             return None
 
         topic0 = cls._normalize_hash(topics[0])
-        if topic0 == XCASH_NATIVE_DEPOSITED_TOPIC0.lower():
+        if topic0 == XCASH_NATIVE_RECEIVED_TOPIC0.lower():
             return cls._parse_native_log(log=log, chain=chain, watch_set=watch_set)
         if topic0 == ERC20_TRANSFER_TOPIC0.lower():
             return cls._parse_erc20_log(log=log, chain=chain, watch_set=watch_set)
@@ -186,7 +186,7 @@ class EvmObservedTransferProcessor:
             from_address = cls._topic_to_address(topics[1])
             to_address = cls._topic_to_address(topics[2])
             # 只观察外部地址打入系统观察地址的入账事实；
-            # 系统地址或 DepositSlot 发出的资产移动由 internal_tx receipt 路径收口。
+            # 系统地址或 VaultSlot 发出的资产移动由 internal_tx receipt 路径收口。
             if to_address not in watch_set.watched_addresses:
                 return None
             if from_address in watch_set.watched_addresses:

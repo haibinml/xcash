@@ -123,7 +123,7 @@ def dispatch_due_evm_tx_tasks() -> None:
 @shared_task(ignore_result=True)
 @singleton_task(timeout=48, use_params=True)
 def _scan_evm_chain(chain_pk: int) -> None:
-    """按链执行一次 EVM DepositSlot 充值日志统一扫描。"""
+    """按链执行一次 EVM VaultSlot 充值日志统一扫描。"""
     chain = Chain.objects.get(pk=chain_pk)
 
     result = None

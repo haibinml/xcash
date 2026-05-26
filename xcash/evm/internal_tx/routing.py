@@ -61,18 +61,22 @@ class InternalTransferHandler(Protocol):
     def finalize_failed(self, tx_task: TxTask) -> None: ...
 
 
-from evm.internal_tx.deposit_slot_collect import deposit_slot_collect_handler  # noqa: E402
-from evm.internal_tx.deposit_slot_collect import deposit_slot_collect_matcher  # noqa: E402
+from evm.internal_tx.vault_slot_collect import (
+    vault_slot_collect_handler,  # noqa: E402
+)
+from evm.internal_tx.vault_slot_collect import (
+    vault_slot_collect_matcher,  # noqa: E402
+)
 from evm.internal_tx.withdrawal import withdrawal_handler  # noqa: E402
 from evm.internal_tx.withdrawal import withdrawal_matcher  # noqa: E402
 
 INTERNAL_TX_HANDLERS: dict[TxTaskType, InternalTransferHandler] = {
-    TxTaskType.DepositSlotCollect: deposit_slot_collect_handler,
+    TxTaskType.VaultSlotCollect: vault_slot_collect_handler,
     TxTaskType.Withdrawal: withdrawal_handler,
 }
 
 INTERNAL_TX_MATCHERS: dict[TxTaskType, ReceiptMatcher] = {
-    TxTaskType.DepositSlotCollect: deposit_slot_collect_matcher,
+    TxTaskType.VaultSlotCollect: vault_slot_collect_matcher,
     TxTaskType.Withdrawal: withdrawal_matcher,
 }
 

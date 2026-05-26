@@ -452,7 +452,7 @@ def _setup_wallet_for_withdrawal(project: Project) -> None:
 
 
 def _pick_billing_mode() -> str:
-    """压测目前仅生成 EVM 账单；新架构下 EVM 一律走 DepositSlot 即 CONTRACT。"""
+    """压测目前仅生成 EVM 账单；新架构下 EVM 一律走 VaultSlot 即 CONTRACT。"""
     return InvoiceBillingMode.CONTRACT
 
 

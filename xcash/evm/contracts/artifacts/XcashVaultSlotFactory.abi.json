@@ -3,7 +3,7 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "depositTemplate_",
+        "name": "vaultSlotTemplate_",
         "type": "address",
         "internalType": "address"
       }
@@ -12,7 +12,7 @@
   },
   {
     "type": "function",
-    "name": "deployDepositSlot",
+    "name": "deployVaultSlot",
     "inputs": [
       {
         "name": "vault",
@@ -27,7 +27,7 @@
     ],
     "outputs": [
       {
-        "name": "depositSlot",
+        "name": "vaultSlot",
         "type": "address",
         "internalType": "address"
       }
@@ -36,7 +36,31 @@
   },
   {
     "type": "function",
-    "name": "depositTemplate",
+    "name": "predictVaultSlot",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address payable"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultSlotTemplate",
     "inputs": [],
     "outputs": [
       {
@@ -48,35 +72,11 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "predictDepositSlot",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address payable"
-      },
-      {
-        "name": "salt",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
-    "name": "XcashDepositSlotDeployed",
+    "name": "XcashVaultSlotDeployed",
     "inputs": [
       {
-        "name": "depositSlot",
+        "name": "vaultSlot",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -129,7 +129,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidDepositTemplate",
+    "name": "InvalidVaultSlotTemplate",
     "inputs": []
   },
   {

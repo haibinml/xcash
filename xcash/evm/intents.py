@@ -66,8 +66,8 @@ def get_preflight_buffer_multiplier(tx_kind: TxKind) -> int:
 
 
 _ERC20_TRANSFER_SELECTOR = "0xa9059cbb"
-DEFAULT_DEPOSIT_SLOT_DEPLOY_GAS = 160_000
-DEFAULT_DEPOSIT_SLOT_COLLECT_GAS = 90_000
+DEFAULT_VAULT_SLOT_DEPLOY_GAS = 160_000
+DEFAULT_VAULT_SLOT_COLLECT_GAS = 90_000
 
 
 def _function_selector(signature: str) -> str:
@@ -165,7 +165,7 @@ def build_contract_call_intent(
     )
 
 
-def build_deposit_slot_deploy_intent(
+def build_vault_slot_deploy_intent(
     *,
     address: Address,
     chain: Chain,
@@ -179,7 +179,7 @@ def build_deposit_slot_deploy_intent(
 
     factory_checksum = Web3.to_checksum_address(factory_address)
     vault_checksum = Web3.to_checksum_address(vault_address)
-    selector = _function_selector("deployDepositSlot(address,bytes32)")
+    selector = _function_selector("deployVaultSlot(address,bytes32)")
     encoded_args = eth_abi.encode(
         ["address", "bytes32"],
         [vault_checksum, salt],
@@ -190,22 +190,22 @@ def build_deposit_slot_deploy_intent(
         chain=chain,
         contract_address=factory_checksum,
         data=f"0x{selector}{encoded_args}",
-        gas=DEFAULT_DEPOSIT_SLOT_DEPLOY_GAS,
-        tx_type=TxTaskType.DepositSlotDeploy,
+        gas=DEFAULT_VAULT_SLOT_DEPLOY_GAS,
+        tx_type=TxTaskType.VaultSlotDeploy,
         value=0,
         verify_fn=verify_fn,
     )
 
 
-def build_deposit_slot_collect_intent(
+def build_vault_slot_collect_intent(
     *,
     address: Address,
     chain: Chain,
-    deposit_slot_address: str,
+    vault_slot_address: str,
     token_address: str,
     verify_fn: Callable[[], None] | None = None,
 ) -> EvmTxIntent:
-    deposit_slot_checksum = Web3.to_checksum_address(deposit_slot_address)
+    vault_slot_checksum = Web3.to_checksum_address(vault_slot_address)
     token_checksum = Web3.to_checksum_address(token_address)
     selector = _function_selector("collect(address)")
     encoded_args = eth_abi.encode(["address"], [token_checksum]).hex()
@@ -213,10 +213,10 @@ def build_deposit_slot_collect_intent(
     return build_contract_call_intent(
         address=address,
         chain=chain,
-        contract_address=deposit_slot_checksum,
+        contract_address=vault_slot_checksum,
         data=f"0x{selector}{encoded_args}",
-        gas=DEFAULT_DEPOSIT_SLOT_COLLECT_GAS,
-        tx_type=TxTaskType.DepositSlotCollect,
+        gas=DEFAULT_VAULT_SLOT_COLLECT_GAS,
+        tx_type=TxTaskType.VaultSlotCollect,
         value=0,
         verify_fn=verify_fn,
     )

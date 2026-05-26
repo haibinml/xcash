@@ -539,8 +539,8 @@ class TxTaskType(models.TextChoices):
     """TxTask.tx_type 的枚举：仅描述系统内部主动发起的链上交易。"""
 
     Withdrawal = "withdrawal", "🏧 提币"
-    DepositSlotDeploy = "deposit_slot_deploy", "🏦 DepositSlot 部署"
-    DepositSlotCollect = "deposit_slot_collect", "💰 DepositSlot 归集"
+    VaultSlotDeploy = "vault_slot_deploy", "🏦 VaultSlot 部署"
+    VaultSlotCollect = "vault_slot_collect", "💰 VaultSlot 归集"
 
 
 class TransferType(models.TextChoices):

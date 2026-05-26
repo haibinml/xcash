@@ -13,19 +13,19 @@ deps:
 build: deps
 	$(FORGE) build --offline
 	@mkdir -p artifacts
-	@cp out/XcashDepositTemplate.sol/XcashDepositTemplate.json artifacts/XcashDepositTemplate.json
-	@python3 -c "import json; d=json.load(open('artifacts/XcashDepositTemplate.json')); print(d['bytecode']['object'])" > artifacts/XcashDepositTemplate.bin
-	@python3 -c "import json; d=json.load(open('artifacts/XcashDepositTemplate.json')); print(json.dumps(d['abi'], indent=2, ensure_ascii=False))" > artifacts/XcashDepositTemplate.abi.json
-	@cp out/XcashDepositFactory.sol/XcashDepositFactory.json artifacts/XcashDepositFactory.json
-	@python3 -c "import json; d=json.load(open('artifacts/XcashDepositFactory.json')); print(d['bytecode']['object'])" > artifacts/XcashDepositFactory.bin
-	@python3 -c "import json; d=json.load(open('artifacts/XcashDepositFactory.json')); print(json.dumps(d['abi'], indent=2, ensure_ascii=False))" > artifacts/XcashDepositFactory.abi.json
+	@cp out/XcashVaultSlotTemplate.sol/XcashVaultSlotTemplate.json artifacts/XcashVaultSlotTemplate.json
+	@python3 -c "import json; d=json.load(open('artifacts/XcashVaultSlotTemplate.json')); print(d['bytecode']['object'])" > artifacts/XcashVaultSlotTemplate.bin
+	@python3 -c "import json; d=json.load(open('artifacts/XcashVaultSlotTemplate.json')); print(json.dumps(d['abi'], indent=2, ensure_ascii=False))" > artifacts/XcashVaultSlotTemplate.abi.json
+	@cp out/XcashVaultSlotFactory.sol/XcashVaultSlotFactory.json artifacts/XcashVaultSlotFactory.json
+	@python3 -c "import json; d=json.load(open('artifacts/XcashVaultSlotFactory.json')); print(d['bytecode']['object'])" > artifacts/XcashVaultSlotFactory.bin
+	@python3 -c "import json; d=json.load(open('artifacts/XcashVaultSlotFactory.json')); print(json.dumps(d['abi'], indent=2, ensure_ascii=False))" > artifacts/XcashVaultSlotFactory.abi.json
 
 test: deps
 	$(FORGE) test --offline -vvv
 
 fixtures: deps
 	@mkdir -p ../tests/fixtures
-	$(FORGE) script scripts/DumpXcashDepositFixtures.s.sol --tc DumpXcashDepositFixtures --offline
+	$(FORGE) script scripts/DumpXcashVaultSlotFixtures.s.sol --tc DumpXcashVaultSlotFixtures --offline
 
 clean:
 	rm -rf out/ cache/

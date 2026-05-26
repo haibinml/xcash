@@ -74,11 +74,11 @@ class Project(models.Model):
         length=32,
     )
     vault = AddressField(
-        _("DepositSlot 多签归集地址"),
+        _("VaultSlot 多签归集地址"),
         null=True,
         blank=True,
         help_text=_(
-            "用于生成 EVM DepositSlot 合约的不可变 vault。留空时禁止生成 DepositSlot；"
+            "用于生成 EVM VaultSlot 合约的不可变 vault。留空时禁止生成 VaultSlot；"
             "一旦设置不可修改。"
         ),
         unique=True,
@@ -137,7 +137,7 @@ class Project(models.Model):
             )
             if old_vault and self.vault != old_vault:
                 raise ValidationError(
-                    {"vault": _("DepositSlot 多签归集地址一旦设置不可修改。")}
+                    {"vault": _("VaultSlot 多签归集地址一旦设置不可修改。")}
                 )
         return super().save(*args, **kwargs)
 
@@ -180,7 +180,7 @@ class DifferRecipientAddress(models.Model):
     """差额账单的商户收款地址。
 
     新架构下合约账单不再使用该模型分配收款地址；它只服务于差额账单，
-    用于在没有 DepositSlot 合约收款方案的链上扫描买家入账。
+    用于在没有 VaultSlot 合约收款方案的链上扫描买家入账。
     """
 
     name = models.CharField(verbose_name=_("备注名称"), blank=True)

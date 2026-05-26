@@ -3,13 +3,13 @@ from unfold.decorators import display
 
 from common.admin import ReadOnlyModelAdmin
 from common.admin_scan_cursor import SyncScanCursorToLatestActionMixin
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
 
 
-@admin.register(DepositSlot)
-class DepositSlotAdmin(ReadOnlyModelAdmin):
+@admin.register(VaultSlot)
+class VaultSlotAdmin(ReadOnlyModelAdmin):
     list_display = ("customer", "chain", "address", "vault_address", "created_at")
     list_filter = ("chain",)
     search_fields = ("customer__uid", "address", "vault_address")

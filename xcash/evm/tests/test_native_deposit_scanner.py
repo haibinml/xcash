@@ -84,7 +84,7 @@ class EvmLogScannerTests(TestCase):
         return {
             "address": slot_address or self.slot.address,
             "topics": [
-                Web3.keccak(text="XcashNativeDeposited(address,uint256)"),
+                Web3.keccak(text="XcashNativeReceived(address,uint256)"),
                 self._address_topic(payer or self.payer),
             ],
             "data": hex(value),

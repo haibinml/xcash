@@ -106,7 +106,7 @@ class ProjectForm(forms.ModelForm):
             return None
 
         if not Web3.is_address(address):
-            raise forms.ValidationError(_("DepositSlot 多签归集地址必须是 EVM 地址。"))
+            raise forms.ValidationError(_("VaultSlot 多签归集地址必须是 EVM 地址。"))
 
         address = Web3.to_checksum_address(address)
         old_address = None
@@ -119,7 +119,7 @@ class ProjectForm(forms.ModelForm):
         if old_address:
             if Web3.to_checksum_address(old_address) != address:
                 raise forms.ValidationError(
-                    _("DepositSlot 多签归集地址一旦设置不可修改。")
+                    _("VaultSlot 多签归集地址一旦设置不可修改。")
                 )
             return Web3.to_checksum_address(old_address)
 
@@ -155,7 +155,7 @@ class ProjectForm(forms.ModelForm):
 
         raise forms.ValidationError(
             _(
-                "DepositSlot 多签归集地址未在任何可校验 EVM 链上检测到有效多签合约：%(chains)s"
+                "VaultSlot 多签归集地址未在任何可校验 EVM 链上检测到有效多签合约：%(chains)s"
             ),
             params={"chains": ", ".join(checked_chain_names)},
         )

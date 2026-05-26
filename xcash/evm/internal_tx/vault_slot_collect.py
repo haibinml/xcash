@@ -18,7 +18,7 @@ from currencies.models import Crypto
 from evm.internal_tx._log_utils import matches_transfer_log
 from evm.internal_tx._log_utils import normalize_log_index
 from evm.internal_tx.routing import MatchedTransferFact
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 
 _COLLECT_SELECTOR = "0x06ec16f8"
 _XCASH_COLLECTED_TOPIC0 = Web3.keccak(text="XcashCollected(address,uint256)").hex()
@@ -100,14 +100,14 @@ def _find_collected_log(
     return None
 
 
-def deposit_slot_collect_matcher(
+def vault_slot_collect_matcher(
     *,
     chain: Chain,
     tx_task: TxTask,
     receipt: dict,
     tx: dict | None = None,
 ) -> MatchedTransferFact | None:
-    """从 DepositSlot collect(receipt) 提取归集到 vault 的资产移动事实。"""
+    """从 VaultSlot collect(receipt) 提取归集到 vault 的资产移动事实。"""
     try:
         evm_task = tx_task.evm_task
     except AttributeError:
@@ -115,7 +115,7 @@ def deposit_slot_collect_matcher(
 
     slot_address = Web3.to_checksum_address(evm_task.to)
     slot = (
-        DepositSlot.objects.filter(chain=chain, address__iexact=slot_address)
+        VaultSlot.objects.filter(chain=chain, address__iexact=slot_address)
         .only("vault_address")
         .first()
     )
@@ -162,7 +162,7 @@ def deposit_slot_collect_matcher(
 
 
 @dataclass
-class DepositSlotCollectHandler:
+class VaultSlotCollectHandler:
     def match(self, transfer: Transfer, tx_task: TxTask) -> bool:
         transfer.type = TransferType.Collect
         transfer.save(update_fields=["type"])
@@ -178,4 +178,4 @@ class DepositSlotCollectHandler:
         return None
 
 
-deposit_slot_collect_handler = DepositSlotCollectHandler()
+vault_slot_collect_handler = VaultSlotCollectHandler()

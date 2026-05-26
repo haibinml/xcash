@@ -133,9 +133,9 @@ SIDEBAR_UNFOLD = {
                         "link": reverse_lazy("admin:deposits_deposit_changelist"),
                     },
                     {
-                        "title": _("DepositSlot"),
+                        "title": _("VaultSlot"),
                         "icon": "add_card",
-                        "link": reverse_lazy("admin:evm_depositslot_changelist"),
+                        "link": reverse_lazy("admin:evm_vaultslot_changelist"),
                     },
                 ],
             },

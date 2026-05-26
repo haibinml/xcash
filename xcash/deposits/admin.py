@@ -87,7 +87,7 @@ class DepositAdmin(ReadOnlyModelAdmin):
                 skipped_count += 1
             except Exception:
                 failed_count += 1
-                logger.exception("后台重调度 DepositSlot 归集失败", deposit_id=deposit.pk)
+                logger.exception("后台重调度 VaultSlot 归集失败", deposit_id=deposit.pk)
             else:
                 if scheduled:
                     success_count += 1

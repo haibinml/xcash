@@ -181,7 +181,7 @@ class SystemWallet(models.Model):
         on_delete=models.PROTECT,
         related_name="system_wallet",
         verbose_name=_("系统级热钱包"),
-        help_text=_("用于平台基础设施交易，例如统一部署 DepositSlot 合约。"),
+        help_text=_("用于平台基础设施交易，例如统一部署 VaultSlot 合约。"),
     )
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
     updated_at = models.DateTimeField(_("更新时间"), auto_now=True)

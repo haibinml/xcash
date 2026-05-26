@@ -23,7 +23,7 @@ from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.choices import TxKind
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
 from evm.scanner.logs import EvmLogScanner
@@ -135,7 +135,7 @@ class EvmErc20ScannerTests(TestCase):
             project=self.project,
             uid="scanner-customer",
         )
-        self.deposit_slot = DepositSlot.objects.create(
+        self.vault_slot = VaultSlot.objects.create(
             customer=self.customer,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -278,7 +278,7 @@ class EvmErc20ScannerTests(TestCase):
                     from_address=Web3.to_checksum_address(
                         "0x00000000000000000000000000000000000000cc"
                     ),
-                    to_address=self.deposit_slot.address,
+                    to_address=self.vault_slot.address,
                 ),
             ],
             [],
@@ -296,7 +296,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(transfer.event_id, "erc20:5")
         self.assertEqual(transfer.hash, "0x" + "ab" * 32)
         self.assertEqual(
-            transfer.to_address, Web3.to_checksum_address(self.deposit_slot.address)
+            transfer.to_address, Web3.to_checksum_address(self.vault_slot.address)
         )
         self.assertEqual(transfer.amount, Decimal("1"))
         self.assertEqual(cursor.last_scanned_block, 32)
@@ -322,7 +322,7 @@ class EvmErc20ScannerTests(TestCase):
             event_id="erc20:5",
             crypto=self.token,
             from_address=Web3.to_checksum_address("0x" + "cc" * 20),
-            to_address=self.deposit_slot.address,
+            to_address=self.vault_slot.address,
             value=Decimal(10**18),
             amount=Decimal("1"),
             timestamp=1_700_000_000,
@@ -359,7 +359,7 @@ class EvmErc20ScannerTests(TestCase):
             event_id="erc20:5",
             crypto=self.token,
             from_address=Web3.to_checksum_address("0x" + "cc" * 20),
-            to_address=self.deposit_slot.address,
+            to_address=self.vault_slot.address,
             value=Decimal(10**18),
             amount=Decimal("1"),
             timestamp=1_700_000_000,
@@ -706,7 +706,7 @@ class EvmErc20ScannerTests(TestCase):
             from_address=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000cc"
             ),
-            to_address=self.deposit_slot.address,
+            to_address=self.vault_slot.address,
             block_number=100,
         )
         get_logs_mock.return_value = [repeated_log]
@@ -750,7 +750,7 @@ class EvmErc20ScannerTests(TestCase):
                 from_address=Web3.to_checksum_address(
                     "0x00000000000000000000000000000000000000cc"
                 ),
-                to_address=self.deposit_slot.address,
+                to_address=self.vault_slot.address,
                 value=10**6,
             )
         ]
@@ -871,11 +871,11 @@ class EvmErc20ScannerTests(TestCase):
 
         delay_mock.assert_called_once_with(self.chain.pk)
 
-    def test_watch_set_includes_deposit_slots_and_excludes_system_addresses(self):
-        # scanner 只观察 DepositSlot 等入账合约地址，热钱包 Address 不再承接外部入账。
+    def test_watch_set_includes_vault_slots_and_excludes_system_addresses(self):
+        # scanner 只观察 VaultSlot 等入账合约地址，热钱包 Address 不再承接外部入账。
         watch_set = load_watch_set(chain=self.chain)
 
-        self.assertIn(self.deposit_slot.address, watch_set.watched_addresses)
+        self.assertIn(self.vault_slot.address, watch_set.watched_addresses)
         self.assertNotIn(self.addr.address, watch_set.watched_addresses)
 
     def test_erc20_cursor_advance_never_rewinds_database_value(self):
@@ -948,7 +948,7 @@ class EvmErc20ScannerTests(TestCase):
                 from_address=Web3.to_checksum_address(
                     "0x00000000000000000000000000000000000000cc"
                 ),
-                to_address=self.deposit_slot.address,
+                to_address=self.vault_slot.address,
                 value=0,
                 block_number=40,
             )

@@ -8,7 +8,7 @@ from django.dispatch import receiver
 from chains.models import ChainType
 from currencies.models import ChainToken
 from currencies.models import Crypto
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from evm.scanner.watchers import clear_evm_chain_tokens_cache
 from evm.scanner.watchers import clear_evm_watched_addresses_cache
 from evm.scanner.watchers import load_watch_set
@@ -48,10 +48,10 @@ def _refresh_crypto_chain_tokens_on_commit(*, crypto: Crypto) -> None:
     transaction.on_commit(refresh_chain_watch_sets)
 
 
-@receiver(post_save, sender=DepositSlot)
-@receiver(post_delete, sender=DepositSlot)
-def refresh_watch_set_when_deposit_slot_changes(
-    sender, instance: DepositSlot, **kwargs
+@receiver(post_save, sender=VaultSlot)
+@receiver(post_delete, sender=VaultSlot)
+def refresh_watch_set_when_vault_slot_changes(
+    sender, instance: VaultSlot, **kwargs
 ):
     _refresh_evm_watched_addresses_on_commit()
 

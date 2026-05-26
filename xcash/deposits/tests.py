@@ -20,7 +20,7 @@ from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
 from deposits.models import DepositStatus
 from deposits.service import DepositService
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from evm.models import EvmTxTask
 from projects.models import Project
 from users.models import Customer
@@ -28,7 +28,7 @@ from web3 import Web3
 
 
 class DepositServiceCoreTests(TestCase):
-    """仅保留与当前 DepositSlot 充值生命周期无关的 Deposit 核心行为。"""
+    """仅保留与当前 VaultSlot 充值生命周期无关的 Deposit 核心行为。"""
 
     @patch("deposits.service.Deposit.objects")
     def test_confirm_deposit_idempotent_when_already_completed(
@@ -100,7 +100,7 @@ class DepositCreationTests(TestCase):
 
         self.assertFalse(created)
 
-    @patch.object(DepositSlot, "schedule_collect_for_deposit")
+    @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_try_create_deposit_does_not_schedule_collect(self, schedule_collect):
         context = create_deposit_context()
 
@@ -109,7 +109,7 @@ class DepositCreationTests(TestCase):
         self.assertTrue(created)
         schedule_collect.assert_not_called()
 
-    @patch.object(DepositSlot, "schedule_collect_for_deposit")
+    @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_initialize_deposit_does_not_schedule_collect(self, schedule_collect):
         context = create_deposit_context()
         deposit = Deposit.objects.create(
@@ -185,7 +185,7 @@ class DepositNotificationTests(TestCase):
 
         self.assertFalse(EvmTxTask.objects.exists())
 
-    @patch.object(DepositSlot, "schedule_collect_for_deposit")
+    @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_schedule_collect_for_completed_deposit_calls_collect_for_erc20(
         self, schedule_collect
     ):
@@ -201,7 +201,7 @@ class DepositNotificationTests(TestCase):
         self.assertTrue(scheduled)
         schedule_collect.assert_called_once_with(deposit.pk)
 
-    @patch.object(DepositSlot, "schedule_collect_for_deposit")
+    @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_schedule_collect_for_completed_deposit_skips_native(
         self, schedule_collect
     ):
@@ -217,7 +217,7 @@ class DepositNotificationTests(TestCase):
         self.assertFalse(scheduled)
         schedule_collect.assert_not_called()
 
-    @patch.object(DepositSlot, "schedule_collect_for_deposit")
+    @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_schedule_collect_for_completed_deposit_rejects_uncompleted(
         self, schedule_collect
     ):
@@ -235,7 +235,7 @@ class DepositNotificationTests(TestCase):
 
     @patch("deposits.service.send_internal_callback")
     @patch("deposits.service.WebhookService.create_event")
-    @patch.object(DepositSlot, "schedule_collect_for_deposit")
+    @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_confirm_deposit_emits_completed_webhook(
         self, schedule_collect, create_event_mock, send_internal_callback_mock
     ):
@@ -342,7 +342,7 @@ def create_deposit_context(*, native: bool = False):
                 "0x0000000000000000000000000000000000000e20"
             ),
         )
-        DepositSlot.objects.create(
+        VaultSlot.objects.create(
             customer=customer,
             chain=chain,
             address=Web3.to_checksum_address(

@@ -19,9 +19,9 @@ from evm.internal_tx import routing
 from evm.internal_tx.routing import INTERNAL_TX_HANDLERS
 from evm.internal_tx.routing import INTERNAL_TX_MATCHERS
 from evm.internal_tx.routing import MatchedTransferFact
-from evm.intents import build_deposit_slot_collect_intent
-from evm.models import DepositSlot
-from evm.models import DepositSlotUsage
+from evm.intents import build_vault_slot_collect_intent
+from evm.models import VaultSlot
+from evm.models import VaultSlotUsage
 from evm.internal_tx.processor import process_internal_transaction
 from evm.models import EvmTxTask
 from evm.tests._fixtures import make_tx_task
@@ -96,25 +96,25 @@ class InternalTxRegistryTests(TestCase):
         )
         self.assertEqual(
             set(INTERNAL_TX_HANDLERS),
-            {TxTaskType.DepositSlotCollect, TxTaskType.Withdrawal},
+            {TxTaskType.VaultSlotCollect, TxTaskType.Withdrawal},
         )
         self.assertEqual(
             set(INTERNAL_TX_MATCHERS),
-            {TxTaskType.DepositSlotCollect, TxTaskType.Withdrawal},
+            {TxTaskType.VaultSlotCollect, TxTaskType.Withdrawal},
         )
 
 
 class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
-    def test_deposit_slot_collect_erc20_success_creates_collect_transfer(self):
+    def test_vault_slot_collect_erc20_success_creates_collect_transfer(self):
         chain = make_evm_chain(code="eth-slot-collect", chain_id=43016)
         address = make_evm_system_address(suffix="ad06", usage=AddressUsage.HotWallet)
         project = Project.objects.create(name="SlotCollectProject", wallet=address.wallet)
         slot_address = Web3.to_checksum_address("0x" + "88" * 20)
         vault_address = Web3.to_checksum_address("0x" + "99" * 20)
-        DepositSlot.objects.create(
+        VaultSlot.objects.create(
             project=project,
             chain=chain,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             invoice_index=1,
             address=slot_address,
             vault_address=vault_address,
@@ -124,13 +124,13 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         task = _base_task_without_asset_fields(
             chain=chain,
             address=address,
-            tx_type=TxTaskType.DepositSlotCollect,
+            tx_type=TxTaskType.VaultSlotCollect,
             tx_hash_suffix="7777",
         )
-        intent = build_deposit_slot_collect_intent(
+        intent = build_vault_slot_collect_intent(
             address=address,
             chain=chain,
-            deposit_slot_address=slot_address,
+            vault_slot_address=slot_address,
             token_address=token.address(chain),
         )
         EvmTxTask.objects.create(
@@ -204,13 +204,13 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         self.assertEqual(task.stage, TxTaskStage.FINALIZED)
         self.assertIs(task.success, True)
 
-    def test_deposit_slot_deploy_success_finalizes_without_transfer(self):
+    def test_vault_slot_deploy_success_finalizes_without_transfer(self):
         chain = make_evm_chain(code="eth-slot-deploy", chain_id=43017)
         address = make_evm_system_address(suffix="ad07", usage=AddressUsage.HotWallet)
         task = _base_task_without_asset_fields(
             chain=chain,
             address=address,
-            tx_type=TxTaskType.DepositSlotDeploy,
+            tx_type=TxTaskType.VaultSlotDeploy,
             tx_hash_suffix="7878",
         )
         EvmTxTask.objects.create(

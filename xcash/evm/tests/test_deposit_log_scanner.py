@@ -14,14 +14,14 @@ from chains.models import TxTaskType
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from currencies.models import ChainToken
 from evm.choices import TxKind
-from evm.intents import build_deposit_slot_collect_intent
-from evm.models import DepositSlot
+from evm.intents import build_vault_slot_collect_intent
+from evm.models import VaultSlot
 from evm.models import EvmTxTask
 from evm.models import EvmScanCursor
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_COLLECTED_TOPIC0
-from evm.scanner.constants import XCASH_DEPOSIT_SLOT_DEPLOYED_TOPIC0
-from evm.scanner.constants import XCASH_NATIVE_DEPOSITED_TOPIC0
+from evm.scanner.constants import XCASH_VAULT_SLOT_DEPLOYED_TOPIC0
+from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.logs import EvmLogScanner
 from evm.scanner.observed_transfers import EvmObservedTransferProcessResult
 from evm.scanner.watchers import EvmWatchSet
@@ -64,7 +64,7 @@ class EvmLogScannerTests(TestCase):
             project=self.project,
             uid="deposit-log-customer",
         )
-        self.slot = DepositSlot.objects.create(
+        self.slot = VaultSlot.objects.create(
             customer=self.customer,
             chain=self.chain,
             address=Web3.to_checksum_address("0x" + "bd" * 20),
@@ -86,7 +86,7 @@ class EvmLogScannerTests(TestCase):
         return {
             "address": self.slot.address,
             "topics": [
-                Web3.keccak(text="XcashNativeDeposited(address,uint256)"),
+                Web3.keccak(text="XcashNativeReceived(address,uint256)"),
                 self._address_topic(self.payer),
             ],
             "data": hex(10**18),
@@ -144,7 +144,7 @@ class EvmLogScannerTests(TestCase):
         return {
             "address": Web3.to_checksum_address("0x" + "de" * 20),
             "topics": [
-                Web3.keccak(text="XcashDepositSlotDeployed(address,address,bytes32)"),
+                Web3.keccak(text="XcashVaultSlotDeployed(address,address,bytes32)"),
                 self._address_topic(self.slot.address),
                 self._address_topic(self.vault.address),
                 "0x" + self.slot.salt.hex(),
@@ -242,9 +242,9 @@ class EvmLogScannerTests(TestCase):
                 "to_block": 32,
                 "addresses": None,
                 "topic0": [
-                    XCASH_NATIVE_DEPOSITED_TOPIC0,
+                    XCASH_NATIVE_RECEIVED_TOPIC0,
                     XCASH_COLLECTED_TOPIC0,
-                    XCASH_DEPOSIT_SLOT_DEPLOYED_TOPIC0,
+                    XCASH_VAULT_SLOT_DEPLOYED_TOPIC0,
                 ],
                 "summary": "获取 EVM Xcash 合约日志失败",
             },
@@ -293,16 +293,16 @@ class EvmLogScannerTests(TestCase):
         _enqueue_processing_mock,
     ):
         tx_hash = "0x" + "34" * 32
-        intent = build_deposit_slot_collect_intent(
+        intent = build_vault_slot_collect_intent(
             address=self.vault,
             chain=self.chain,
-            deposit_slot_address=self.slot.address,
+            vault_slot_address=self.slot.address,
             token_address=self.token_deployment.address,
         )
         base_task = TxTask.objects.create(
             chain=self.chain,
             address=self.vault,
-            tx_type=TxTaskType.DepositSlotCollect,
+            tx_type=TxTaskType.VaultSlotCollect,
             tx_hash=tx_hash,
             stage=TxTaskStage.PENDING_CHAIN,
         )
@@ -387,12 +387,12 @@ class EvmLogScannerTests(TestCase):
         rpc_client.get_transaction.assert_called_once_with(tx_hash=tx_hash)
         rpc_client.get_transaction_receipt.assert_not_called()
 
-    def test_system_deposit_slot_deployed_event_finalizes_deploy_task(self):
+    def test_system_vault_slot_deployed_event_finalizes_deploy_task(self):
         tx_hash = "0x" + "36" * 32
         base_task = TxTask.objects.create(
             chain=self.chain,
             address=self.vault,
-            tx_type=TxTaskType.DepositSlotDeploy,
+            tx_type=TxTaskType.VaultSlotDeploy,
             tx_hash=tx_hash,
             stage=TxTaskStage.PENDING_CHAIN,
         )

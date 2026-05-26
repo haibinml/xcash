@@ -20,8 +20,8 @@ from common.fields import SysNoField
 from common.permission_check import filter_saas_allowed_methods
 from currencies.service import CryptoService
 from currencies.service import FiatService
-from evm.models import DepositSlot
-from evm.models import DepositSlotUsage
+from evm.models import VaultSlot
+from evm.models import VaultSlotUsage
 from projects.models import Project
 from projects.service import ProjectService
 
@@ -252,13 +252,13 @@ class Invoice(models.Model):
     def _has_contract_slot_payment_overlap(
         self,
         *,
-        slot: DepositSlot,
+        slot: VaultSlot,
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> bool:
         # 同一个合约收款槽位只在"币种 + 金额 + 支付有效期"同时重合时不可复用；
-        # 不同金额或已过期账单可以复用同一 DepositSlot 地址。
+        # 不同金额或已过期账单可以复用同一 VaultSlot 地址。
         return InvoicePaySlot.objects.filter(
             project=self.project,
             crypto=crypto,
@@ -270,24 +270,24 @@ class Invoice(models.Model):
             invoice__expires_at__gte=timezone.now(),
         ).exists()
 
-    def _get_contract_deposit_slot(
+    def _get_contract_vault_slot(
         self,
         *,
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
-    ) -> DepositSlot:
-        """返回本次合约账单可使用的 INVOICE DepositSlot。"""
+    ) -> VaultSlot:
+        """返回本次合约账单可使用的 INVOICE VaultSlot。"""
         vault_address = self.project.vault
         if not vault_address:
             raise self.InvoiceAllocationError(
-                f"project={self.project_id} DepositSlot Vault 地址未配置"
+                f"project={self.project_id} VaultSlot Vault 地址未配置"
             )
 
-        reusable_slots = DepositSlot.objects.filter(
+        reusable_slots = VaultSlot.objects.filter(
             project=self.project,
             chain=chain,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
         ).order_by("invoice_index", "pk")
         for slot in reusable_slots:
             if not self._has_contract_slot_payment_overlap(
@@ -297,7 +297,7 @@ class Invoice(models.Model):
                 crypto_amount=crypto_amount,
             ):
                 db_transaction.on_commit(
-                    lambda slot_pk=slot.pk: DepositSlot.schedule_deploy(slot_pk)
+                    lambda slot_pk=slot.pk: VaultSlot.schedule_deploy(slot_pk)
                 )
                 return slot
 
@@ -306,17 +306,17 @@ class Invoice(models.Model):
         ]
         invoice_index = 0 if latest_index is None else latest_index + 1
         try:
-            DepositSlot.get_invoice_address(
+            VaultSlot.get_invoice_address(
                 project=self.project,
                 chain=chain,
                 invoice_index=invoice_index,
             )
         except RuntimeError as exc:
             raise self.InvoiceAllocationError(str(exc)) from exc
-        return DepositSlot.objects.get(
+        return VaultSlot.objects.get(
             project=self.project,
             chain=chain,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             invoice_index=invoice_index,
         )
 
@@ -326,8 +326,8 @@ class Invoice(models.Model):
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> tuple[str, str, Decimal]:
-        """合约账单：按 XcashDepositFactory 获取本次账单使用的 DepositSlot。"""
-        slot = self._get_contract_deposit_slot(
+        """合约账单：按 XcashVaultSlotFactory 获取本次账单使用的 VaultSlot。"""
+        slot = self._get_contract_vault_slot(
             crypto=crypto,
             chain=chain,
             crypto_amount=crypto_amount,

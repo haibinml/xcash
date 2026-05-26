@@ -30,8 +30,8 @@ from common.exceptions import APIError
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
-from evm.models import DepositSlot
-from evm.models import DepositSlotUsage
+from evm.models import VaultSlot
+from evm.models import VaultSlotUsage
 from invoices.exceptions import InvoiceAllocationError
 from invoices.exceptions import InvoiceStatusError
 from invoices.models import Invoice
@@ -1582,9 +1582,9 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             self.chain,
             Decimal("10"),
         )
-        slot = DepositSlot.objects.get(
+        slot = VaultSlot.objects.get(
             project=self.project,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             invoice_index=0,
             chain=self.chain,
         )
@@ -1593,7 +1593,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.assertEqual(recipient_address, vault_address)
         self.assertEqual(pay_amount, Decimal("10"))
 
-    def test_contract_slot_creates_invoice_deposit_slot_with_index_without_customer(
+    def test_contract_slot_creates_invoice_vault_slot_with_index_without_customer(
         self,
     ):
         vault_address = Web3.to_checksum_address(
@@ -1615,9 +1615,9 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
                 )
             )
 
-        slot = DepositSlot.objects.get(
+        slot = VaultSlot.objects.get(
             project=self.project,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             invoice_index=0,
             chain=self.chain,
         )
@@ -1626,7 +1626,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.assertEqual(slot.vault_address, recipient_address)
         self.assertEqual(pay_amount, Decimal("10"))
 
-    def test_contract_slot_selection_returns_invoice_deposit_slot(self):
+    def test_contract_slot_selection_returns_invoice_vault_slot(self):
         vault_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000F12"
         )
@@ -1638,7 +1638,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
 
         with self.captureOnCommitCallbacks(execute=False):
-            slot = invoice._get_contract_deposit_slot(
+            slot = invoice._get_contract_vault_slot(
                 crypto=self.crypto,
                 chain=self.chain,
                 crypto_amount=Decimal("10"),
@@ -1646,7 +1646,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
 
         self.assertEqual(slot.project, self.project)
         self.assertEqual(slot.chain, self.chain)
-        self.assertEqual(slot.usage, DepositSlotUsage.INVOICE)
+        self.assertEqual(slot.usage, VaultSlotUsage.INVOICE)
         self.assertEqual(slot.invoice_index, 0)
         self.assertIsNone(slot.customer_id)
         self.assertEqual(slot.vault_address, vault_address)
@@ -1694,9 +1694,9 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
 
         self.assertEqual(second_pay_address, first_pay_address)
         self.assertEqual(
-            DepositSlot.objects.filter(
+            VaultSlot.objects.filter(
                 project=self.project,
-                usage=DepositSlotUsage.INVOICE,
+                usage=VaultSlotUsage.INVOICE,
                 chain=self.chain,
             ).count(),
             1,
@@ -1744,9 +1744,9 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
 
         self.assertEqual(second_pay_address, first_pay_address)
         self.assertEqual(
-            DepositSlot.objects.filter(
+            VaultSlot.objects.filter(
                 project=self.project,
-                usage=DepositSlotUsage.INVOICE,
+                usage=VaultSlotUsage.INVOICE,
                 chain=self.chain,
             ).count(),
             1,
@@ -1800,9 +1800,9 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
 
         self.assertEqual(second_pay_address, first_pay_address)
         self.assertEqual(
-            DepositSlot.objects.filter(
+            VaultSlot.objects.filter(
                 project=self.project,
-                usage=DepositSlotUsage.INVOICE,
+                usage=VaultSlotUsage.INVOICE,
                 chain=self.chain,
             ).count(),
             1,
@@ -1849,17 +1849,17 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
 
         self.assertNotEqual(second_pay_address, first_pay_address)
-        second_slot = DepositSlot.objects.get(
+        second_slot = VaultSlot.objects.get(
             project=self.project,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             chain=self.chain,
             invoice_index=1,
         )
         self.assertEqual(second_pay_address, second_slot.address)
         self.assertEqual(
-            DepositSlot.objects.filter(
+            VaultSlot.objects.filter(
                 project=self.project,
-                usage=DepositSlotUsage.INVOICE,
+                usage=VaultSlotUsage.INVOICE,
                 chain=self.chain,
             ).count(),
             2,
@@ -1878,26 +1878,26 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
         with self.captureOnCommitCallbacks(execute=False):
-            DepositSlot.get_invoice_address(
+            VaultSlot.get_invoice_address(
                 project=self.project,
                 chain=self.chain,
                 invoice_index=0,
             )
-            DepositSlot.get_invoice_address(
+            VaultSlot.get_invoice_address(
                 project=self.project,
                 chain=self.chain,
                 invoice_index=1,
             )
-        slot0 = DepositSlot.objects.get(
+        slot0 = VaultSlot.objects.get(
             project=self.project,
             chain=self.chain,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             invoice_index=0,
         )
-        slot1 = DepositSlot.objects.get(
+        slot1 = VaultSlot.objects.get(
             project=self.project,
             chain=self.chain,
-            usage=DepositSlotUsage.INVOICE,
+            usage=VaultSlotUsage.INVOICE,
             invoice_index=1,
         )
         original_create = InvoicePaySlot.objects.create
@@ -1914,7 +1914,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         with (
             patch.object(
                 invoice,
-                "_get_contract_deposit_slot",
+                "_get_contract_vault_slot",
                 side_effect=[slot0, slot1],
             ) as slot_selector,
             patch.object(
@@ -2006,7 +2006,7 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
 
         self.assertTrue(matched)
 
-    @patch("evm.models.DepositSlot.schedule_collect_for_invoice")
+    @patch("evm.models.VaultSlot.schedule_collect_for_invoice")
     @patch("invoices.service.send_internal_callback")
     @patch("invoices.service.WebhookService.create_event")
     def test_confirm_contract_invoice_schedules_erc20_slot_collection(

@@ -14,7 +14,7 @@ from chains.models import ChainType
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from deposits.models import Deposit
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from projects.models import Project
 from users.models import Customer
 
@@ -38,9 +38,9 @@ class InternalDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet)
 
     @action(detail=False, methods=["get"])
     def address(self, request, project_appid=None):
-        """获取 DepositSlot 充币地址。
+        """获取 VaultSlot 充币地址。
 
-        DepositSlot 按具体 EVM 链预测，不再支持只传 chain_type。
+        VaultSlot 按具体 EVM 链预测，不再支持只传 chain_type。
         """
         uid = request.query_params.get("uid", "")
         chain_type = request.query_params.get("chain_type", "")
@@ -68,5 +68,5 @@ class InternalDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet)
             raise APIError(ErrorCode.INVALID_CHAIN)
 
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
-        deposit_address = DepositSlot.get_deposit_address(chain=chain, customer=customer)
+        deposit_address = VaultSlot.get_deposit_address(chain=chain, customer=customer)
         return Response({"deposit_address": deposit_address})

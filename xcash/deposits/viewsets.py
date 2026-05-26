@@ -13,9 +13,9 @@ from common.consts import APPID_HEADER
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from common.permission_check import check_saas_permission
-from common.throttles import DepositSlotThrottle
+from common.throttles import VaultSlotThrottle
 from currencies.service import CryptoService
-from evm.models import DepositSlot
+from evm.models import VaultSlot
 from projects.models import Project
 from users.models import Customer
 
@@ -32,7 +32,7 @@ class DepositViewSet(viewsets.GenericViewSet):
         methods=["get"],
         detail=False,
         permission_classes=[AllowAny],
-        throttle_classes=[DepositSlotThrottle],
+        throttle_classes=[VaultSlotThrottle],
     )
     def address(self, request: Request):
         """
@@ -91,5 +91,5 @@ class DepositViewSet(viewsets.GenericViewSet):
 
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
 
-        deposit_address = DepositSlot.get_deposit_address(chain, customer)
+        deposit_address = VaultSlot.get_deposit_address(chain, customer)
         return Response({"deposit_address": deposit_address})

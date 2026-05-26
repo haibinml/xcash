@@ -12,15 +12,15 @@ from common.utils.math import format_decimal_stripped
 from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
 from deposits.models import DepositStatus
-from evm.models import DepositSlot
-from evm.models import DepositSlotUsage
+from evm.models import VaultSlot
+from evm.models import VaultSlotUsage
 from webhooks.service import WebhookService
 
 logger = structlog.get_logger()
 
 
 class DepositService:
-    """DepositSlot 收款体系下的充值生命周期。"""
+    """VaultSlot 收款体系下的充值生命周期。"""
 
     @staticmethod
     def build_webhook_payload(
@@ -99,12 +99,12 @@ class DepositService:
             return False
 
         try:
-            customer = DepositSlot.objects.get(
+            customer = VaultSlot.objects.get(
                 chain=transfer.chain,
                 address=transfer.to_address,
-                usage=DepositSlotUsage.DEPOSIT,
+                usage=VaultSlotUsage.DEPOSIT,
             ).customer
-        except DepositSlot.DoesNotExist:
+        except VaultSlot.DoesNotExist:
             return False
 
         transfer.type = TransferType.Deposit
@@ -140,7 +140,7 @@ class DepositService:
             try:
                 cls.schedule_collect_for_completed_deposit(deposit)
             except Exception:
-                logger.exception("调度 DepositSlot 归集任务失败", deposit_id=deposit.pk)
+                logger.exception("调度 VaultSlot 归集任务失败", deposit_id=deposit.pk)
             cls.notify_completed(deposit)
             send_internal_callback(
                 event="deposit.confirmed",
@@ -160,7 +160,7 @@ class DepositService:
         if transfer.crypto_id == transfer.chain.native_coin_id:
             return False
 
-        return DepositSlot.schedule_collect_for_deposit(deposit.pk) is not None
+        return VaultSlot.schedule_collect_for_deposit(deposit.pk) is not None
 
     @classmethod
     @db_transaction.atomic

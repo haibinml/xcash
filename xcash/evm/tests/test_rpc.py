@@ -179,7 +179,7 @@ class EvmScannerRpcClientTests(TestCase):
             eth=SimpleNamespace(get_logs=Mock(side_effect=fake_get_logs))
         )
         topics = [
-            Web3.to_hex(Web3.keccak(text="XcashNativeDeposited(address,uint256)")),
+            Web3.to_hex(Web3.keccak(text="XcashNativeReceived(address,uint256)")),
             Web3.to_hex(Web3.keccak(text="Transfer(address,address,uint256)")),
         ]
 
@@ -195,7 +195,7 @@ class EvmScannerRpcClientTests(TestCase):
         self.assertEqual(captured_filters[0]["topics"], [topics])
 
     def test_get_logs_omits_address_filter_when_addresses_is_none(self):
-        # DepositSlot 自定义事件按 topic 全链查询，不能把海量 slot 地址塞进 address 条件。
+        # VaultSlot 自定义事件按 topic 全链查询，不能把海量 slot 地址塞进 address 条件。
         captured_filters: list[dict] = []
 
         def fake_get_logs(filter_params: dict) -> list[dict]:
@@ -210,7 +210,7 @@ class EvmScannerRpcClientTests(TestCase):
             from_block=100,
             to_block=100,
             addresses=None,
-            topic0=Web3.to_hex(Web3.keccak(text="XcashNativeDeposited(address,uint256)")),
+            topic0=Web3.to_hex(Web3.keccak(text="XcashNativeReceived(address,uint256)")),
         )
 
         self.assertNotIn("address", captured_filters[0])

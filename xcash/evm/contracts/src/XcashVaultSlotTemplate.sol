@@ -3,20 +3,20 @@ pragma solidity 0.8.35;
 
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
-/// @title XcashDepositTemplate
-/// @notice Native coin and ERC20 deposit slot that forwards funds to its slot-encoded vault.
-contract XcashDepositTemplate {
+/// @title XcashVaultSlotTemplate
+/// @notice Native coin and ERC20 vault slot that forwards funds to its slot-encoded vault.
+contract XcashVaultSlotTemplate {
     error ZeroVault();
     error InvalidVaultArgs();
     error ZeroAmount();
     error ForwardFailed();
     error ERC20TransferFailed();
 
-    event XcashNativeDeposited(address indexed payer, uint256 amount);
+    event XcashNativeReceived(address indexed payer, uint256 amount);
     event XcashCollected(address indexed token, uint256 amount);
 
     receive() external payable {
-        _deposit();
+        _forwardNative();
     }
 
     function collect(address token) external {
@@ -67,9 +67,9 @@ contract XcashDepositTemplate {
         return value == 1;
     }
 
-    function _deposit() private {
+    function _forwardNative() private {
         if (msg.value == 0) revert ZeroAmount();
-        emit XcashNativeDeposited(msg.sender, msg.value);
+        emit XcashNativeReceived(msg.sender, msg.value);
 
         (bool ok,) = vault().call{value: msg.value}("");
         if (!ok) revert ForwardFailed();

@@ -16,8 +16,8 @@ from evm.scanner.constants import DEFAULT_DEPOSIT_LOG_SCAN_BATCH_SIZE
 from evm.scanner.constants import DEFAULT_DEPOSIT_LOG_SCAN_REPLAY_BLOCKS
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_COLLECTED_TOPIC0
-from evm.scanner.constants import XCASH_DEPOSIT_SLOT_DEPLOYED_TOPIC0
-from evm.scanner.constants import XCASH_NATIVE_DEPOSITED_TOPIC0
+from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
+from evm.scanner.constants import XCASH_VAULT_SLOT_DEPLOYED_TOPIC0
 from evm.scanner.internal_events import EvmContractEventObserver
 from evm.scanner.observed_transfers import EvmObservedTransferProcessor
 from evm.scanner.rpc import EvmScannerRpcClient
@@ -213,9 +213,9 @@ class EvmLogScanner:
                 to_block=to_block,
                 addresses=None,
                 topic0=[
-                    XCASH_NATIVE_DEPOSITED_TOPIC0,
+                    XCASH_NATIVE_RECEIVED_TOPIC0,
                     XCASH_COLLECTED_TOPIC0,
-                    XCASH_DEPOSIT_SLOT_DEPLOYED_TOPIC0,
+                    XCASH_VAULT_SLOT_DEPLOYED_TOPIC0,
                 ],
                 summary="获取 EVM Xcash 合约日志失败",
             )
