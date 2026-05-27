@@ -36,101 +36,56 @@ LOCAL_EVM_TOKEN_MAPPINGS = (
 )
 
 PRODUCTION_MAINNET_CHAINS = (
-    {
-        "chain": ChainCode.Ethereum,
-        "native_symbol": "ETH",
-    },
-    {
-        "chain": ChainCode.BSC,
-        "native_symbol": "BNB",
-    },
-    {
-        "chain": ChainCode.Polygon,
-        "native_symbol": "POL",
-    },
-    {
-        "chain": ChainCode.Base,
-        "native_symbol": "ETH",
-    },
-    {
-        "chain": ChainCode.Tron,
-        "native_symbol": "TRX",
-    },
+    {"chain": ChainCode.Ethereum, "native_symbol": "ETH"},
+    {"chain": ChainCode.BSC, "native_symbol": "BNB"},
+    {"chain": ChainCode.Polygon, "native_symbol": "POL"},
+    {"chain": ChainCode.ArbitrumOne, "native_symbol": "ETH"},
+    {"chain": ChainCode.Optimism, "native_symbol": "ETH"},
+    {"chain": ChainCode.Base, "native_symbol": "ETH"},
+    {"chain": ChainCode.Avalanche, "native_symbol": "AVAX"},
+    {"chain": ChainCode.ZkSyncEra, "native_symbol": "ETH"},
+    {"chain": ChainCode.Linea, "native_symbol": "ETH"},
+    {"chain": ChainCode.Scroll, "native_symbol": "ETH"},
+    {"chain": ChainCode.Tron, "native_symbol": "TRX"},
 )
 
 PRODUCTION_MAINNET_TOKEN_MAPPINGS = (
-    {
-        "chain_name": ChainCode.Ethereum,
-        "crypto_symbol": "USDC",
-        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "decimals": 6,
-    },
-    {
-        "chain_name": ChainCode.Ethereum,
-        "crypto_symbol": "USDT",
-        "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        "decimals": 6,
-    },
-    {
-        "chain_name": ChainCode.Ethereum,
-        "crypto_symbol": "DAI",
-        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        "decimals": 18,
-    },
-    {
-        "chain_name": ChainCode.BSC,
-        "crypto_symbol": "USDC",
-        "address": "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
-        "decimals": 18,
-    },
-    {
-        "chain_name": ChainCode.BSC,
-        "crypto_symbol": "USDT",
-        "address": "0x55d398326f99059fF775485246999027B3197955",
-        "decimals": 18,
-    },
-    {
-        "chain_name": ChainCode.BSC,
-        "crypto_symbol": "DAI",
-        "address": "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3",
-        "decimals": 18,
-    },
-    {
-        "chain_name": ChainCode.Polygon,
-        "crypto_symbol": "USDC",
-        "address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
-        "decimals": 6,
-    },
-    {
-        "chain_name": ChainCode.Polygon,
-        "crypto_symbol": "USDT",
-        "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
-        "decimals": 6,
-    },
-    {
-        "chain_name": ChainCode.Polygon,
-        "crypto_symbol": "DAI",
-        "address": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
-        "decimals": 18,
-    },
-    {
-        "chain_name": ChainCode.Base,
-        "crypto_symbol": "USDC",
-        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        "decimals": 6,
-    },
-    {
-        "chain_name": ChainCode.Base,
-        "crypto_symbol": "USDT",
-        "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
-        "decimals": 6,
-    },
-    {
-        "chain_name": ChainCode.Tron,
-        "crypto_symbol": "USDT",
-        "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
-        "decimals": 6,
-    },
+    # ── Ethereum ──
+    {"chain_name": ChainCode.Ethereum, "crypto_symbol": "USDC", "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "decimals": 6},
+    {"chain_name": ChainCode.Ethereum, "crypto_symbol": "USDT", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "decimals": 6},
+    {"chain_name": ChainCode.Ethereum, "crypto_symbol": "DAI", "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F", "decimals": 18},
+    # ── BSC ──
+    {"chain_name": ChainCode.BSC, "crypto_symbol": "USDC", "address": "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", "decimals": 18},
+    {"chain_name": ChainCode.BSC, "crypto_symbol": "USDT", "address": "0x55d398326f99059fF775485246999027B3197955", "decimals": 18},
+    {"chain_name": ChainCode.BSC, "crypto_symbol": "DAI", "address": "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3", "decimals": 18},
+    # ── Polygon ──
+    {"chain_name": ChainCode.Polygon, "crypto_symbol": "USDC", "address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "decimals": 6},
+    {"chain_name": ChainCode.Polygon, "crypto_symbol": "USDT", "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", "decimals": 6},
+    {"chain_name": ChainCode.Polygon, "crypto_symbol": "DAI", "address": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", "decimals": 18},
+    # ── Arbitrum One ──
+    {"chain_name": ChainCode.ArbitrumOne, "crypto_symbol": "USDC", "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "decimals": 6},
+    {"chain_name": ChainCode.ArbitrumOne, "crypto_symbol": "USDT", "address": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", "decimals": 6},
+    # ── Optimism ──
+    {"chain_name": ChainCode.Optimism, "crypto_symbol": "USDC", "address": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", "decimals": 6},
+    {"chain_name": ChainCode.Optimism, "crypto_symbol": "USDT", "address": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", "decimals": 6},
+    # ── Base ──
+    {"chain_name": ChainCode.Base, "crypto_symbol": "USDC", "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "decimals": 6},
+    {"chain_name": ChainCode.Base, "crypto_symbol": "USDT", "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", "decimals": 6},
+    # ── Avalanche C-Chain ──
+    {"chain_name": ChainCode.Avalanche, "crypto_symbol": "USDC", "address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", "decimals": 6},
+    {"chain_name": ChainCode.Avalanche, "crypto_symbol": "USDT", "address": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", "decimals": 6},
+    # ── zkSync Era ──
+    {"chain_name": ChainCode.ZkSyncEra, "crypto_symbol": "USDC", "address": "0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4", "decimals": 6},
+    {"chain_name": ChainCode.ZkSyncEra, "crypto_symbol": "USDT", "address": "0x493257fD37EDB34451f62EDf8D2a0C418852bA4C", "decimals": 6},
+    # ── Linea ──
+    {"chain_name": ChainCode.Linea, "crypto_symbol": "USDC", "address": "0x176211869cA2b568f2A7D4EE941E073a821EE1ff", "decimals": 6},
+    {"chain_name": ChainCode.Linea, "crypto_symbol": "USDT", "address": "0xA219439258ca9da29E9Cc4cE5596924745e12B93", "decimals": 6},
+    # ── Scroll ──
+    {"chain_name": ChainCode.Scroll, "crypto_symbol": "USDC", "address": "0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4", "decimals": 6},
+    {"chain_name": ChainCode.Scroll, "crypto_symbol": "USDT", "address": "0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df", "decimals": 6},
+    # ── Tron ──
+    {"chain_name": ChainCode.Tron, "crypto_symbol": "USDT", "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "decimals": 6},
+    {"chain_name": ChainCode.Tron, "crypto_symbol": "USDC", "address": "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8", "decimals": 6},
 )
 
 
@@ -139,7 +94,10 @@ def ensure_base_currencies(*, using: str = "default", stdout=None) -> None:
     fiat_manager = Fiat.objects.using(using)
     crypto_manager = Crypto.objects.using(using)
 
-    for fiat_code in ("USD", "CNY", "EUR", "JPY", "HKD"):
+    for fiat_code in (
+        "USD", "CNY", "EUR", "JPY", "GBP", "KRW", "HKD",
+        "SGD", "CHF", "AUD", "CAD", "INR", "RUB", "AED", "BRL",
+    ):
         fiat_manager.get_or_create(code=fiat_code)
 
     crypto_manager.get_or_create(
@@ -192,6 +150,12 @@ def ensure_production_currencies(*, using: str = "default", stdout=None) -> None
         name="Polygon Ecosystem Token",
         symbol="POL",
         coingecko_id="polygon",
+        decimals=18,
+    )
+    crypto_manager.get_or_create(
+        name="Avalanche",
+        symbol="AVAX",
+        coingecko_id="avalanche-2",
         decimals=18,
     )
     if stdout is not None:

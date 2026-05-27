@@ -3,6 +3,7 @@
 from django.core.management.base import BaseCommand
 
 from core.default_data import ensure_base_currencies
+from core.default_data import ensure_production_currencies
 from core.default_data import ensure_public_chains
 
 
@@ -12,6 +13,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             ensure_base_currencies(stdout=self.stdout)
+            ensure_production_currencies(stdout=self.stdout)
             ensure_public_chains(stdout=self.stdout)
 
             self.stdout.write(self.style.SUCCESS("所有初始化任务完成"))
