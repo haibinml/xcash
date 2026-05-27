@@ -323,7 +323,7 @@ class EvmScannerRpcClient:
                 backoff_seconds = _EVM_RPC_RETRY_BACKOFF_SECONDS[attempt]
                 logger.warning(
                     "EVM RPC 调用失败，准备重试",
-                    chain=self.chain.code,
+                    chain=self.chain.chain,
                     method=method,
                     attempt=attempt + 1,
                     backoff_seconds=backoff_seconds,
@@ -381,7 +381,7 @@ class EvmScannerRpcClient:
         parts = [
             f"{summary}: rpc={method}",
             f"error={exc.__class__.__name__}: {raw_error}",
-            f"chain={self.chain.code}",
+            f"chain={self.chain.chain}",
         ]
         if context:
             parts.append(context)

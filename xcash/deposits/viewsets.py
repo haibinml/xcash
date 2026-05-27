@@ -85,7 +85,7 @@ class DepositViewSet(viewsets.GenericViewSet):
         check_saas_permission(
             appid=appid,
             action="deposit",
-            chain_code=chain.code,
+            chain_code=chain.chain,
             crypto_symbol=crypto.symbol,
         )
 

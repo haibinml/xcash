@@ -90,7 +90,7 @@ class CryptoService:
                 chain=token.chain,
                 crypto=token.crypto,
             ):
-                sanitized.setdefault(token.crypto.symbol, set()).add(token.chain.code)
+                sanitized.setdefault(token.crypto.symbol, set()).add(token.chain.chain)
 
         return sanitized
 
@@ -116,8 +116,8 @@ class CryptoService:
         if existing is not None:
             return existing, False
 
-        placeholder_key = f"{cls.PLACEHOLDER_PREFIX}:{chain.code}:{address.lower()}"
-        placeholder_name = f"Pending {chain.code} {address.lower()}"
+        placeholder_key = f"{cls.PLACEHOLDER_PREFIX}:{chain.chain}:{address.lower()}"
+        placeholder_name = f"Pending {chain.chain} {address.lower()}"
 
         crypto, _ = Crypto.objects.get_or_create(
             symbol=placeholder_key,

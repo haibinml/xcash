@@ -62,7 +62,7 @@ class TronHttpClient:
         """
         last_exc: Exception | None = None
         max_attempts = len(_TRON_HTTP_RETRY_BACKOFF_SECONDS) + 1
-        chain_code = getattr(self.chain, "code", "unknown")
+        chain_code = getattr(self.chain, "chain", "unknown")
         for attempt in range(max_attempts):
             try:
                 # 走 httpx.get/post 而非 httpx.request 分发：测试用 @patch("tron.client.httpx.get/post")
@@ -142,10 +142,10 @@ class TronHttpClient:
             )
         except (TypeError, ValueError) as exc:
             raise TronClientError(
-                f"invalid latest solid block from {self.chain.code}"
+                f"invalid latest solid block from {self.chain.chain}"
             ) from exc
         if block_number <= 0:
-            raise TronClientError(f"invalid latest solid block from {self.chain.code}")
+            raise TronClientError(f"invalid latest solid block from {self.chain.chain}")
         return block_number
 
     def get_transaction_info_by_id(self, tx_hash: str) -> dict:

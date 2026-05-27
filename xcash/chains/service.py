@@ -238,7 +238,7 @@ class TransferService:
             logger.warning(
                 "Observed transfer replay with older block ignored",
                 source=observed.source,
-                chain=observed.chain.code,
+                chain=observed.chain.chain,
                 tx_hash=observed.tx_hash,
                 event_id=observed.event_id,
                 existing_transfer_id=existing.pk,
@@ -277,7 +277,7 @@ class TransferService:
         logger.error(
             "Observed transfer conflict",
             source=observed.source,
-            chain=observed.chain.code,
+            chain=observed.chain.chain,
             tx_hash=observed.tx_hash,
             event_id=observed.event_id,
             existing_transfer_id=existing.pk,
@@ -323,7 +323,7 @@ class TransferService:
                 logger.warning(
                     "Observed transfer integrity conflict without existing row",
                     source=observed.source,
-                    chain=observed.chain.code,
+                    chain=observed.chain.chain,
                     tx_hash=observed.tx_hash,
                     event_id=observed.event_id,
                 )
@@ -350,7 +350,7 @@ class TransferService:
                 logger.debug(
                     "Observed transfer replay ignored",
                     source=observed.source,
-                    chain=observed.chain.code,
+                    chain=observed.chain.chain,
                     tx_hash=observed.tx_hash,
                     event_id=observed.event_id,
                     transfer_id=existing.pk,

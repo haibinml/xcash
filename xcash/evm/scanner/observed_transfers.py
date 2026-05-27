@@ -144,7 +144,7 @@ class EvmObservedTransferProcessor:
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             logger.warning(
                 "EVM 原生币充值日志解析失败，已跳过",
-                chain=chain.code,
+                chain=chain.chain,
                 error=str(exc),
             )
             return None
@@ -202,7 +202,7 @@ class EvmObservedTransferProcessor:
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             logger.warning(
                 "EVM ERC20 Transfer 日志解析失败，已跳过",
-                chain=chain.code,
+                chain=chain.chain,
                 error=str(exc),
             )
             return None

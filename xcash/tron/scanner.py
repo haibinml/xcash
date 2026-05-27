@@ -48,7 +48,7 @@ class TronUsdtPaymentScanner:
     @classmethod
     def scan_chain(cls, *, chain: Chain) -> TronScanSummary:
         if chain.type != ChainType.TRON:
-            raise ValueError(f"仅支持 Tron 链扫描，当前链为 {chain.code}")
+            raise ValueError(f"仅支持 Tron 链扫描，当前链为 {chain.chain}")
 
         usdt_mapping = (
             ChainToken.objects.select_related("crypto")
@@ -222,7 +222,7 @@ class TronUsdtPaymentScanner:
             )
             if not isinstance(payload, dict):
                 raise TronClientError(
-                    f"invalid contract events payload from {chain.code}"
+                    f"invalid contract events payload from {chain.chain}"
                 )
             data = payload.get("data")
             meta = payload.get("meta") or {}
@@ -230,7 +230,7 @@ class TronUsdtPaymentScanner:
                 data = []
             if not isinstance(data, list) or not isinstance(meta, dict):
                 raise TronClientError(
-                    f"invalid contract events payload from {chain.code}"
+                    f"invalid contract events payload from {chain.chain}"
                 )
             if not data:
                 break
@@ -251,11 +251,11 @@ class TronUsdtPaymentScanner:
                 break
             if not isinstance(page_fingerprint, str):
                 raise TronClientError(
-                    f"invalid contract events fingerprint from {chain.code}"
+                    f"invalid contract events fingerprint from {chain.chain}"
                 )
             if page_fingerprint in seen_fingerprints:
                 raise TronClientError(
-                    f"duplicate contract events fingerprint from {chain.code}"
+                    f"duplicate contract events fingerprint from {chain.chain}"
                 )
             seen_fingerprints.add(page_fingerprint)
 

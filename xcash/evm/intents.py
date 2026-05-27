@@ -117,7 +117,7 @@ def build_erc20_transfer_intent(
     token_addr = crypto.address(chain)
     if not token_addr:
         raise ValueError(
-            f"Crypto {crypto.symbol} is not deployed on chain {chain.code}"
+            f"Crypto {crypto.symbol} is not deployed on chain {chain.chain}"
         )
 
     token_checksum = Web3.to_checksum_address(token_addr)

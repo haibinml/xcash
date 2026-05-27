@@ -50,7 +50,7 @@ class WithdrawalService:
         data = {
             "sys_no": withdrawal.sys_no,
             "out_no": withdrawal.out_no,
-            "chain": withdrawal.chain.code if withdrawal.chain else "",
+            "chain": withdrawal.chain.chain if withdrawal.chain else "",
             "hash": (
                 withdrawal.tx_task.tx_hash if withdrawal.tx_task_id else withdrawal.hash
             ),
@@ -75,7 +75,7 @@ class WithdrawalService:
             gas_price = chain.w3.eth.gas_price  # noqa: SLF001
         except Exception:
             logger.warning(
-                "获取 EVM gas_price 失败，跳过实时 gas 预留", chain=chain.code
+                "获取 EVM gas_price 失败，跳过实时 gas 预留", chain=chain.chain
             )
             return 0
 
@@ -216,7 +216,7 @@ class WithdrawalService:
             logger.exception(
                 "计算提币 USD 价值失败，无法执行限额校验",
                 project_id=project.pk,
-                chain=chain.code,
+                chain=chain.chain,
                 crypto=crypto.symbol,
             )
             raise APIError(
@@ -428,7 +428,7 @@ class WithdrawalService:
         """每次审核决策都必须落审计日志，便于运营追溯与责任定位。"""
         snapshot = {
             "out_no": withdrawal.out_no,
-            "chain": withdrawal.chain.code if withdrawal.chain_id else "",
+            "chain": withdrawal.chain.chain if withdrawal.chain_id else "",
             "crypto": withdrawal.crypto.symbol,
             "amount": str(withdrawal.amount),
             "worth": str(withdrawal.worth),

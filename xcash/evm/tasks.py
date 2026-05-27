@@ -44,7 +44,7 @@ def _broadcast_evm_task(pk: int) -> None:
             "EVM 广播被阻断",
             task_pk=tx_task.pk,
             address=tx_task.address.address,
-            chain=tx_task.chain.code,
+            chain=tx_task.chain.chain,
             nonce=tx_task.nonce,
             reason=(
                 "lower_queued_nonce"
@@ -130,7 +130,7 @@ def _scan_evm_chain(chain_pk: int) -> None:
     try:
         result = EvmScannerService.scan_chain(chain=chain)
     except EvmScannerRpcError:
-        logger.warning("EVM 自扫描 RPC 失败", chain=chain.code)
+        logger.warning("EVM 自扫描 RPC 失败", chain=chain.chain)
 
     EvmTaskPoller.poll_chain(chain=chain)
     if result is None:
@@ -138,7 +138,7 @@ def _scan_evm_chain(chain_pk: int) -> None:
 
     logger.info(
         "EVM 自扫描完成",
-        chain=chain.code,
+        chain=chain.chain,
         native_from=result.native.from_block,
         native_to=result.native.to_block,
         native_logs=result.native.observed_logs,
@@ -173,7 +173,7 @@ def _estimate_avg_block_interval(chain) -> float:
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "EVM 兜底任务获取最新区块失败，使用默认平均出块间隔",
-            chain=chain.code,
+            chain=chain.chain,
             error=str(exc),
         )
         return float(_DEFAULT_AVG_BLOCK_INTERVAL_SECONDS)
@@ -191,7 +191,7 @@ def _estimate_avg_block_interval(chain) -> float:
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "EVM 兜底任务采样块间隔失败，使用默认平均出块间隔",
-            chain=chain.code,
+            chain=chain.chain,
             error=str(exc),
         )
         return float(_DEFAULT_AVG_BLOCK_INTERVAL_SECONDS)
@@ -249,7 +249,7 @@ def _collect_blocks_from_receipts(chain, task: TxTask) -> set[int]:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "EVM 兜底查询 receipt 异常",
-                chain=chain.code,
+                chain=chain.chain,
                 task_pk=task.pk,
                 tx_hash=tx_hash,
                 error=str(exc),
@@ -305,7 +305,7 @@ def _rescan_pending_evm_chain(chain_pk: int) -> None:
 
     logger.info(
         "EVM 重扫完成",
-        chain=chain.code,
+        chain=chain.chain,
         stale_count=len(stale_tasks),
         resolved_count=resolved_count,
         blocks=len(blocks_to_rescan),

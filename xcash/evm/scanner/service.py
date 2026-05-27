@@ -80,7 +80,7 @@ class EvmScannerService:
     @staticmethod
     def scan_chain(*, chain: Chain) -> EvmLogScanResult:
         if chain.type != ChainType.EVM:
-            raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.code}")
+            raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.chain}")
         if not EvmScannerService._is_enabled(chain=chain):
             return EvmScannerService._empty_result(chain=chain)
 
@@ -101,7 +101,7 @@ class EvmScannerService:
     ) -> EvmRescanResult:
         """对指定块集合执行一次重扫，不推进任何游标。"""
         if chain.type != ChainType.EVM:
-            raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.code}")
+            raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.chain}")
         if not block_numbers:
             return EvmRescanResult(
                 from_block=0,

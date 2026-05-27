@@ -77,7 +77,7 @@ class EvmLogScanner:
         rpc_client: EvmScannerRpcClient | None = None,
     ) -> EvmLogScanResult:
         if chain.type != ChainType.EVM:
-            raise ValueError(f"仅支持 EVM 链扫描，当前链为 {chain.code}")
+            raise ValueError(f"仅支持 EVM 链扫描，当前链为 {chain.chain}")
 
         cursor = cls._get_or_create_cursor(chain=chain)
         if not cursor.enabled:
@@ -298,7 +298,7 @@ class EvmLogScanner:
     def _mark_cursor_error(*, cursor: EvmScanCursor, exc: Exception) -> None:
         logger.warning(
             "EVM 日志扫描失败",
-            chain=cursor.chain.code,
+            chain=cursor.chain.chain,
             error=str(exc),
         )
         EvmScanCursor.objects.filter(pk=cursor.pk).update(

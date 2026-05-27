@@ -45,7 +45,7 @@ class EvmTaskPoller:
             if isinstance(status, Exception):
                 logger.warning(
                     "EVM 任务轮询查链失败",
-                    chain=chain.code,
+                    chain=chain.chain,
                     address=evm_task.address.address,
                     nonce=evm_task.nonce,
                     error=str(status),
@@ -64,7 +64,7 @@ class EvmTaskPoller:
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "轮询器观察确认交易失败",
-                        chain=chain.code,
+                        chain=chain.chain,
                         address=evm_task.address.address,
                         nonce=evm_task.nonce,
                         tx_hash=tx_hash,
@@ -76,7 +76,7 @@ class EvmTaskPoller:
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "轮询器收口失败交易异常",
-                        chain=chain.code,
+                        chain=chain.chain,
                         address=evm_task.address.address,
                         nonce=evm_task.nonce,
                     )
@@ -88,14 +88,14 @@ class EvmTaskPoller:
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "PENDING_CHAIN 超时重新执行失败",
-                        chain=chain.code,
+                        chain=chain.chain,
                         address=evm_task.address.address,
                         nonce=evm_task.nonce,
                     )
                 else:
                     logger.info(
                         "PENDING_CHAIN 超时且无链上记录，已重新广播",
-                        chain=chain.code,
+                        chain=chain.chain,
                         address=evm_task.address.address,
                         nonce=evm_task.nonce,
                     )

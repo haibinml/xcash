@@ -163,7 +163,7 @@ class VaultSlot(models.Model):
         if usage == VaultSlotUsage.DEPOSIT:
             if customer is None:
                 raise ValueError("customer is required for deposit salt")
-            # 不掺 chain.code：configure deterministic deployer 后所有 EVM 链的
+            # 不掺 chain.chain：configure deterministic deployer 后所有 EVM 链的
             # factory / template / vault 地址都一致，再用同一 salt 即可让客户在所有 EVM 链
             # 拿到同一个 VaultSlot 地址。
             return keccak(
@@ -399,7 +399,7 @@ class VaultSlot(models.Model):
         except VaultSlot.DoesNotExist as exc:
             raise RuntimeError(
                 "VaultSlot 不存在："
-                f"deposit_id={deposit.pk} chain={chain.code} "
+                f"deposit_id={deposit.pk} chain={chain.chain} "
                 f"customer_id={deposit.customer_id} address={transfer.to_address}"
             ) from exc
 
@@ -423,7 +423,7 @@ class VaultSlot(models.Model):
         token_address = crypto.address(chain)
         if not token_address:
             raise RuntimeError(
-                f"Crypto {crypto.symbol} 未部署在链 {chain.code}，无法调度 VaultSlot 归集"
+                f"Crypto {crypto.symbol} 未部署在链 {chain.chain}，无法调度 VaultSlot 归集"
             )
 
         intent = build_vault_slot_collect_intent(
@@ -480,7 +480,7 @@ class VaultSlot(models.Model):
         except VaultSlot.DoesNotExist as exc:
             raise RuntimeError(
                 "Invoice VaultSlot 不存在："
-                f"invoice_id={invoice.pk} chain={chain.code} "
+                f"invoice_id={invoice.pk} chain={chain.chain} "
                 f"project_id={invoice.project_id} address={invoice.pay_address}"
             ) from exc
 
@@ -504,7 +504,7 @@ class VaultSlot(models.Model):
         token_address = crypto.address(chain)
         if not token_address:
             raise RuntimeError(
-                f"Crypto {crypto.symbol} 未部署在链 {chain.code}，无法调度 Invoice VaultSlot 归集"
+                f"Crypto {crypto.symbol} 未部署在链 {chain.chain}，无法调度 Invoice VaultSlot 归集"
             )
 
         intent = build_vault_slot_collect_intent(
@@ -564,7 +564,7 @@ class EvmScanCursor(models.Model):
         verbose_name_plural = verbose_name
 
     def __str__(self) -> str:
-        return self.chain.code
+        return self.chain.chain
 
 
 class EvmTxTask(UndeletableModel):

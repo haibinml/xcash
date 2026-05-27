@@ -87,7 +87,7 @@ def process_internal_transaction(
     tx_task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
     if tx_task is None:
         raise UnknownInternalBroadcastError(
-            chain_code=chain.code,
+            chain_code=chain.chain,
             tx_hash=tx_hash,
             from_address=from_address,
         )
@@ -106,7 +106,7 @@ def process_internal_transaction(
     if fact is None:
         logger.warning(
             "EVM 内部交易 receipt 成功但 matcher 未找到预期 Transfer",
-            chain=chain.code,
+            chain=chain.chain,
             tx_hash=tx_hash,
             tx_type=tx_task.tx_type,
             tx_task_id=tx_task.pk,
