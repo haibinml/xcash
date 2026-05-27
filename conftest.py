@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -21,34 +20,6 @@ def pytest_ignore_collect(collection_path, config):
     except ValueError:
         return False
     return bool(relative_path.parts) and relative_path.parts[0] == "signer"
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _short_circuit_chain_rpc_probe(django_db_setup):
-    # Chain.save() 默认会同步调用 _detect_chain_id / _detect_poa 走 web3 RPC；
-    # 测试里 chain.rpc 多为伪 URL（如 http://bsc.local），mac DNS 解析需要 ~5s 才超时，
-    # 累计到完整测试里能占去 50s+。测试链默认不声明 POA，短路为 False 与常规失败兜底等价。
-    from chains.models import Chain  # noqa: PLC0415
-
-    real_detect_poa = Chain._detect_poa
-
-    def _fake_detect_chain_id(self):
-        return self.chain_id
-
-    with (
-        patch(
-            "chains.models.Chain._detect_poa",
-            autospec=True,
-            return_value=False,
-        ) as detect_poa_mock,
-        patch(
-            "chains.models.Chain._detect_chain_id",
-            autospec=True,
-            side_effect=_fake_detect_chain_id,
-        ),
-    ):
-        detect_poa_mock.real_implementation = real_detect_poa
-        yield
 
 
 @pytest.fixture(autouse=True)

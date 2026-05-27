@@ -5,7 +5,6 @@ import enum
 from decimal import Decimal
 from functools import cached_property
 from typing import TYPE_CHECKING
-from typing import Any
 
 import environ
 import structlog
@@ -19,8 +18,11 @@ from web3 import Web3
 from web3.exceptions import ExtraDataLengthError
 from web3.middleware import ExtraDataToPOAMiddleware
 
+from chains.constants import CHAIN_SPECS
+from chains.constants import ChainName
+from chains.constants import ChainSpec
+from chains.constants import ChainType  # noqa: F401  re-export 给下游模块过渡使用
 from common.fields import AddressField
-from common.fields import EvmAddressField
 from common.fields import HashField
 from common.models import UndeletableModel
 
@@ -34,79 +36,33 @@ env = environ.Env()
 logger = structlog.get_logger()
 
 
-# Create your models here.
-class ChainType(models.TextChoices):
-    EVM = "evm", "EVM"
-    TRON = "tron", "Tron"
-
-
 class Chain(models.Model):
     DEFAULT_BASE_TRANSFER_GAS = 21_000
     DEFAULT_ERC20_TRANSFER_GAS = 65_000
     base_transfer_gas = DEFAULT_BASE_TRANSFER_GAS
     erc20_transfer_gas = DEFAULT_ERC20_TRANSFER_GAS
 
-    name = models.CharField(
-        _("名称"),
+    chain = models.CharField(
+        _("链"),
+        choices=ChainName,
         unique=True,
-    )
-    code = models.CharField(
-        _("代码"),
-        unique=True,
-    )
-    type = models.CharField(
-        _("类型"),
-        choices=ChainType,
-    )
-    native_coin = models.ForeignKey(
-        "currencies.Crypto",
-        verbose_name="原生币",
-        on_delete=models.PROTECT,
-        related_name="chains_as_native_coin",
-    )
-    confirm_block_count = models.PositiveIntegerField(
-        default=10,
-        verbose_name=_("区块确认数"),
     )
     latest_block_number = models.PositiveIntegerField(
         default=0, verbose_name=_("最新区块")
     )
-
     active = models.BooleanField(default=False, verbose_name=_("启用"))
-
-    # For EVM
     evm_log_max_block_range = models.PositiveIntegerField(
         _("EVM 单次日志请求最大区块数"),
         default=10,
         help_text=_("EVM 扫描器单次 eth_getLogs 请求允许覆盖的最大区块数。"),
     )
-    chain_id = models.PositiveIntegerField(
-        _("Chain ID"),
-        unique=True,
-        blank=True,
-        null=True,
-    )
     rpc = models.CharField(_("RPC"), blank=True, default="")
-    is_poa = models.BooleanField(_("POA"), blank=True, null=True)
-
-    # For Tron
     tron_api_key = models.CharField(_("Tron API Key"), blank=True, default="")
-
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("type",),
-                condition=~models.Q(type=ChainType.EVM),
-                name="uniq_chain_type_for_non_evm",
-            ),
-        ]
         verbose_name = _("链")
         verbose_name_plural = _("链")
-
-    # 当前产品允许创建 EVM / Tron 两类链。
-    PRODUCT_ENABLED_TYPES = (ChainType.EVM, ChainType.TRON)
 
     def __init__(self, *args, **kwargs):
         base_transfer_gas = kwargs.pop("base_transfer_gas", None)
@@ -120,39 +76,45 @@ class Chain(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def spec(self) -> ChainSpec:
+        return CHAIN_SPECS[self.chain]
+
+    @property
+    def name(self) -> str:
+        return ChainName(self.chain).label
+
+    @property
+    def type(self) -> str:
+        return self.spec.type
+
+    @property
+    def chain_id(self) -> int | None:
+        return self.spec.chain_id
+
+    @property
+    def is_poa(self) -> bool | None:
+        return self.spec.is_poa
+
+    @property
+    def confirm_block_count(self) -> int:
+        return self.spec.confirm_block_count
+
+    @cached_property
+    def native_coin(self):
+        from currencies.models import Crypto  # noqa: PLC0415
+
+        crypto, _ = Crypto.objects.get_or_create(
+            symbol=self.spec.native_coin_symbol,
+            defaults={
+                "decimals": self.spec.native_coin_decimals,
+                "active": True,
+            },
+        )
+        return crypto
+
     def save(self, *args, **kwargs):
-        # 链创建属于系统级配置，统一在模型层执行校验，避免后台和脚本绕过限制。
         self.full_clean()
-
-        # EVM 链在 RPC 变更时自动检测 chain_id 和 POA
-        if self.type == ChainType.EVM and self.rpc:
-            rpc_changed = self.pk is None  # 新建时视为变更
-            if not rpc_changed:
-                old_rpc = (
-                    Chain.objects.filter(pk=self.pk)
-                    .values_list("rpc", flat=True)
-                    .first()
-                )
-                rpc_changed = old_rpc != self.rpc
-            if rpc_changed:
-                # 仅在 chain_id 未显式指定时才自动检测，避免覆盖调用方明确传入的值
-                if not self.chain_id:
-                    self.chain_id = self._detect_chain_id()
-                self.is_poa = self._detect_poa()
-                # 清除 w3 缓存，确保下次访问使用新 RPC 和 POA 配置
-                self.__dict__.pop("w3", None)
-        elif self.type == ChainType.TRON:
-            self.chain_id = None
-            self.is_poa = None
-            self.confirm_block_count = 0
-            self.rpc = ""
-            self.tron_api_key = self.tron_api_key.strip()
-        elif self.type != ChainType.EVM:
-            self.chain_id = None
-            self.is_poa = None
-        if self.type != ChainType.TRON:
-            self.tron_api_key = ""
-
         with db_transaction.atomic():
             result = super().save(*args, **kwargs)
             self._sync_tron_usdt_watch_cursor()
@@ -163,9 +125,8 @@ class Chain(models.Model):
         if self.type != ChainType.TRON or not self.active:
             return
 
-        from tron.models import TronWatchCursor
-
-        from currencies.models import ChainToken
+        from tron.models import TronWatchCursor  # noqa: PLC0415
+        from currencies.models import ChainToken  # noqa: PLC0415
 
         usdt_mapping = (
             ChainToken.objects.filter(
@@ -183,49 +144,15 @@ class Chain(models.Model):
         TronWatchCursor.objects.get_or_create(
             chain=self,
             contract_address=usdt_mapping.address,
-            defaults={
-                "last_scanned_block": 0,
-                "enabled": True,
-            },
+            defaults={"last_scanned_block": 0, "enabled": True},
         )
-
-    def clean(self) -> None:
-        """限制后台和脚本只能创建当前产品阶段启用的链类型。"""
-        super().clean()
-        if self.type and self.type not in self.PRODUCT_ENABLED_TYPES:
-            raise ValidationError({"type": _("当前版本仅支持创建 EVM / Tron 链。")})
-
-    def _detect_chain_id(self) -> int | None:
-        """通过 RPC 获取链的 chain_id。"""
-        try:
-            w3 = Web3(Web3.HTTPProvider(self.rpc, request_kwargs={"timeout": 8}))
-            chain_id = w3.eth.chain_id
-        except Exception:
-            return self.chain_id
-        else:
-            return chain_id
-
-    def _detect_poa(self) -> bool:
-        """通过获取最新区块的 extraData 长度判断是否为 POA 链（如 BSC）。"""
-        try:
-            w3 = Web3(Web3.HTTPProvider(self.rpc, request_kwargs={"timeout": 8}))
-            block = w3.eth.get_block("latest")
-            # POA 链的 extraData（proofOfAuthorityData）通常远超 32 字节
-            extra = block.get("proofOfAuthorityData") or block.get("extraData", b"")
-            return len(extra) > 32
-        except ExtraDataLengthError:
-            # web3.py 在格式化区块前就会拦截超长 extraData；这个异常本身就是 POA 信号。
-            return True
-        except Exception:
-            # RPC 短暂失败时保留已有配置，避免一次探测失败把 BSC 误改成非 POA。
-            return bool(self.is_poa)
 
     def content(self):
         return {
             "name": self.name,
-            "code": self.code,
+            "code": self.chain,
             "type": self.type,
-            "chain_id": self.chain_id if self.chain_id else None,
+            "chain_id": self.chain_id,
             "native_coin": self.native_coin.symbol,
         }
 
@@ -244,30 +171,26 @@ class Chain(models.Model):
         block_identifier: int | str,
         *,
         full_transactions: bool = False,
-    ) -> Any:
-        """读取区块时遇到 POA extraData 校验错误，自动标记链并用 POA middleware 重试。"""
+    ):
+        """读取区块时遇到 POA extraData 校验错误，用 force_poa 重建 w3 重试一次。
+
+        常量层已把 BSC/Polygon 标 POA，正常路径不会触发兜底；
+        若新接入链未及时打 POA 标记，这里仅做即时降级，不再回写 DB。
+        """
         try:
             return self.w3.eth.get_block(
-                block_identifier,
-                full_transactions=full_transactions,
+                block_identifier, full_transactions=full_transactions
             )
         except ExtraDataLengthError:
-            self._mark_as_poa()
             retry_w3 = self._build_w3(force_poa=True)
             self.__dict__["w3"] = retry_w3
             return retry_w3.eth.get_block(
-                block_identifier,
-                full_transactions=full_transactions,
+                block_identifier, full_transactions=full_transactions
             )
 
-    def _mark_as_poa(self) -> None:
-        if self.pk:
-            self.__class__.objects.filter(pk=self.pk).update(is_poa=True)
-        self.is_poa = True
-
     @property
-    def adapter(self) -> "AdapterInterface":  # noqa
-        from chains.adapters import AdapterFactory
+    def adapter(self) -> "AdapterInterface":  # noqa: F821
+        from chains.adapters import AdapterFactory  # noqa: PLC0415
 
         return AdapterFactory.get_adapter(chain_type=self.type)
 
@@ -276,9 +199,6 @@ class Chain(models.Model):
         if self.type == ChainType.EVM:
             return self.w3.eth.block_number
         if self.type == ChainType.TRON:
-            # Tron 区块轮询尚未接入专用 RPC 适配器。
-            # 过渡期对公共 update_latest_block 仅返回数据库中已知高度，
-            # 保证 active Tron 链不会在定时任务中抛异常或误推进确认流程。
             return self.latest_block_number
         msg = f"Unsupported chain type: {self.type}"
         raise NotImplementedError(msg)
