@@ -17,6 +17,7 @@ class ChainName(models.TextChoices):
     Linea = "linea", "Linea"
     Scroll = "scroll", "Scroll"
     Tron = "tron", "Tron"
+    Anvil = "anvil", "Anvil Local"
 
 
 class ChainType(models.TextChoices):
@@ -46,6 +47,7 @@ CHAIN_SPECS: dict[str, ChainSpec] = {
     ChainName.Linea: ChainSpec(ChainType.EVM, 59144, False, 20, "ETH", 18),
     ChainName.Scroll: ChainSpec(ChainType.EVM, 534352, False, 20, "ETH", 18),
     ChainName.Tron: ChainSpec(ChainType.TRON, None, None, 19, "TRX", 6),
+    ChainName.Anvil: ChainSpec(ChainType.EVM, 31337, False, 1, "ETH", 18),
 }
 
 

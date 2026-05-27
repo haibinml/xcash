@@ -3,8 +3,8 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 
+from chains.constants import ChainName
 from chains.models import Chain
-from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferStatus
 from currencies.models import ChainToken
@@ -13,21 +13,12 @@ from currencies.models import Crypto
 
 class ChainNativeCryptoMappingTests(TestCase):
     def test_creating_chain_auto_creates_native_crypto_mapping(self):
-        native_coin = Crypto.objects.create(
-            name="Ethereum",
-            symbol="ETH",
-            coingecko_id="ethereum",
-        )
-
         chain = Chain.objects.create(
-            name="Ethereum Mainnet",
-            code="eth-mainnet",
-            type=ChainType.EVM,
-            native_coin=native_coin,
-            chain_id=1,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
+        native_coin = chain.native_coin
 
         native_mapping = ChainToken.objects.get(crypto=native_coin, chain=chain)
         self.assertEqual(native_mapping.address, "")
@@ -43,11 +34,6 @@ class ChainTokenRemapTests(TestCase):
         _process_transfer_apply_async_mock,
     ):
         # 修改 ChainToken.crypto 后，历史 Transfer 应自动切到新币种，并触发一次业务重归类。
-        native_coin = Crypto.objects.create(
-            name="Ethereum",
-            symbol="ETH",
-            coingecko_id="ethereum",
-        )
         placeholder = Crypto.objects.create(
             name="Pending eth usdt",
             symbol="PENDING:eth:0x00000000000000000000000000000000000000aa",
@@ -60,12 +46,8 @@ class ChainTokenRemapTests(TestCase):
             coingecko_id="tether",
         )
         chain = Chain.objects.create(
-            name="Ethereum",
-            code="eth",
-            type=ChainType.EVM,
-            native_coin=native_coin,
-            chain_id=1,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         chain_token = ChainToken.objects.create(

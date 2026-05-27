@@ -11,8 +11,9 @@ from django.test import override_settings
 from django.utils import timezone
 from web3 import Web3
 
+from chains.constants import ChainName
+from chains.constants import ChainType
 from chains.models import Chain
-from chains.models import ChainType
 from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
@@ -362,20 +363,12 @@ class EpaySubmitServiceTests(TestCase):
             prices={"USD": "1"},
             coingecko_id="epay-submit-usdt",
         )
-        self.native = Crypto.objects.create(
-            name="EPay Submit ETH",
-            symbol="EPAY-ETH",
-            coingecko_id="epay-submit-eth",
-        )
         self.chain = Chain.objects.create(
-            name="EPay Submit Chain",
-            code="epay-submit-chain",
-            type=ChainType.EVM,
-            native_coin=self.native,
-            chain_id=92001,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
+        self.native = self.chain.native_coin
         ChainToken.objects.create(
             crypto=self.crypto,
             chain=self.chain,
@@ -428,7 +421,7 @@ class EpaySubmitServiceTests(TestCase):
         self.assertEqual(invoice.notify_url, "https://merchant.example.com/notify")
         self.assertEqual(invoice.return_url, "https://merchant.example.com/return")
         self.assertEqual(invoice.methods, Invoice.available_methods(self.project))
-        self.assertEqual(invoice.methods[self.crypto.symbol], [self.chain.code])
+        self.assertEqual(invoice.methods[self.crypto.symbol], [self.chain.chain])
         self.assertEqual(epay_order.merchant, self.merchant)
         self.assertEqual(epay_order.trade_no, invoice.sys_no)
         self.assertEqual(epay_order.out_trade_no, invoice.out_no)

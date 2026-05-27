@@ -6,7 +6,7 @@ from currencies.models import Crypto
 
 
 class ChainTokenSerializer(serializers.ModelSerializer):
-    chain = serializers.SlugRelatedField(slug_field="code", read_only=True)
+    chain = serializers.SlugRelatedField(slug_field="chain", read_only=True)
 
     class Meta:
         model = ChainToken
@@ -31,15 +31,18 @@ class InternalCryptoSerializer(serializers.ModelSerializer):
 
 
 class InternalChainSerializer(serializers.ModelSerializer):
-    native_coin = serializers.SlugRelatedField(slug_field="symbol", read_only=True)
+    native_coin = serializers.SerializerMethodField()
 
     class Meta:
         model = Chain
         fields = [
             "name",
-            "code",
+            "chain",
             "type",
             "native_coin",
             "confirm_block_count",
             "active",
         ]
+
+    def get_native_coin(self, obj) -> str:
+        return obj.spec.native_coin_symbol

@@ -157,7 +157,7 @@ class DepositService:
             raise DepositStatusError("Deposit status must be COMPLETED")
 
         transfer = deposit.transfer
-        if transfer.crypto_id == transfer.chain.native_coin_id:
+        if transfer.crypto_id == transfer.chain.native_coin.pk:
             return False
 
         return VaultSlot.schedule_collect_for_deposit(deposit.pk) is not None

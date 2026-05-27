@@ -20,8 +20,9 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 from web3 import Web3
 
+from chains.constants import ChainName
+from chains.constants import ChainType
 from chains.models import Chain
-from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferType
 from chains.models import Wallet
@@ -59,8 +60,7 @@ class InvoiceTestMixin:
         username: str = "merchant",
         project_name: str = "TestProject",
         crypto_symbol: str = "USDT",
-        chain_code: str = "eth-test",
-        chain_id: int = 9999,
+        chain_name: str = ChainName.Ethereum,
         with_recipient: bool = True,
     ):
         self.user = User.objects.create(username=username)
@@ -75,16 +75,8 @@ class InvoiceTestMixin:
             coingecko_id=f"{crypto_symbol.lower()}-test",
         )
         self.chain = Chain.objects.create(
-            name=f"Chain {chain_code}",
-            code=chain_code,
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name=f"ETH {chain_code}",
-                symbol=f"ETH-{chain_code.upper()[:4]}",
-                coingecko_id=f"eth-{chain_code}",
-            ),
-            chain_id=chain_id,
-            rpc="http://localhost:8545",
+            chain=chain_name,
+            rpc="",
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
@@ -106,7 +98,7 @@ class InvoiceTestMixin:
             "title": "Test invoice",
             "currency": self.crypto.symbol,
             "amount": Decimal("10"),
-            "methods": {self.crypto.symbol: [self.chain.code]},
+            "methods": {self.crypto.symbol: [self.chain.chain]},
             "expires_at": timezone.now() + timedelta(minutes=10),
         }
         defaults.update(kwargs)
@@ -126,12 +118,8 @@ class InvoiceInitializationTests(TestCase):
             coingecko_id="ethereum",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum",
-            code="eth",
-            type=ChainType.EVM,
-            native_coin=self.eth,
-            chain_id=1,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
 
@@ -161,7 +149,7 @@ class InvoiceInitializationTests(TestCase):
             title="Remote invoice",
             currency="USD",
             amount=Decimal("15"),
-            methods={"ETH": ["eth"]},
+            methods={"ETH": [ChainName.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
         )
 
@@ -224,29 +212,13 @@ class InvoicePaySlotTests(TestCase):
             coingecko_id="tether-invoice-slots",
         )
         self.chain_a = Chain.objects.create(
-            name="Ethereum Slot A",
-            code="eth-slot-a",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="Ethereum Native Slot A",
-                symbol="ETH-SLOTA",
-                coingecko_id="ethereum-invoice-slot-a",
-            ),
-            chain_id=1888,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.chain_b = Chain.objects.create(
-            name="Ethereum Slot B",
-            code="eth-slot-b",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="Ethereum Native Slot B",
-                symbol="ETH-SLOTB",
-                coingecko_id="ethereum-invoice-slot-b",
-            ),
-            chain_id=2888,
-            rpc="http://localhost:8545",
+            chain=ChainName.BSC,
+            rpc="",
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
@@ -264,7 +236,7 @@ class InvoicePaySlotTests(TestCase):
             title="Slot invoice",
             currency="USDT",
             amount=Decimal("10"),
-            methods={"USDT": ["eth-slot-a", "eth-slot-b"]},
+            methods={"USDT": [ChainName.Ethereum, ChainName.BSC]},
             expires_at=timezone.now() + timedelta(minutes=10),
         )
 
@@ -276,7 +248,7 @@ class InvoicePaySlotTests(TestCase):
             chain=chain,
             block=1,
             hash=f"0x{chain.chain_id:08x}{int(now.timestamp() * 1000000):056x}",
-            event_id=f"{chain.code}-{int(now.timestamp() * 1000)}",
+            event_id=f"{chain.chain}-{int(now.timestamp() * 1000)}",
             crypto=self.crypto,
             from_address="0x00000000000000000000000000000000000000B1",
             to_address=pay_address,
@@ -505,16 +477,8 @@ class InvoicePaySlotConcurrencyTests(TransactionTestCase):
             coingecko_id="tether-invoice-concurrency",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Concurrency",
-            code="eth-concurrency",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="Ethereum Native Concurrency",
-                symbol="ETH-CON",
-                coingecko_id="ethereum-invoice-concurrency",
-            ),
-            chain_id=3888,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
@@ -533,7 +497,7 @@ class InvoicePaySlotConcurrencyTests(TransactionTestCase):
             title="Concurrent 1",
             currency="USD",
             amount=Decimal("10"),
-            methods={"USDTC": ["eth-concurrency"]},
+            methods={"USDTC": [ChainName.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         invoice2 = Invoice.objects.create(
@@ -542,7 +506,7 @@ class InvoicePaySlotConcurrencyTests(TransactionTestCase):
             title="Concurrent 2",
             currency="USD",
             amount=Decimal("10"),
-            methods={"USDTC": ["eth-concurrency"]},
+            methods={"USDTC": [ChainName.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         barrier = threading.Barrier(2)
@@ -610,7 +574,7 @@ class InvoiceDuplicateOutNoTests(TestCase):
                 "title": "Duplicate",
                 "currency": "USD",
                 "amount": Decimal("1"),
-                "methods": {"ETH": ["eth"]},
+                "methods": {"ETH": [ChainName.Ethereum]},
                 "duration": 10,
             },
             errors={},
@@ -638,11 +602,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             name="Invoice Capability Project",
             wallet=Wallet.objects.create(),
         )
-        trx = Crypto.objects.create(
-            name="Tron Native",
-            symbol="TRX",
-            coingecko_id="tron-native-invoice-capability",
-        )
         tron_usdt = Crypto.objects.create(
             name="Tether USD",
             symbol="USDT",
@@ -656,10 +615,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             decimals=6,
         )
         tron_chain = Chain.objects.create(
-            name="Tron Invoice Capability",
-            code="tron-invoice-capability",
-            type=ChainType.TRON,
-            native_coin=trx,
+            chain=ChainName.Tron,
             rpc="http://tron.invalid",
             active=True,
         )
@@ -684,7 +640,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
 
         methods = Invoice.available_methods(project)
 
-        self.assertEqual(methods["USDT"], [tron_chain.code])
+        self.assertEqual(methods["USDT"], [tron_chain.chain])
         self.assertNotIn("USDC", methods)
 
     @override_settings(IS_SAAS=True, INTERNAL_API_TOKEN="xcash-saas-token")
@@ -693,32 +649,14 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             name="Invoice SaaS Allowed Methods Project",
             wallet=Wallet.objects.create(),
         )
-        eth_native = Crypto.objects.create(
-            name="Ethereum SaaS Allowed",
-            symbol="ETHSAASAM",
-            coingecko_id="ethereum-saas-allowed-methods",
-        )
-        bsc_native = Crypto.objects.create(
-            name="BNB SaaS Allowed",
-            symbol="BNBSAASAM",
-            coingecko_id="bnb-saas-allowed-methods",
-        )
         eth_chain = Chain.objects.create(
-            name="Ethereum SaaS Allowed",
-            code="eth-saas-allowed-methods",
-            type=ChainType.EVM,
-            native_coin=eth_native,
-            chain_id=9911,
-            rpc="http://eth.invalid",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         bsc_chain = Chain.objects.create(
-            name="BSC SaaS Allowed",
-            code="bsc-saas-allowed-methods",
-            type=ChainType.EVM,
-            native_coin=bsc_native,
-            chain_id=9912,
-            rpc="http://bsc.invalid",
+            chain=ChainName.BSC,
+            rpc="",
             active=True,
         )
         usdt = Crypto.objects.create(
@@ -762,7 +700,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             {
                 "frozen": False,
                 "enable_deposit_withdrawal": True,
-                "allowed_chain_codes": [eth_chain.code],
+                "allowed_chain_codes": [eth_chain.chain],
                 "allowed_crypto_symbols": [usdt.symbol],
             },
             None,
@@ -771,7 +709,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         methods = Invoice.available_methods(project)
 
         self.assertEqual(set(methods), {usdt.symbol})
-        self.assertEqual(methods[usdt.symbol], [eth_chain.code])
+        self.assertEqual(methods[usdt.symbol], [eth_chain.chain])
 
     @override_settings(IS_SAAS=True, INTERNAL_API_TOKEN="xcash-saas-token")
     def test_available_methods_empty_saas_whitelists_keep_all_methods(self):
@@ -779,32 +717,14 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             name="Invoice SaaS Empty Whitelist Project",
             wallet=Wallet.objects.create(),
         )
-        eth_native = Crypto.objects.create(
-            name="Ethereum SaaS Empty",
-            symbol="ETHSAASEM",
-            coingecko_id="ethereum-saas-empty-methods",
-        )
-        bsc_native = Crypto.objects.create(
-            name="BNB SaaS Empty",
-            symbol="BNBSAASEM",
-            coingecko_id="bnb-saas-empty-methods",
-        )
         eth_chain = Chain.objects.create(
-            name="Ethereum SaaS Empty",
-            code="eth-saas-empty-methods",
-            type=ChainType.EVM,
-            native_coin=eth_native,
-            chain_id=9921,
-            rpc="http://eth.invalid",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         bsc_chain = Chain.objects.create(
-            name="BSC SaaS Empty",
-            code="bsc-saas-empty-methods",
-            type=ChainType.EVM,
-            native_coin=bsc_native,
-            chain_id=9922,
-            rpc="http://bsc.invalid",
+            chain=ChainName.BSC,
+            rpc="",
             active=True,
         )
         usdt = Crypto.objects.create(
@@ -844,7 +764,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
 
         methods = Invoice.available_methods(project)
 
-        self.assertEqual(set(methods[usdt.symbol]), {eth_chain.code, bsc_chain.code})
+        self.assertEqual(set(methods[usdt.symbol]), {eth_chain.chain, bsc_chain.chain})
 
 
 class InvoiceConfirmDropStatusTests(TestCase):
@@ -974,16 +894,8 @@ class InvoiceExpiredMatchTests(TestCase):
             coingecko_id="tether-expired-match",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum ExpiredMatch",
-            code="eth-expired-match",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="ETH ExpiredMatch Native",
-                symbol="ETH-EXPM",
-                coingecko_id="ethereum-expired-match",
-            ),
-            chain_id=5888,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
@@ -1005,7 +917,7 @@ class InvoiceExpiredMatchTests(TestCase):
             title="Expired match",
             currency="USDTE",
             amount=Decimal("10"),
-            methods={"USDTE": ["eth-expired-match"]},
+            methods={"USDTE": [ChainName.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         invoice.select_method(self.crypto, self.chain)
@@ -1076,16 +988,8 @@ class FallbackInvoiceExpiredTests(TestCase):
             coingecko_id="tether-fallback",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Fallback",
-            code="eth-fallback",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="ETH Fallback Native",
-                symbol="ETH-FB",
-                coingecko_id="ethereum-fallback",
-            ),
-            chain_id=6888,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
@@ -1106,7 +1010,7 @@ class FallbackInvoiceExpiredTests(TestCase):
             title="Fallback test",
             currency="USDTF",
             amount=Decimal("10"),
-            methods={"USDTF": ["eth-fallback"]},
+            methods={"USDTF": [ChainName.Ethereum]},
             # 设置过去的过期时间
             expires_at=timezone.now() - timedelta(minutes=1),
         )
@@ -1129,7 +1033,7 @@ class FallbackInvoiceExpiredTests(TestCase):
             title="Fallback confirming",
             currency="USDTF",
             amount=Decimal("10"),
-            methods={"USDTF": ["eth-fallback"]},
+            methods={"USDTF": [ChainName.Ethereum]},
             status=InvoiceStatus.CONFIRMING,
             expires_at=timezone.now() - timedelta(minutes=1),
         )
@@ -1157,16 +1061,8 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             coingecko_id="tether-atomic",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Atomic",
-            code="eth-atomic",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="ETH Atomic Native",
-                symbol="ETH-AT",
-                coingecko_id="ethereum-atomic",
-            ),
-            chain_id=7888,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
@@ -1188,7 +1084,7 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             title="Atomic test",
             currency="USDTA",
             amount=Decimal("10"),
-            methods={"USDTA": ["eth-atomic"]},
+            methods={"USDTA": [ChainName.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         invoice.select_method(self.crypto, self.chain)
@@ -1229,8 +1125,7 @@ class InvoiceAllocationRetryExhaustedTests(InvoiceTestMixin, TestCase):
             username="merchant-retry",
             project_name="RetryProject",
             crypto_symbol="USDTR",
-            chain_code="eth-retry",
-            chain_id=8999,
+            chain_name=ChainName.BSC,
         )
 
     def test_select_method_raises_when_all_slots_occupied(self):
@@ -1948,8 +1843,7 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
             username="contract-match-merchant",
             project_name="ContractMatchProject",
             crypto_symbol="USDTMAT",
-            chain_code="eth-contract-match",
-            chain_id=8805,
+            chain_name=ChainName.Polygon,
         )
         self.invoice = self.create_test_invoice(
             out_no="contract-match-order",

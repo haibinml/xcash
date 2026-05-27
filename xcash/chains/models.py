@@ -76,6 +76,13 @@ class Chain(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        with db_transaction.atomic():
+            result = super().save(*args, **kwargs)
+            self._sync_tron_usdt_watch_cursor()
+        return result
+
     @property
     def spec(self) -> ChainSpec:
         return CHAIN_SPECS[self.chain]
@@ -108,9 +115,15 @@ class Chain(models.Model):
     def native_coin(self):
         from currencies.models import Crypto  # noqa: PLC0415
 
+        # Crypto.name 与 Crypto.coingecko_id 均为 unique 字段；首次创建必须填充，
+        # 否则多链原生币会因为留空互相冲突。symbol 在 ChainSpec 中即天然唯一，
+        # 直接拿来兜底是最稳妥的做法，业务层后续 admin 仍可改写。
+        symbol = self.spec.native_coin_symbol
         crypto, _ = Crypto.objects.get_or_create(
-            symbol=self.spec.native_coin_symbol,
+            symbol=symbol,
             defaults={
+                "name": symbol,
+                "coingecko_id": symbol.lower(),
                 "decimals": self.spec.native_coin_decimals,
                 "active": True,
             },
@@ -148,19 +161,13 @@ class Chain(models.Model):
                 }
             )
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        with db_transaction.atomic():
-            result = super().save(*args, **kwargs)
-            self._sync_tron_usdt_watch_cursor()
-        return result
-
     def _sync_tron_usdt_watch_cursor(self) -> None:
         """活跃 Tron 链应在配置层持有 USDT 扫描游标，避免依赖首次 beat 扫描显式创建。"""
         if self.type != ChainType.TRON or not self.active:
             return
 
         from tron.models import TronWatchCursor  # noqa: PLC0415
+
         from currencies.models import ChainToken  # noqa: PLC0415
 
         usdt_mapping = (

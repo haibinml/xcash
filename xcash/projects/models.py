@@ -194,7 +194,7 @@ class DifferRecipientAddress(models.Model):
         choices=ChainType,
         help_text="EVM: Ethereum, BSC, Polygon, Base...<br>Tron: Tron",
     )
-    address = EvmAddressField(verbose_name=_("差额账单收款地址"))
+    address = AddressField(verbose_name=_("差额账单收款地址"))
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("创建时间"))
 
     class Meta:

@@ -6,8 +6,9 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 
+from chains.constants import ChainName
+from chains.constants import ChainType
 from chains.models import Chain
-from chains.models import ChainType
 from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import TransferType
@@ -67,7 +68,7 @@ class DepositServiceCoreTests(TestCase):
 
     def test_content_property_handles_null_customer(self):
         transfer = SimpleNamespace(
-            chain=SimpleNamespace(code="eth"),
+            chain=SimpleNamespace(chain="ethereum"),
             block=100,
             hash="0x" + "a" * 64,
             crypto=SimpleNamespace(symbol="USDT"),
@@ -86,7 +87,7 @@ class DepositServiceCoreTests(TestCase):
 
         self.assertIsNone(content["data"]["uid"])
         self.assertEqual(content["data"]["sys_no"], "DXC-test")
-        self.assertEqual(content["data"]["chain"], "eth")
+        self.assertEqual(content["data"]["chain"], "ethereum")
 
 
 class DepositCreationTests(TestCase):
@@ -246,16 +247,8 @@ class DepositNotificationTests(TestCase):
         )
         customer = Customer.objects.create(project=project, uid="customer-confirm")
         chain = Chain.objects.create(
-            name="EthereumConfirm",
-            code="eth-confirm",
-            type=ChainType.EVM,
-            native_coin=Crypto.objects.create(
-                name="Ethereum Confirm",
-                symbol="ETHC",
-                coingecko_id="ethereum-confirm",
-            ),
-            chain_id=101,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         crypto = Crypto.objects.create(
@@ -314,20 +307,12 @@ def create_deposit_context(*, native: bool = False):
         address_index=0,
         address=Web3.to_checksum_address("0x0000000000000000000000000000000000000d01"),
     )
-    native_coin = Crypto.objects.create(
-        name="Deposit Test Native",
-        symbol="DTN",
-        coingecko_id="deposit-test-native",
-    )
     chain = Chain.objects.create(
-        name="Deposit Test Chain",
-        code="deposit-test-chain",
-        type=ChainType.EVM,
-        native_coin=native_coin,
-        chain_id=818_181,
-        rpc="http://deposit-test.local",
+        chain=ChainName.Ethereum,
+        rpc="",
         active=True,
     )
+    native_coin = chain.native_coin
     crypto = native_coin
     if not native:
         crypto = Crypto.objects.create(

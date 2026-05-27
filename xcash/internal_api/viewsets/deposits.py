@@ -9,9 +9,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
+from chains.constants import ChainType
 from chains.constants import EVM_CHAIN_NAMES
 from chains.models import Chain
-from chains.models import ChainType
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from deposits.models import Deposit

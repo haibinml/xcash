@@ -11,7 +11,6 @@ import pytest
 from django.core import checks
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
-from django.db import transaction
 from django.test import SimpleTestCase
 from django.test import TestCase
 from django.test import override_settings
@@ -19,11 +18,12 @@ from django.utils import timezone
 from web3 import Web3
 from web3.exceptions import ExtraDataLengthError
 
+from chains.constants import ChainName
+from chains.constants import ChainType
 from chains.models import Address
 from chains.models import AddressChainState
 from chains.models import AddressUsage
 from chains.models import Chain
-from chains.models import ChainType
 from chains.models import ConfirmMode
 from chains.models import Transfer
 from chains.models import TransferStatus
@@ -50,94 +50,11 @@ from currencies.models import Crypto
 from evm.choices import TxKind
 
 
-class ChainPoaDetectionTests(SimpleTestCase):
-    @patch("chains.models.Web3")
-    def test_detect_poa_treats_extradata_length_error_as_poa(self, web3_mock):
-        # BSC 等 POA 链会在未注入 middleware 时先被 web3.py 校验拦截；
-        # 这个异常本身就是 POA 信号，不能被兜底成 False。
-        chain = Chain(
-            name="BSC POA Detect",
-            code="bsc-poa-detect",
-            type=ChainType.EVM,
-            rpc="http://bsc.local",
-            is_poa=False,
-        )
-        web3_mock.return_value.eth.get_block.side_effect = ExtraDataLengthError(
-            "poa extraData too long"
-        )
-
-        detect_poa = getattr(
-            Chain._detect_poa,
-            "real_implementation",
-            Chain._detect_poa,
-        )
-        self.assertTrue(detect_poa(chain))
-
-
-class ChainTypeConstraintTests(TestCase):
-    def test_non_evm_chain_type_is_unique_but_evm_can_have_multiple_chains(self):
-        native = Crypto.objects.create(
-            name="Chain Type Constraint Native",
-            symbol="CTCN",
-            coingecko_id="chain-type-constraint-native",
-        )
-        Chain.objects.bulk_create(
-            [
-                Chain(
-                    name="Chain Type Constraint ETH",
-                    code="ctc-eth",
-                    type=ChainType.EVM,
-                    native_coin=native,
-                    chain_id=940001,
-                ),
-                Chain(
-                    name="Chain Type Constraint BSC",
-                    code="ctc-bsc",
-                    type=ChainType.EVM,
-                    native_coin=native,
-                    chain_id=940002,
-                ),
-            ]
-        )
-
-        Chain.objects.bulk_create(
-            [
-                Chain(
-                    name="Chain Type Constraint Tron",
-                    code="ctc-tron",
-                    type=ChainType.TRON,
-                    native_coin=native,
-                )
-            ]
-        )
-
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            Chain.objects.bulk_create(
-                [
-                    Chain(
-                        name="Chain Type Constraint Tron Duplicate",
-                        code="ctc-tron-duplicate",
-                        type=ChainType.TRON,
-                        native_coin=native,
-                    )
-                ]
-            )
-
-
 class TransferMatchingTests(TestCase):
     def test_addresses_equal_normalizes_evm_addresses(self):
-        native = Crypto.objects.create(
-            name="Transfer Match Native",
-            symbol="TMN",
-            coingecko_id="transfer-match-native",
-        )
         chain = Chain.objects.create(
-            name="Transfer Match EVM",
-            code="transfer-match-evm",
-            type=ChainType.EVM,
-            native_coin=native,
-            chain_id=930001,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         checksum = Web3.to_checksum_address(
@@ -154,12 +71,8 @@ class TransferMatchingTests(TestCase):
             decimals=6,
         )
         chain = Chain.objects.create(
-            name="Transfer Match Chain",
-            code="transfer-match-chain",
-            type=ChainType.EVM,
-            native_coin=native,
-            chain_id=930002,
-            rpc="http://localhost:8545",
+            chain=ChainName.BSC,
+            rpc="",
             active=True,
         )
         from_address = Web3.to_checksum_address(
@@ -212,12 +125,8 @@ class TransferMatchingTests(TestCase):
             decimals=6,
         )
         chain = Chain.objects.create(
-            name="Raw Amount Chain",
-            code="raw-amount-chain",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=930003,
-            rpc="http://localhost:8545",
+            chain=ChainName.Polygon,
+            rpc="",
             active=True,
         )
 
@@ -268,19 +177,9 @@ class TransferMatchingTests(TestCase):
 
 class ChainPoaRetryTests(TestCase):
     def setUp(self):
-        self.native = Crypto.objects.create(
-            name="BNB POA Retry",
-            symbol="BNB-POA-RETRY",
-            coingecko_id="binancecoin-poa-retry",
-        )
         self.chain = Chain.objects.create(
-            name="BSC POA Retry",
-            code="bsc-poa-retry",
-            type=ChainType.EVM,
-            native_coin=self.native,
-            chain_id=56_901,
+            chain=ChainName.BSC,
             rpc="",
-            is_poa=False,
             active=True,
         )
         Chain.objects.filter(pk=self.chain.pk).update(rpc="http://bsc.local")
@@ -311,18 +210,9 @@ class ChainPoaRetryTests(TestCase):
 class TxTaskValidationTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.crypto = Crypto.objects.create(
-            name="Ethereum Onchain Task Validation",
-            symbol="ETH-OTV",
-            coingecko_id="ethereum-onchain-task-validation",
-        )
         self.chain = Chain.objects.create(
-            name="Ethereum Onchain Task Validation",
-            code="eth-otv",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=10001,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.addr = Address.objects.create(
@@ -361,18 +251,9 @@ class WalletBip44AccountMapTests(TestCase):
 class TxHashModelTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.crypto = Crypto.objects.create(
-            name="Ethereum TxHash",
-            symbol="ETH-TXH",
-            coingecko_id="ethereum-txhash",
-        )
         self.chain = Chain.objects.create(
-            name="Ethereum TxHash",
-            code="eth-txh",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=10002,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.addr = Address.objects.create(
@@ -425,18 +306,9 @@ class TxHashModelTests(TestCase):
             )
 
     def test_tx_hash_chain_must_match_tx_task_chain(self):
-        other_crypto = Crypto.objects.create(
-            name="Ethereum TxHash Other",
-            symbol="ETH-TXHO",
-            coingecko_id="ethereum-txhash-other",
-        )
         other_chain = Chain.objects.create(
-            name="Ethereum TxHash Other",
-            code="eth-txho",
-            type=ChainType.EVM,
-            native_coin=other_crypto,
-            chain_id=10003,
-            rpc="http://localhost:8545",
+            chain=ChainName.BSC,
+            rpc="",
             active=True,
         )
 
@@ -454,18 +326,9 @@ class TxHashModelTests(TestCase):
 class TxTaskTxHashHistoryTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.crypto = Crypto.objects.create(
-            name="Ethereum TxHash History",
-            symbol="ETH-TXHH",
-            coingecko_id="ethereum-txhash-history",
-        )
         self.chain = Chain.objects.create(
-            name="Ethereum TxHash History",
-            code="eth-txhh",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=10004,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.addr = Address.objects.create(
@@ -665,18 +528,9 @@ class AddressIdentityTests(TestCase):
 
 class AddressChainStateAcquireTests(TestCase):
     def setUp(self):
-        self.native = Crypto.objects.create(
-            name="Ethereum AddrChain",
-            symbol="ETHACS",
-            coingecko_id="ethereum-acs",
-        )
         self.chain = Chain.objects.create(
-            code="eth-acs",
-            name="Ethereum AddrChain",
-            type=ChainType.EVM,
-            chain_id=998,
-            rpc="http://localhost:8545",
-            native_coin=self.native,
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.wallet = Wallet.objects.create()
@@ -738,14 +592,9 @@ class TransferConfirmDispatchTests(TestCase):
             coingecko_id="ethereum-confirm-dispatch",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Confirm Dispatch",
-            code="eth-confirm-dispatch",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=101,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
-            confirm_block_count=12,
             latest_block_number=100,
         )
         self.addr = Address.objects.create(
@@ -848,7 +697,6 @@ class TransferConfirmDispatchTests(TestCase):
         # FULL 确认调度必须以重放观测到的新 block 为准，不能继续使用旧 transfer.block 提前确认。
         Chain.objects.filter(pk=self.chain.pk).update(
             latest_block_number=105,
-            confirm_block_count=10,
         )
         self.chain.refresh_from_db()
         tx_hash = "0x" + "8" * 64
@@ -912,7 +760,6 @@ class TransferConfirmDispatchTests(TestCase):
         # 已知的新打包高度不能被滞后的旧观测覆盖，否则 FULL 确认会按旧 block 提前放行。
         Chain.objects.filter(pk=self.chain.pk).update(
             latest_block_number=105,
-            confirm_block_count=10,
         )
         self.chain.refresh_from_db()
         tx_hash = "0x" + "9" * 64
@@ -1506,16 +1353,8 @@ class UpdateLatestBlockTaskConfigTests(TestCase):
     ):
         from chains.tasks import update_the_latest_block
 
-        trx = Crypto.objects.create(
-            name="Tron Native Height Guard",
-            symbol="TRXH",
-            coingecko_id="tron-native-height-guard",
-        )
         chain = Chain.objects.create(
-            name="Tron Height Guard",
-            code="tron-height-guard",
-            type=ChainType.TRON,
-            native_coin=trx,
+            chain=ChainName.Tron,
             rpc="http://tron.invalid",
             active=True,
             latest_block_number=456,
@@ -1540,12 +1379,8 @@ class TransferServiceCreateObservedTests(TestCase):
             coingecko_id="ether-ot",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum OT",
-            code="eth-ot",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=201,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.payload = ObservedTransferPayload(
@@ -1650,18 +1485,9 @@ class TxTaskTransitionTests(TestCase):
 
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.crypto = Crypto.objects.create(
-            name="Ether Trans",
-            symbol="ETH-TR",
-            coingecko_id="ether-trans",
-        )
         self.chain = Chain.objects.create(
-            name="Ethereum Trans",
-            code="eth-trans",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=301,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.addr = Address.objects.create(
@@ -1842,14 +1668,9 @@ class BlockNumberUpdatedCompensationTests(TestCase):
             coingecko_id="ether-bn",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum BN",
-            code="eth-bn",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=401,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
-            confirm_block_count=6,
             latest_block_number=200,
         )
         self.wallet = Wallet.objects.create()
@@ -1937,21 +1758,12 @@ class BlockNumberUpdatedCompensationTests(TestCase):
 
 @pytest.mark.django_db
 def test_address_send_crypto_schedules_native_transfer_intent():
-    native = Crypto.objects.create(
-        name="Task12 Native",
-        symbol="T12N",
-        coingecko_id="task12-native",
-        decimals=18,
-    )
     chain = Chain.objects.create(
-        code="task12-native",
-        chain_id=912_001,
-        name="Task12 Native Chain",
-        type=ChainType.EVM,
-        native_coin=native,
+        chain=ChainName.Ethereum,
     )
     chain.base_transfer_gas = 21_000
     chain.erc20_transfer_gas = 60_000
+    native = chain.native_coin
     address = Address.objects.create(
         wallet=Wallet.objects.create(),
         chain_type=ChainType.EVM,
@@ -1988,11 +1800,6 @@ def test_address_send_crypto_schedules_native_transfer_intent():
 
 @pytest.mark.django_db
 def test_address_send_crypto_schedules_erc20_transfer_intent():
-    native = Crypto.objects.create(
-        name="Task12 ETH",
-        symbol="T12ETH",
-        coingecko_id="task12-eth",
-    )
     token = Crypto.objects.create(
         name="Task12 BSC Wrapped",
         symbol="BSC",
@@ -2000,11 +1807,7 @@ def test_address_send_crypto_schedules_erc20_transfer_intent():
         decimals=6,
     )
     chain = Chain.objects.create(
-        code="task12-erc20",
-        chain_id=912_002,
-        name="Task12 ERC20 Chain",
-        type=ChainType.EVM,
-        native_coin=native,
+        chain=ChainName.Ethereum,
     )
     chain.base_transfer_gas = 21_000
     chain.erc20_transfer_gas = 65_000

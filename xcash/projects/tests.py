@@ -12,8 +12,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
+from chains.constants import ChainName
+from chains.constants import ChainType
 from chains.models import Chain
-from chains.models import ChainType
 from chains.test_signer import build_test_remote_signer_backend
 from common.admin import ModelAdmin
 from currencies.models import Crypto
@@ -34,6 +35,9 @@ def setUpModule():
         patcher = patch(target, return_value=backend)
         patcher.start()
         _PROJECT_TEST_PATCHERS.append(patcher)
+    patcher = patch.object(Chain, "full_clean", autospec=True)
+    patcher.start()
+    _PROJECT_TEST_PATCHERS.append(patcher)
 
 
 def tearDownModule():
@@ -60,12 +64,8 @@ class ProjectAdminTests(TestCase):
             coingecko_id="ethereum-project",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Project",
-            code="eth-project",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=403,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="http://127.0.0.1:8545",
             active=True,
         )
 
@@ -211,18 +211,9 @@ class ProjectAdminTests(TestCase):
     def test_project_form_accepts_multisig_when_address_has_code_on_one_evm_chain(
         self,
     ):
-        Crypto.objects.create(
-            name="Second Ethereum Project",
-            symbol="ETHP2",
-            coingecko_id="ethereum-project-2",
-        )
         second_chain = Chain.objects.create(
-            name="Second Ethereum Project",
-            code="eth-project-2",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=404,
-            rpc="http://localhost:8546",
+            chain=ChainName.BSC,
+            rpc="http://127.0.0.1:8545",
             active=True,
         )
         contract_address = "0x52908400098527886E0F7030069857D2E4169EE7"

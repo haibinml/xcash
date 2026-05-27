@@ -16,6 +16,7 @@ from web3 import Web3
 
 from chains.models import Address
 from chains.models import AddressUsage
+from chains.constants import ChainName
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import Transfer
@@ -55,12 +56,8 @@ class WithdrawalTxTaskTests(TestCase):
             coingecko_id="ethereum-withdrawal-payload",
         )
         chain = Chain.objects.create(
-            name="Ethereum Payload",
-            code="eth-payload",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=21,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -78,7 +75,7 @@ class WithdrawalTxTaskTests(TestCase):
         self.assertEqual(payload["type"], "withdrawal")
         self.assertEqual(payload["data"]["sys_no"], withdrawal.sys_no)
         self.assertEqual(payload["data"]["out_no"], withdrawal.out_no)
-        self.assertEqual(payload["data"]["chain"], chain.code)
+        self.assertEqual(payload["data"]["chain"], chain.chain)
         self.assertFalse(payload["data"]["confirmed"])
         self.assertNotIn("uid", payload["data"])
 
@@ -98,12 +95,8 @@ class WithdrawalTxTaskTests(TestCase):
             coingecko_id="ethereum",
         )
         chain = Chain.objects.create(
-            name="Ethereum",
-            code="eth",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=1,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         addr = Address.objects.create(
@@ -181,12 +174,8 @@ class WithdrawalTxTaskTests(TestCase):
             coingecko_id="ethereum-withdrawal-complete",
         )
         chain = Chain.objects.create(
-            name="Ethereum W",
-            code="eth-w",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=11,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         transfer = Transfer.objects.create(
@@ -235,12 +224,8 @@ class WithdrawalTxTaskTests(TestCase):
             coingecko_id="ethereum-withdrawal-drop",
         )
         chain = Chain.objects.create(
-            name="Ethereum D",
-            code="eth-d",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=12,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         transfer = Transfer.objects.create(
@@ -449,11 +434,8 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
             decimals=6,
         )
         chain = Chain.objects.create(
-            name="Tron Withdrawal",
-            code="tron-withdrawal",
-            type=ChainType.TRON,
-            native_coin=trx,
-            rpc="http://tron.invalid",
+            chain=ChainName.Tron,
+            rpc="",
             active=True,
         )
         request = APIRequestFactory().post(
@@ -501,7 +483,7 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
                     "to": "TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT",
                     "uid": None,
                     "crypto": usdt.symbol,
-                    "chain": chain.code,
+                    "chain": chain.chain,
                     "amount": Decimal("1"),
                 }
             )
@@ -529,12 +511,8 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
             decimals=6,
         )
         chain = Chain.objects.create(
-            name="Precision Guard Chain",
-            code="precision-guard-chain",
-            type=ChainType.EVM,
-            native_coin=usdt,
-            chain_id=804,
-            rpc="http://eth.invalid",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         request = APIRequestFactory().post(
@@ -582,7 +560,7 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
                     "to": "0x0000000000000000000000000000000000000005",
                     "uid": None,
                     "crypto": usdt.symbol,
-                    "chain": chain.code,
+                    "chain": chain.chain,
                     "amount": Decimal("0.01480216"),
                 }
             )
@@ -608,12 +586,8 @@ class WithdrawalPolicyTests(TestCase):
             coingecko_id="ethereum-policy",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Policy",
-            code="eth-policy",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=302,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
 
@@ -709,12 +683,8 @@ class WithdrawalViewSetTests(TestCase):
             coingecko_id="ethereum-duplicate-withdraw",
         )
         chain = Chain.objects.create(
-            name="Ethereum Duplicate Withdraw",
-            code="eth-duplicate-withdraw",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=301,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         request = APIRequestFactory().post(
@@ -730,7 +700,7 @@ class WithdrawalViewSetTests(TestCase):
                 "to": "0x0000000000000000000000000000000000000011",
                 "uid": None,
                 "crypto": crypto.symbol,
-                "chain": chain.code,
+                "chain": chain.chain,
                 "amount": Decimal("1"),
             },
             errors={},
@@ -776,12 +746,8 @@ class WithdrawalViewSetTests(TestCase):
             coingecko_id="ethereum-reviewing",
         )
         chain = Chain.objects.create(
-            name="Ethereum Reviewing",
-            code="eth-reviewing",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=303,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         request = APIRequestFactory().post(
@@ -797,7 +763,7 @@ class WithdrawalViewSetTests(TestCase):
                 "to": "0x0000000000000000000000000000000000000011",
                 "uid": None,
                 "crypto": crypto.symbol,
-                "chain": chain.code,
+                "chain": chain.chain,
                 "amount": Decimal("1"),
             },
             errors={},
@@ -852,12 +818,8 @@ class WithdrawalViewSetTests(TestCase):
             coingecko_id="ethereum-exempt-review",
         )
         chain = Chain.objects.create(
-            name="Ethereum Exempt Review",
-            code="eth-exempt-review",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=308,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         request = APIRequestFactory().post(
@@ -873,7 +835,7 @@ class WithdrawalViewSetTests(TestCase):
                 "to": "0x0000000000000000000000000000000000000011",
                 "uid": None,
                 "crypto": crypto.symbol,
-                "chain": chain.code,
+                "chain": chain.chain,
                 "amount": Decimal("1"),
             },
             errors={},
@@ -928,12 +890,8 @@ class WithdrawalViewSetTests(TestCase):
             coingecko_id="ethereum-equal-review",
         )
         chain = Chain.objects.create(
-            name="Ethereum Equal Review",
-            code="eth-equal-review",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=309,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         request = APIRequestFactory().post(
@@ -949,7 +907,7 @@ class WithdrawalViewSetTests(TestCase):
                 "to": "0x0000000000000000000000000000000000000011",
                 "uid": None,
                 "crypto": crypto.symbol,
-                "chain": chain.code,
+                "chain": chain.chain,
                 "amount": Decimal("1"),
             },
             errors={},
@@ -1096,12 +1054,8 @@ class WithdrawalReviewTests(TestCase):
             coingecko_id="ethereum-approved",
         )
         chain = Chain.objects.create(
-            name="Ethereum Approved",
-            code="eth-approved",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=304,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -1147,12 +1101,8 @@ class WithdrawalReviewTests(TestCase):
             coingecko_id="ethereum-outsider-review",
         )
         chain = Chain.objects.create(
-            name="Ethereum Outsider Review",
-            code="eth-outsider-review",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=305,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -1187,12 +1137,8 @@ class WithdrawalReviewTests(TestCase):
             coingecko_id="ethereum-self-review",
         )
         chain = Chain.objects.create(
-            name="Ethereum Self Review",
-            code="eth-self-review",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=306,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -1241,12 +1187,8 @@ class WithdrawalReviewTests(TestCase):
             coingecko_id="ethereum-audit",
         )
         chain = Chain.objects.create(
-            name="Ethereum Audit",
-            code="eth-audit",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=307,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -1302,12 +1244,8 @@ class WithdrawalReviewTests(TestCase):
             coingecko_id="ethereum-no-otp",
         )
         chain = Chain.objects.create(
-            name="Ethereum No OTP",
-            code="eth-no-otp",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=308,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -1341,12 +1279,8 @@ class WithdrawalReviewTests(TestCase):
             coingecko_id="ethereum-expired-otp",
         )
         chain = Chain.objects.create(
-            name="Ethereum Expired OTP",
-            code="eth-expired-otp",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=309,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         withdrawal = Withdrawal.objects.create(
@@ -1404,17 +1338,13 @@ class WithdrawalRemoteSignerFlowTests(TestCase):
             )
         crypto = Crypto.objects.create(
             name="Ethereum Remote Withdrawal",
-            symbol="ETHRW",
+            symbol="ETH",
             prices={"USD": "1"},
             coingecko_id="ethereum-remote-withdrawal",
         )
         chain = Chain.objects.create(
-            name="Ethereum Remote Withdrawal",
-            code="eth-remote-withdrawal",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=403,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         chain.__dict__["w3"] = SimpleNamespace(eth=SimpleNamespace(gas_price=9))
@@ -1458,12 +1388,8 @@ class WithdrawalRejectTests(TestCase):
             coingecko_id="ethereum-reject",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Reject",
-            code="eth-reject",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=401,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
 
@@ -1613,12 +1539,8 @@ class WithdrawalStateTransitionTests(TestCase):
             coingecko_id="ethereum-state",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum State",
-            code="eth-state",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=402,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.wallet = wallet
@@ -1941,21 +1863,13 @@ class WithdrawalTryMatchTests(TestCase):
             coingecko_id="ethereum-match",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Match",
-            code="eth-match",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=403,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.other_chain = Chain.objects.create(
-            name="BSC Match",
-            code="bsc-match",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=56,
-            rpc="http://localhost:8545",
+            chain=ChainName.BSC,
+            rpc="",
             active=True,
         )
         self.addr = Address.objects.create(
@@ -2249,12 +2163,8 @@ class WithdrawalBalanceAndPolicyEdgeCaseTests(TestCase):
             coingecko_id="ethereum-edge",
         )
         chain = Chain.objects.create(
-            name="Ethereum Edge",
-            code="eth-edge",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=404,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         # 已有 70 USD 的提币
@@ -2297,12 +2207,8 @@ class WithdrawalBalanceAndPolicyEdgeCaseTests(TestCase):
             coingecko_id="ethereum-over",
         )
         chain = Chain.objects.create(
-            name="Ethereum Over",
-            code="eth-over",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=405,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         Withdrawal.objects.create(
@@ -2350,12 +2256,8 @@ class WithdrawalBalanceAndPolicyEdgeCaseTests(TestCase):
             coingecko_id="ethereum-single-edge",
         )
         chain = Chain.objects.create(
-            name="Ethereum SingleEdge",
-            code="eth-single-edge",
-            type=ChainType.EVM,
-            native_coin=crypto,
-            chain_id=406,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
 
@@ -2475,12 +2377,8 @@ class WithdrawalCreatePermissionCheckTests(TestCase):
             coingecko_id="ethereum-permcheck",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum PermCheck",
-            code="eth-permcheck",
-            type=ChainType.EVM,
-            native_coin=self.crypto,
-            chain_id=9901,
-            rpc="http://localhost:8545",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
 
@@ -2500,7 +2398,7 @@ class WithdrawalCreatePermissionCheckTests(TestCase):
                 "to": "0x0000000000000000000000000000000000000099",
                 "uid": None,
                 "crypto": self.crypto.symbol,
-                "chain": self.chain.code,
+                "chain": self.chain.chain,
                 "amount": Decimal("1"),
             },
             errors={},
@@ -2538,7 +2436,7 @@ class WithdrawalCreatePermissionCheckTests(TestCase):
         mock_check.assert_any_call(
             appid=self.project.appid,
             action="withdrawal",
-            chain_code=self.chain.code,
+            chain_code=self.chain.chain,
             crypto_symbol=self.crypto.symbol,
         )
         self.assertEqual(mock_check.call_count, 2)

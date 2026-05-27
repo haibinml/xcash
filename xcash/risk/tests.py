@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -21,12 +22,12 @@ from risk.models import RiskSkipReason
 from risk.models import RiskSource
 from risk.service import RiskMarkingService
 
-from chains.models import Address
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TransferType
 from chains.models import Transfer
 from chains.models import Wallet
+from chains.constants import ChainName
 from core.models import SystemSettings
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -50,12 +51,8 @@ class RiskTestMixin:
             coingecko_id="risk-eth",
         )
         self.chain = Chain.objects.create(
-            name="Ethereum Mainnet",
-            code="ethereum-mainnet",
-            type=ChainType.EVM,
-            native_coin=self.native,
-            chain_id=1,
-            rpc="http://eth.local",
+            chain=ChainName.Ethereum,
+            rpc="",
             active=True,
         )
         self.wallet = Wallet.objects.create()
@@ -383,9 +380,9 @@ class RiskChainMappingTests(SimpleTestCase):
         for chain_key, expected in cases.items():
             with self.subTest(chain_key=chain_key):
                 if isinstance(chain_key, int):
-                    chain = Chain(type=ChainType.EVM, chain_id=chain_key)
+                    chain = SimpleNamespace(type=ChainType.EVM, chain_id=chain_key, chain="mock")
                 else:
-                    chain = Chain(type=chain_key)
+                    chain = SimpleNamespace(type=chain_key, chain="mock")
                 self.assertEqual(
                     RiskMarkingService._quicknode_misttrack_chain(chain), expected
                 )
@@ -420,7 +417,7 @@ class RiskChainMappingTests(SimpleTestCase):
 
         for (chain_id, symbol), expected in cases.items():
             with self.subTest(chain_id=chain_id, symbol=symbol):
-                chain = Chain(type=ChainType.EVM, chain_id=chain_id)
+                chain = SimpleNamespace(type=ChainType.EVM, chain_id=chain_id, chain="mock")
                 crypto = Crypto(symbol=symbol)
                 self.assertEqual(
                     RiskMarkingService._misttrack_openapi_coin(
@@ -430,7 +427,7 @@ class RiskChainMappingTests(SimpleTestCase):
                 )
 
     def test_tron_usdt_maps_to_trc20_coin_code(self):
-        chain = Chain(type=ChainType.TRON)
+        chain = SimpleNamespace(type=ChainType.TRON, chain="mock")
         crypto = Crypto(symbol="USDT")
 
         self.assertEqual(
@@ -651,9 +648,8 @@ class RiskMarkingServiceTests(RiskTestMixin, TestCase):
     @patch("risk.service.QuicknodeMistTrackClient.address_risk_score")
     def test_quicknode_unsupported_chain_is_skipped_without_external_query(self, score):
         invoice = self.make_invoice(worth=Decimal("500"))
-        self.chain.chain_id = 137
-        self.chain.code = "polygon-mainnet"
-        self.chain.save(update_fields=["chain_id", "code"])
+        self.chain.chain = ChainName.Polygon
+        self.chain.save(update_fields=["chain"])
 
         RiskMarkingService.mark_invoice(invoice.pk)
 
@@ -671,9 +667,8 @@ class RiskMarkingServiceTests(RiskTestMixin, TestCase):
         self.system_settings.misttrack_openapi_api_key = "openapi-secret"
         self.system_settings.save(update_fields=["misttrack_openapi_api_key"])
         # 切到 OpenAPI 也未映射的某条 EVM 链
-        self.chain.chain_id = 999999
-        self.chain.code = "exotic-chain"
-        self.chain.save(update_fields=["chain_id", "code"])
+        self.chain.chain = ChainName.Scroll
+        self.chain.save(update_fields=["chain"])
 
         RiskMarkingService.mark_invoice(invoice.pk)
 
@@ -765,7 +760,7 @@ class RiskBusinessDispatchTests(RiskTestMixin, TestCase):
         deposit = self.make_deposit(worth=Decimal("500"))
         RiskMarkingService.write_cache(
             source=RiskSource.QUICKNODE_MISTTRACK,
-            chain=self.chain.code,
+            chain=self.chain.chain,
             address=self.transfer.from_address,
             result={
                 "risk_level": RiskLevel.MODERATE,

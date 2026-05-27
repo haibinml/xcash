@@ -21,5 +21,5 @@ class InternalChainViewSet(ListModelMixin, GenericViewSet):
     authentication_classes = [InternalTokenAuthentication]
     permission_classes = [IsAuthenticated]
     serializer_class = InternalChainSerializer
-    queryset = Chain.objects.filter(active=True).select_related("native_coin")
+    queryset = Chain.objects.filter(active=True)
     pagination_class = None

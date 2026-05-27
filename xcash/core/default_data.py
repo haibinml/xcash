@@ -6,8 +6,9 @@ from django.db import transaction
 from tron.codec import TronAddressCodec
 from web3 import Web3
 
+from chains.constants import ChainName
+from chains.constants import ChainType
 from chains.models import Chain
-from chains.models import ChainType
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -36,116 +37,96 @@ LOCAL_EVM_TOKEN_MAPPINGS = (
 
 PRODUCTION_MAINNET_CHAINS = (
     {
-        "code": "ethereum-mainnet",
-        "name": "Ethereum",
-        "type": ChainType.EVM,
+        "chain": ChainName.Ethereum,
         "native_symbol": "ETH",
-        "chain_id": 1,
-        "is_poa": False,
     },
     {
-        "code": "bsc-mainnet",
-        "name": "BSC",
-        "type": ChainType.EVM,
+        "chain": ChainName.BSC,
         "native_symbol": "BNB",
-        "chain_id": 56,
-        "is_poa": True,
     },
     {
-        "code": "polygon-mainnet",
-        "name": "Polygon",
-        "type": ChainType.EVM,
+        "chain": ChainName.Polygon,
         "native_symbol": "POL",
-        "chain_id": 137,
-        "is_poa": True,
     },
     {
-        "code": "base-mainnet",
-        "name": "Base",
-        "type": ChainType.EVM,
+        "chain": ChainName.Base,
         "native_symbol": "ETH",
-        "chain_id": 8453,
-        "is_poa": False,
     },
     {
-        "code": "tron-mainnet",
-        "name": "Tron",
-        "type": ChainType.TRON,
+        "chain": ChainName.Tron,
         "native_symbol": "TRX",
-        "chain_id": None,
-        "is_poa": None,
     },
 )
 
 PRODUCTION_MAINNET_TOKEN_MAPPINGS = (
     {
-        "chain_code": "ethereum-mainnet",
+        "chain_name": ChainName.Ethereum,
         "crypto_symbol": "USDC",
         "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         "decimals": 6,
     },
     {
-        "chain_code": "ethereum-mainnet",
+        "chain_name": ChainName.Ethereum,
         "crypto_symbol": "USDT",
         "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         "decimals": 6,
     },
     {
-        "chain_code": "ethereum-mainnet",
+        "chain_name": ChainName.Ethereum,
         "crypto_symbol": "DAI",
         "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
         "decimals": 18,
     },
     {
-        "chain_code": "bsc-mainnet",
+        "chain_name": ChainName.BSC,
         "crypto_symbol": "USDC",
         "address": "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
         "decimals": 18,
     },
     {
-        "chain_code": "bsc-mainnet",
+        "chain_name": ChainName.BSC,
         "crypto_symbol": "USDT",
         "address": "0x55d398326f99059fF775485246999027B3197955",
         "decimals": 18,
     },
     {
-        "chain_code": "bsc-mainnet",
+        "chain_name": ChainName.BSC,
         "crypto_symbol": "DAI",
         "address": "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3",
         "decimals": 18,
     },
     {
-        "chain_code": "polygon-mainnet",
+        "chain_name": ChainName.Polygon,
         "crypto_symbol": "USDC",
         "address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
         "decimals": 6,
     },
     {
-        "chain_code": "polygon-mainnet",
+        "chain_name": ChainName.Polygon,
         "crypto_symbol": "USDT",
         "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
         "decimals": 6,
     },
     {
-        "chain_code": "polygon-mainnet",
+        "chain_name": ChainName.Polygon,
         "crypto_symbol": "DAI",
         "address": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
         "decimals": 18,
     },
     {
-        "chain_code": "base-mainnet",
+        "chain_name": ChainName.Base,
         "crypto_symbol": "USDC",
         "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "decimals": 6,
     },
     {
-        "chain_code": "base-mainnet",
+        "chain_name": ChainName.Base,
         "crypto_symbol": "USDT",
         "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
         "decimals": 6,
     },
     {
-        "chain_code": "tron-mainnet",
+        "chain_name": ChainName.Tron,
         "crypto_symbol": "USDT",
         "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
         "decimals": 6,
@@ -218,10 +199,10 @@ def ensure_production_currencies(*, using: str = "default", stdout=None) -> None
 
 
 def ensure_chain_native_mapping(
-    *, using: str = "default", chain_code: str, crypto_symbol: str
+    *, using: str = "default", chain_name: str, crypto_symbol: str
 ) -> None:
     """为链原生币补齐 ChainToken 映射，保持余额与支持判断可用。"""
-    chain_obj = Chain.objects.using(using).get(code=chain_code)
+    chain_obj = Chain.objects.using(using).get(chain=chain_name)
     crypto_obj = Crypto.objects.using(using).get(symbol=crypto_symbol)
     ChainToken.objects.using(using).get_or_create(
         crypto=crypto_obj,
@@ -233,13 +214,13 @@ def ensure_chain_native_mapping(
 def ensure_chain_token_mapping(
     *,
     using: str = "default",
-    chain_code: str,
+    chain_name: str,
     crypto_symbol: str,
     address: str,
     decimals: int | None = None,
 ) -> None:
     """为链上 ERC20/同类合约资产补齐 ChainToken 映射。"""
-    chain_obj = Chain.objects.using(using).get(code=chain_code)
+    chain_obj = Chain.objects.using(using).get(chain=chain_name)
     normalized_address = address.strip()
     if not normalized_address:
         return
@@ -248,7 +229,7 @@ def ensure_chain_token_mapping(
     else:
         if not Web3.is_address(normalized_address):
             raise ValueError(
-                f"{chain_code} 的 {crypto_symbol} 合约地址非法: {normalized_address}"
+                f"{chain_name} 的 {crypto_symbol} 合约地址非法: {normalized_address}"
             )
         normalized_address = Web3.to_checksum_address(normalized_address)
 
@@ -266,7 +247,7 @@ def ensure_chain_token_mapping(
 def ensure_default_evm_token_mappings(
     *,
     using: str = "default",
-    chain_code: str,
+    chain_name: str,
     skip_symbols: set[str] | None = None,
     stdout=None,
 ) -> None:
@@ -282,7 +263,7 @@ def ensure_default_evm_token_mappings(
             continue
         ensure_chain_token_mapping(
             using=using,
-            chain_code=chain_code,
+            chain_name=chain_name,
             crypto_symbol=token_config["crypto_symbol"],
             address=address,
         )
@@ -290,7 +271,7 @@ def ensure_default_evm_token_mappings(
 
     if stdout is not None and created_symbols:
         joined_symbols = ", ".join(created_symbols)
-        stdout.write(f"✅ {chain_code} ERC20 映射初始化完成: {joined_symbols}")
+        stdout.write(f"✅ {chain_name} ERC20 映射初始化完成: {joined_symbols}")
 
 
 def _build_local_evm_web3(*, rpc: str) -> Web3:
@@ -333,7 +314,7 @@ def _deploy_local_evm_erc20_contract(*, w3: Web3) -> str:
 def ensure_local_evm_usdt_contract_address(
     *,
     using: str = "default",
-    chain_code: str,
+    chain_name: str,
     rpc: str,
 ) -> str:
     """确保本地 EVM 链存在可用的 USDT 合约地址。
@@ -361,7 +342,7 @@ def ensure_local_evm_usdt_contract_address(
 
     existing_address = (
         ChainToken.objects.using(using)
-        .filter(chain__code=chain_code, crypto__symbol="USDT")
+        .filter(chain__chain=chain_name, crypto__symbol="USDT")
         .values_list("address", flat=True)
         .first()
     )
@@ -386,25 +367,19 @@ def ensure_public_chains(*, using: str = "default", stdout=None) -> None:
     chain_manager = Chain.objects.using(using)
 
     for chain_config in PRODUCTION_MAINNET_CHAINS:
-        native_coin = Crypto.objects.using(using).get(
-            symbol=chain_config["native_symbol"]
-        )
         chain_manager.get_or_create(
-            code=chain_config["code"],
+            chain=chain_config["chain"],
             defaults={
-                "name": chain_config["name"],
-                "type": chain_config["type"],
-                "native_coin": native_coin,
-                "chain_id": chain_config["chain_id"],
-                "is_poa": chain_config["is_poa"],
-                # 骨架初始化：RPC 留空、未激活，由管理员补完 RPC 后手动 active=True。
                 "rpc": "",
                 "active": False,
             },
         )
+        # 调用 chain.native_coin 触发 Crypto get_or_create，确保原生币记录落库
+        chain_obj = chain_manager.get(chain=chain_config["chain"])
+        chain_obj.native_coin
         ensure_chain_native_mapping(
             using=using,
-            chain_code=chain_config["code"],
+            chain_name=chain_config["chain"],
             crypto_symbol=chain_config["native_symbol"],
         )
     for token_mapping in PRODUCTION_MAINNET_TOKEN_MAPPINGS:
@@ -417,46 +392,36 @@ def ensure_public_chains(*, using: str = "default", stdout=None) -> None:
 def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
     """初始化本地联调链配置，供本地 Ethereum 端到端验证使用。"""
     chain_manager = Chain.objects.using(using)
-    eth = Crypto.objects.using(using).get(symbol="ETH")
-    local_evm_chain_code = "ethereum-local"
     local_evm_rpc = "http://127.0.0.1:8545"
     local_usdt_address = ensure_local_evm_usdt_contract_address(
         using=using,
-        chain_code=local_evm_chain_code,
+        chain_name=ChainName.Anvil,
         rpc=local_evm_rpc,
     )
 
     with transaction.atomic(using=using):
         chain_manager.update_or_create(
-            code=local_evm_chain_code,
+            chain=ChainName.Anvil,
             defaults={
-                "name": "Ethereum Local",
-                "type": ChainType.EVM,
-                "native_coin": eth,
-                "chain_id": 31337,
-                "is_poa": False,
                 "rpc": local_evm_rpc,
-                # 本地联调要尽快推进状态，默认只要求 1 个确认块。
-                "confirm_block_count": 1,
                 "active": True,
             },
         )
-        for chain_code, crypto_symbol in ((local_evm_chain_code, "ETH"),):
-            ensure_chain_native_mapping(
-                using=using,
-                chain_code=chain_code,
-                crypto_symbol=crypto_symbol,
-            )
+        ensure_chain_native_mapping(
+            using=using,
+            chain_name=ChainName.Anvil,
+            crypto_symbol="ETH",
+        )
         ensure_chain_token_mapping(
             using=using,
-            chain_code=local_evm_chain_code,
+            chain_name=ChainName.Anvil,
             crypto_symbol="USDT",
             address=local_usdt_address,
             decimals=LOCAL_EVM_USDT_DECIMALS,
         )
         ensure_default_evm_token_mappings(
             using=using,
-            chain_code=local_evm_chain_code,
+            chain_name=ChainName.Anvil,
             skip_symbols={"USDT"},
             stdout=stdout,
         )
