@@ -11,18 +11,18 @@ from web3 import Web3
 
 from chains.models import Address
 from chains.models import AddressUsage
-from chains.models import TxTask
-from chains.models import TxTaskStage
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import TxTaskType
 from chains.models import Transfer
 from chains.models import TxHash
+from chains.models import TxTask
+from chains.models import TxTaskStage
+from chains.models import TxTaskType
 from chains.models import Wallet
-from common.consts import ERC20_TRANSFER_GAS
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.choices import TxKind
+from evm.constants import DEFAULT_ERC20_TRANSFER_GAS
 from evm.models import EvmTxTask
 
 
@@ -113,7 +113,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
             to=Web3.to_checksum_address("0x00000000000000000000000000000000000000c1"),
             value=0,
             data=f"0xa9059cbb{encoded_args}",
-            gas=ERC20_TRANSFER_GAS,
+            gas=DEFAULT_ERC20_TRANSFER_GAS,
             tx_kind=TxKind.CONTRACT_CALL,
             gas_price=1,
             signed_payload="0x01",

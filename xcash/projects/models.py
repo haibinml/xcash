@@ -11,7 +11,6 @@ from chains.models import Chain
 from chains.models import ChainType
 from common.consts import UPPER_ALPHABET
 from common.fields import AddressField
-from common.fields import EvmAddressField
 
 
 class Project(models.Model):
@@ -170,10 +169,6 @@ class Project(models.Model):
                 flat=True,
             ),
         )
-
-
-def status(request):
-    return ""
 
 
 class DifferRecipientAddress(models.Model):

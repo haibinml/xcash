@@ -22,14 +22,6 @@ class ChainProductCapabilityService:
         return getattr(chain, "native_coin", None) == crypto
 
     @classmethod
-    def supports_invoice_method(cls, *, chain, crypto) -> bool:
-        if chain.type not in cls.INVOICE_RECIPIENT_CHAIN_TYPES:
-            return False
-        if not crypto.support_this_chain(chain):
-            return False
-        return cls.supports_existing_invoice_method(chain=chain, crypto=crypto)
-
-    @classmethod
     def supports_existing_invoice_method(cls, *, chain, crypto) -> bool:
         """判断已存在 ChainToken 关系的链币组合是否可用于 Invoice。"""
         if chain.type not in cls.INVOICE_RECIPIENT_CHAIN_TYPES:
