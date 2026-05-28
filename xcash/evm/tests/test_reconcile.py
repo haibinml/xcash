@@ -14,7 +14,6 @@ from chains.models import ChainType
 from chains.models import Wallet
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from evm.models import EvmScanCursor
-from evm.scanner.logs import EvmLogScanResult
 
 
 @override_settings(DEBUG=False)
@@ -67,11 +66,7 @@ class EvmReconcileBlocksTests(TestCase):
         # 不能扩成 [min..max] 巨大区间拖垮 RPC。
         from evm.scanner.service import EvmScannerService
 
-        erc20_scan_mock.side_effect = [
-            EvmLogScanResult(10, 11, 11, [object(), object()], 1),
-            EvmLogScanResult(500, 501, 501, [object(), object()], 1),
-            EvmLogScanResult(900, 900, 900, [object()], 1),
-        ]
+        erc20_scan_mock.side_effect = [1, 1, 1]
 
         result = EvmScannerService.reconcile_blocks(
             chain=self.chain,
@@ -98,7 +93,7 @@ class EvmReconcileBlocksTests(TestCase):
 
         self.cursor.enabled = False
         self.cursor.save(update_fields=["enabled"])
-        erc20_scan_mock.return_value = EvmLogScanResult(10, 10, 10, [object()], 1)
+        erc20_scan_mock.return_value = 1
 
         result = EvmScannerService.reconcile_blocks(
             chain=self.chain,

@@ -430,6 +430,7 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash=tx_task.tx_hash,
             event_id="native:tx",
             crypto=crypto,

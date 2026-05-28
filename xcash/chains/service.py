@@ -129,7 +129,7 @@ class ObservedTransferPayload:
     amount: Decimal
     timestamp: int
     occurred_at: datetime
-    block_hash: str | None = None
+    block_hash: str
     source: str = "observer"
 
 
@@ -205,67 +205,46 @@ class TransferService:
         return not differences, differences
 
     @staticmethod
-    def drop_reorged_unconfirmed_transfers(
+    def _drop_reorged_observed_transfers(
         *,
         chain: Chain,
-        block: int,
-        block_hash: str | None,
-    ) -> int:
-        """丢弃同高度但 block_hash 已变化的未确认转账，让 replay 扫描可重建新分叉记录。"""
-        if not block_hash:
-            return 0
-
+        observed: ObservedTransferPayload,
+    ) -> None:
         transfers = list(
-            Transfer.objects.filter(
-                chain=chain,
-                block=block,
-                status=TransferStatus.CONFIRMING,
-                block_hash__isnull=False,
-            )
-            .exclude(block_hash=block_hash)
+            Transfer.objects.select_for_update()
+            .filter(chain=chain, hash=observed.tx_hash)
             .order_by("pk")
+        )
+        if not any(
+            TransferService._is_observed_transfer_reorged(
+                transfer=transfer,
+                observed=observed,
+            )
+            for transfer in transfers
+        ):
+            return
+
+        logger.warning(
+            "Observed transfer tx reorg detected",
+            source=observed.source,
+            chain=chain.code,
+            tx_hash=observed.tx_hash,
+            incoming_block=observed.block,
+            incoming_block_hash=observed.block_hash,
+            dropped_transfer_ids=[transfer.pk for transfer in transfers],
         )
         for transfer in transfers:
             transfer.drop()
-        return len(transfers)
 
     @staticmethod
-    def _refresh_observed_transfer_chain_position(
-        existing: Transfer,
+    def _is_observed_transfer_reorged(
+        *,
+        transfer: Transfer,
         observed: ObservedTransferPayload,
-    ) -> None:
-        if observed.block < existing.block:
-            logger.warning(
-                "Observed transfer replay with older block ignored",
-                source=observed.source,
-                chain=observed.chain.code,
-                tx_hash=observed.tx_hash,
-                event_id=observed.event_id,
-                existing_transfer_id=existing.pk,
-                existing_block=existing.block,
-                incoming_block=observed.block,
-            )
-            return
-
-        update_fields = []
-        if existing.block != observed.block:
-            existing.block = observed.block
-            update_fields.append("block")
-        if observed.block_hash and existing.block_hash != observed.block_hash:
-            existing.block_hash = observed.block_hash
-            update_fields.append("block_hash")
-        if existing.timestamp != observed.timestamp:
-            existing.timestamp = observed.timestamp
-            update_fields.append("timestamp")
-        if existing.datetime != observed.occurred_at:
-            existing.datetime = observed.occurred_at
-            update_fields.append("datetime")
-        if not update_fields:
-            return
-
-        Transfer.objects.filter(pk=existing.pk).update(
-            **{field: getattr(existing, field) for field in update_fields}
-        )
+    ) -> bool:
+        if transfer.block != observed.block:
+            return True
+        return transfer.block_hash != observed.block_hash
 
     @staticmethod
     def _log_observed_transfer_conflict(
@@ -301,71 +280,77 @@ class TransferService:
         后续无论是 EVM 自扫还是其他链监听，都应通过这个入口落库，
         以统一幂等语义、唯一键冲突判定和后续扩展能力。
         """
-        create_kwargs = TransferService._build_observed_transfer_kwargs(observed)
-        try:
-            # 唯一键冲突会触发 IntegrityError；用内层 savepoint 包住，避免外层事务直接进入 broken 状态。
-            with transaction.atomic():
-                transfer = Transfer.objects.create(**create_kwargs)
-            # 只有首次真正落库成功的观测转账才需要派发一次业务处理任务。
-            TransferService.enqueue_processing(transfer)
-            TransferService._mark_tx_task_pending_confirm(
-                chain=observed.chain,
-                tx_hash=observed.tx_hash,
-            )
-            return ObservedTransferCreateResult(transfer=transfer, created=True)
-        except IntegrityError:
-            existing = Transfer.objects.filter(
-                chain=observed.chain,
-                hash=observed.tx_hash,
-                event_id=observed.event_id,
-            ).first()
-            if existing is None:
-                logger.warning(
-                    "Observed transfer integrity conflict without existing row",
-                    source=observed.source,
-                    chain=observed.chain.code,
-                    tx_hash=observed.tx_hash,
-                    event_id=observed.event_id,
-                )
-                return ObservedTransferCreateResult(
-                    transfer=None,
-                    created=False,
-                    conflict=True,
-                )
-
-            TransferService._mark_tx_task_pending_confirm(
-                chain=observed.chain,
-                tx_hash=observed.tx_hash,
-            )
-
-            is_same_transfer, differences = TransferService._compare_observed_transfer(
-                existing=existing,
+        with transaction.atomic():
+            chain = Chain.objects.select_for_update().get(pk=observed.chain.pk)
+            TransferService._drop_reorged_observed_transfers(
+                chain=chain,
                 observed=observed,
             )
-            if is_same_transfer:
-                TransferService._refresh_observed_transfer_chain_position(
-                    existing=existing,
-                    observed=observed,
-                )
-                logger.debug(
-                    "Observed transfer replay ignored",
-                    source=observed.source,
-                    chain=observed.chain.code,
+
+            create_kwargs = TransferService._build_observed_transfer_kwargs(observed)
+            create_kwargs["chain"] = chain
+            try:
+                # 唯一键冲突会触发 IntegrityError；用内层 savepoint 包住，避免外层事务直接进入 broken 状态。
+                with transaction.atomic():
+                    transfer = Transfer.objects.create(**create_kwargs)
+                # 只有首次真正落库成功的观测转账才需要派发一次业务处理任务。
+                TransferService.enqueue_processing(transfer)
+                TransferService._mark_tx_task_pending_confirm(
+                    chain=chain,
                     tx_hash=observed.tx_hash,
+                )
+                return ObservedTransferCreateResult(transfer=transfer, created=True)
+            except IntegrityError:
+                existing = Transfer.objects.filter(
+                    chain=chain,
+                    hash=observed.tx_hash,
                     event_id=observed.event_id,
-                    transfer_id=existing.pk,
+                ).first()
+                if existing is None:
+                    logger.warning(
+                        "Observed transfer integrity conflict without existing row",
+                        source=observed.source,
+                        chain=chain.code,
+                        tx_hash=observed.tx_hash,
+                        event_id=observed.event_id,
+                    )
+                    return ObservedTransferCreateResult(
+                        transfer=None,
+                        created=False,
+                        conflict=True,
+                    )
+
+                TransferService._mark_tx_task_pending_confirm(
+                    chain=chain,
+                    tx_hash=observed.tx_hash,
                 )
-            else:
-                TransferService._log_observed_transfer_conflict(
-                    existing=existing,
-                    observed=observed,
-                    differences=differences,
+
+                is_same_transfer, differences = (
+                    TransferService._compare_observed_transfer(
+                        existing=existing,
+                        observed=observed,
+                    )
                 )
-            return ObservedTransferCreateResult(
-                transfer=existing,
-                created=False,
-                conflict=not is_same_transfer,
-            )
+                if is_same_transfer:
+                    logger.debug(
+                        "Observed transfer replay ignored",
+                        source=observed.source,
+                        chain=chain.code,
+                        tx_hash=observed.tx_hash,
+                        event_id=observed.event_id,
+                        transfer_id=existing.pk,
+                    )
+                else:
+                    TransferService._log_observed_transfer_conflict(
+                        existing=existing,
+                        observed=observed,
+                        differences=differences,
+                    )
+                return ObservedTransferCreateResult(
+                    transfer=existing,
+                    created=False,
+                    conflict=not is_same_transfer,
+                )
 
     @staticmethod
     def assign_type_and_mode(

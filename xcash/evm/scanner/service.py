@@ -6,7 +6,6 @@ from chains.models import Chain
 from chains.models import ChainType
 from evm.models import EvmScanCursor
 from evm.scanner.logs import EvmLogScanner
-from evm.scanner.logs import EvmLogScanResult
 from evm.scanner.rpc import EvmScannerRpcClient
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.watchers import load_watch_set
@@ -63,18 +62,12 @@ class EvmScannerService:
         return True if enabled is None else bool(enabled)
 
     @staticmethod
-    def _empty_result(*, chain: Chain) -> EvmLogScanResult:
+    def _empty_result() -> int:
         """生成一次空扫描结果，用于扫描被跳过或失败时的占位返回。"""
-        return EvmLogScanResult(
-            from_block=0,
-            to_block=0,
-            latest_block=chain.latest_block_number,
-            raw_logs=[],
-            created_transfers=0,
-        )
+        return 0
 
     @staticmethod
-    def scan_chain(*, chain: Chain) -> EvmLogScanResult:
+    def scan_chain(*, chain: Chain) -> int:
         """按链触发一次正向扫描，并吞掉 RPC 异常返回空结果。"""
         if chain.type != ChainType.EVM:
             raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.name}")
@@ -85,7 +78,7 @@ class EvmScannerService:
                 rpc_client=EvmScannerRpcClient(chain=chain),
             )
         except EvmScannerRpcError:
-            return EvmScannerService._empty_result(chain=chain)
+            return EvmScannerService._empty_result()
 
     @classmethod
     def reconcile_blocks(
@@ -97,8 +90,7 @@ class EvmScannerService:
         """对账：将外部指定的块号回放进外部入账扫描管线，不推进游标。
 
         典型触发场景是需要对某些块做外部入账复扫。复用 EvmLogScanner.scan_range
-        做真值通路，确保 Transfer 落库、reorg 清理、observed_transfer 流转与
-        正常扫描完全一致。
+        做真值通路，确保 Transfer 落库与 observed_transfer 流转和正常扫描一致。
         """
         if chain.type != ChainType.EVM:
             raise ValueError(f"仅支持扫描 EVM 链，当前链为 {chain.code}")
@@ -126,14 +118,13 @@ class EvmScannerService:
         for range_from_block, range_to_block in cls._iter_reconcile_block_ranges(
             block_numbers
         ):
-            range_result = EvmLogScanner.scan_range(
+            created_transfers += EvmLogScanner.scan_range(
                 chain=chain,
                 rpc_client=rpc_client,
                 watch_set=watch_set,
                 from_block=range_from_block,
                 to_block=range_to_block,
             )
-            created_transfers += range_result.created_transfers
 
         return EvmReconcileResult(
             from_block=from_block,

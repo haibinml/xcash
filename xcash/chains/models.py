@@ -845,8 +845,6 @@ class Transfer(models.Model):
     block_hash = HashField(
         verbose_name=_("区块哈希"),
         unique=False,
-        blank=True,
-        null=True,
     )
     # 修复：真实链上 tx hash 与"同 tx 内事件明细"拆分建模，避免继续依赖 `hash:logIndex` 字符串协议。
     hash = HashField(unique=False, verbose_name=_("哈希"))

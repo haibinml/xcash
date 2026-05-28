@@ -715,6 +715,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + event_id[-1] * 64,
             event_id=event_id,
             crypto=crypto or self.token,

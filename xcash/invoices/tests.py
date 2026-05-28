@@ -247,6 +247,7 @@ class InvoicePaySlotTests(TestCase):
         return Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash=f"0x{chain.chain_id:08x}{int(now.timestamp() * 1000000):056x}",
             event_id=f"{chain.code}-{int(now.timestamp() * 1000)}",
             crypto=self.crypto,
@@ -951,6 +952,7 @@ class InvoiceExpiredMatchTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "e1" * 32,
             event_id="expired-match-event",
             crypto=self.crypto,
@@ -1095,6 +1097,7 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "a7" * 32,
             event_id="atomic-event",
             crypto=self.crypto,
@@ -1871,6 +1874,7 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
         return Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash=f"0x{self.chain.chain_id:08x}{int(now.timestamp() * 1000000):056x}",
             event_id=f"cm-{str(amount).replace('.', '')}",
             crypto=self.crypto,

@@ -86,6 +86,7 @@ class TransferMatchingTests(TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "1" * 64,
             event_id="native:tx",
             crypto=native,
@@ -148,6 +149,7 @@ class TransferMatchingTests(TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "2" * 64,
             event_id="trunc:tx",
             crypto=crypto,
@@ -642,6 +644,7 @@ class TransferConfirmDispatchTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=100,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id="withdrawal:tx",
             crypto=self.crypto,
@@ -669,6 +672,7 @@ class TransferConfirmDispatchTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=100,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "7" * 64,
             event_id="native:tx",
             crypto=self.crypto,
@@ -691,12 +695,12 @@ class TransferConfirmDispatchTests(TestCase):
         confirm_transfer_delay_mock.assert_called_once_with(transfer.pk)
 
     @patch("chains.tasks.confirm_transfer.delay")
-    def test_replayed_transfer_refreshes_block_before_full_confirm_dispatch(
+    def test_reorg_observed_transfer_replaces_old_transfer_before_full_confirm_dispatch(
         self,
         confirm_transfer_delay_mock,
     ):
-        # reorg 后同一 tx_hash/event_id 可能被重新打包到更高的新区块。
-        # FULL 确认调度必须以重放观测到的新 block 为准，不能继续使用旧 transfer.block 提前确认。
+        # reorg 后同一 tx_hash 可能被重新打包到新块；旧 Transfer 必须被删除，
+        # 当前观测重新落库，避免确认调度沿用旧 block 提前放行。
         Chain.objects.filter(pk=self.chain.pk).update(
             latest_block_number=105,
         )
@@ -705,6 +709,7 @@ class TransferConfirmDispatchTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=90,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id="native:reorg",
             crypto=self.crypto,
@@ -718,7 +723,6 @@ class TransferConfirmDispatchTests(TestCase):
             datetime=timezone.now(),
             status=TransferStatus.CONFIRMING,
             confirm_mode=ConfirmMode.FULL,
-            type=TransferType.Deposit,
             processed_at=timezone.now(),
         )
         Transfer.objects.filter(pk=transfer.pk).update(
@@ -730,6 +734,7 @@ class TransferConfirmDispatchTests(TestCase):
             observed=ObservedTransferPayload(
                 chain=self.chain,
                 block=100,
+                block_hash="0x" + "aa" * 32,
                 tx_hash=tx_hash,
                 event_id="native:reorg",
                 from_address=transfer.from_address,
@@ -743,23 +748,24 @@ class TransferConfirmDispatchTests(TestCase):
             )
         )
 
-        self.assertFalse(result.created)
+        self.assertTrue(result.created)
         self.assertFalse(result.conflict)
-        transfer.refresh_from_db()
-        self.assertEqual(transfer.block, 100)
-        self.assertEqual(transfer.timestamp, 2)
-        self.assertEqual(transfer.datetime, observed_at)
+        self.assertFalse(Transfer.objects.filter(pk=transfer.pk).exists())
+        self.assertEqual(result.transfer.block, 100)
+        self.assertEqual(result.transfer.timestamp, 2)
+        self.assertEqual(result.transfer.datetime, observed_at)
 
         block_number_updated.run(self.chain.pk)
 
         confirm_transfer_delay_mock.assert_not_called()
 
     @patch("chains.tasks.confirm_transfer.delay")
-    def test_older_replayed_transfer_does_not_roll_back_full_confirm_block(
+    def test_reorg_observed_transfer_replaces_old_transfer_even_when_block_is_lower(
         self,
         confirm_transfer_delay_mock,
     ):
-        # 已知的新打包高度不能被滞后的旧观测覆盖，否则 FULL 确认会按旧 block 提前放行。
+        # create_observed_transfer 只负责把同 tx_hash 的当前观测作为事实重建；
+        # 业务确认安全由 confirm receipt 路径兜底。
         Chain.objects.filter(pk=self.chain.pk).update(
             latest_block_number=105,
         )
@@ -769,6 +775,7 @@ class TransferConfirmDispatchTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=100,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id="native:reorg-old",
             crypto=self.crypto,
@@ -782,7 +789,6 @@ class TransferConfirmDispatchTests(TestCase):
             datetime=observed_at,
             status=TransferStatus.CONFIRMING,
             confirm_mode=ConfirmMode.FULL,
-            type=TransferType.Deposit,
             processed_at=timezone.now(),
         )
         Transfer.objects.filter(pk=transfer.pk).update(
@@ -793,6 +799,7 @@ class TransferConfirmDispatchTests(TestCase):
             observed=ObservedTransferPayload(
                 chain=self.chain,
                 block=90,
+                block_hash="0x" + "aa" * 32,
                 tx_hash=tx_hash,
                 event_id="native:reorg-old",
                 from_address=transfer.from_address,
@@ -806,12 +813,12 @@ class TransferConfirmDispatchTests(TestCase):
             )
         )
 
-        self.assertFalse(result.created)
+        self.assertTrue(result.created)
         self.assertFalse(result.conflict)
-        transfer.refresh_from_db()
-        self.assertEqual(transfer.block, 100)
-        self.assertEqual(transfer.timestamp, 2)
-        self.assertEqual(transfer.datetime, observed_at)
+        self.assertFalse(Transfer.objects.filter(pk=transfer.pk).exists())
+        self.assertEqual(result.transfer.block, 90)
+        self.assertEqual(result.transfer.timestamp, 1)
+        self.assertEqual(result.transfer.datetime, observed_at - timedelta(seconds=15))
 
         block_number_updated.run(self.chain.pk)
 
@@ -1388,6 +1395,7 @@ class TransferServiceCreateObservedTests(TestCase):
         self.payload = ObservedTransferPayload(
             chain=self.chain,
             block=100,
+            block_hash="0x" + "aa" * 32,
             tx_hash="0x" + "ab" * 32,
             event_id="native:tx",
             from_address=Web3.to_checksum_address(
@@ -1408,11 +1416,16 @@ class TransferServiceCreateObservedTests(TestCase):
     def test_first_create_returns_created_true(self, enqueue_mock):
         from chains.service import TransferService
 
-        result = TransferService.create_observed_transfer(observed=self.payload)
+        with patch(
+            "chains.service.Chain.objects.select_for_update",
+            wraps=Chain.objects.select_for_update,
+        ) as lock_mock:
+            result = TransferService.create_observed_transfer(observed=self.payload)
 
         self.assertTrue(result.created)
         self.assertFalse(result.conflict)
         self.assertIsNotNone(result.transfer)
+        lock_mock.assert_called_once()
         enqueue_mock.assert_called_once()
 
     @patch("chains.service.TransferService.enqueue_processing")
@@ -1430,6 +1443,73 @@ class TransferServiceCreateObservedTests(TestCase):
         enqueue_mock.assert_called_once()
 
     @patch("chains.service.TransferService.enqueue_processing")
+    def test_reorg_drops_same_tx_transfers_before_creating_current_observation(
+        self,
+        enqueue_mock,
+    ):
+        from chains.service import ObservedTransferPayload
+        from chains.service import TransferService
+
+        old_hash = self.payload.tx_hash
+        old_one = Transfer.objects.create(
+            chain=self.chain,
+            block=90,
+            block_hash="0x" + "11" * 32,
+            hash=old_hash,
+            event_id="native:old-1",
+            crypto=self.crypto,
+            from_address=self.payload.from_address,
+            to_address=self.payload.to_address,
+            value=self.payload.value,
+            amount=self.payload.amount,
+            timestamp=self.payload.timestamp,
+            datetime=self.payload.occurred_at,
+        )
+        old_two = Transfer.objects.create(
+            chain=self.chain,
+            block=90,
+            block_hash="0x" + "11" * 32,
+            hash=old_hash,
+            event_id="native:old-2",
+            crypto=self.crypto,
+            from_address=self.payload.from_address,
+            to_address=self.payload.to_address,
+            value=self.payload.value,
+            amount=self.payload.amount,
+            timestamp=self.payload.timestamp,
+            datetime=self.payload.occurred_at,
+        )
+        current = ObservedTransferPayload(
+            chain=self.chain,
+            block=100,
+            block_hash="0x" + "22" * 32,
+            tx_hash=old_hash,
+            event_id="native:new",
+            from_address=self.payload.from_address,
+            to_address=self.payload.to_address,
+            crypto=self.payload.crypto,
+            value=self.payload.value,
+            amount=self.payload.amount,
+            timestamp=self.payload.timestamp + 1,
+            occurred_at=self.payload.occurred_at + timedelta(seconds=1),
+            source="test-reorg",
+        )
+
+        result = TransferService.create_observed_transfer(observed=current)
+
+        self.assertTrue(result.created)
+        self.assertFalse(result.conflict)
+        self.assertFalse(
+            Transfer.objects.filter(pk__in=[old_one.pk, old_two.pk]).exists()
+        )
+        replacement = Transfer.objects.get(chain=self.chain, hash=old_hash)
+        self.assertEqual(replacement.pk, result.transfer.pk)
+        self.assertEqual(replacement.block, 100)
+        self.assertEqual(replacement.block_hash, "0x" + "22" * 32)
+        self.assertEqual(replacement.event_id, "native:new")
+        enqueue_mock.assert_called_once()
+
+    @patch("chains.service.TransferService.enqueue_processing")
     def test_amount_precision_difference_does_not_trigger_conflict(self, enqueue_mock):
         from chains.service import ObservedTransferPayload
         from chains.service import TransferService
@@ -1439,6 +1519,7 @@ class TransferServiceCreateObservedTests(TestCase):
         replay = ObservedTransferPayload(
             chain=self.payload.chain,
             block=self.payload.block,
+            block_hash="0x" + "aa" * 32,
             tx_hash=self.payload.tx_hash,
             event_id=self.payload.event_id,
             from_address=self.payload.from_address,
@@ -1465,6 +1546,7 @@ class TransferServiceCreateObservedTests(TestCase):
         conflicting = ObservedTransferPayload(
             chain=self.payload.chain,
             block=self.payload.block,
+            block_hash="0x" + "aa" * 32,
             tx_hash=self.payload.tx_hash,
             event_id=self.payload.event_id,
             from_address=self.payload.from_address,
@@ -1699,6 +1781,7 @@ class BlockNumberUpdatedCompensationTests(TestCase):
             Transfer.objects.create(
                 chain=self.chain,
                 block=190,
+                block_hash="0x" + "aa" * 32,
                 hash="0x" + f"{i:064x}",
                 event_id="native:tx",
                 crypto=self.crypto,
@@ -1735,6 +1818,7 @@ class BlockNumberUpdatedCompensationTests(TestCase):
             Transfer.objects.create(
                 chain=self.chain,
                 block=190,
+                block_hash="0x" + "aa" * 32,
                 hash="0x" + f"{i+100:064x}",
                 event_id="native:tx",
                 crypto=self.crypto,

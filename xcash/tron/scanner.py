@@ -212,6 +212,7 @@ class TronUsdtPaymentScanner:
         page_fingerprint: str | None = None
         collected: list[ParsedTronTransferEvent] = []
         seen_fingerprints: set[str] = set()
+        block_hash: str | None = None
 
         while True:
             payload = client.list_confirmed_contract_events(
@@ -236,10 +237,13 @@ class TronUsdtPaymentScanner:
                 break
 
             for row in data:
+                if block_hash is None:
+                    block_hash = client.get_solid_block_id(block_number=block_number)
                 event = cls._parse_contract_event(
                     chain=chain,
                     row=row,
                     expected_block_number=block_number,
+                    block_hash=block_hash,
                     filter_addresses=filter_addresses,
                     usdt_mapping=usdt_mapping,
                 )
@@ -268,6 +272,7 @@ class TronUsdtPaymentScanner:
         chain: Chain,
         row: dict,
         expected_block_number: int,
+        block_hash: str,
         filter_addresses: set[str],
         usdt_mapping: ChainToken,
     ) -> ParsedTronTransferEvent | None:
@@ -343,6 +348,7 @@ class TronUsdtPaymentScanner:
                 amount=value.scaleb(-decimals),
                 timestamp=timestamp_ms // 1000,
                 occurred_at=occurred_at,
+                block_hash=block_hash,
                 source="tron-scan",
             )
         )

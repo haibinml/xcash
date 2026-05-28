@@ -67,6 +67,7 @@ class OperationalRiskServiceTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "1" * 64,
             event_id="monitor:0",
             crypto=self.crypto,

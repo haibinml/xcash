@@ -910,6 +910,7 @@ class PollerIntegrationTest(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=100,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id="erc20:bad",
             crypto=self.token,
@@ -989,6 +990,7 @@ class PollerIntegrationTest(TestCase):
         Transfer.objects.create(
             chain=self.chain,
             block=100,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id="erc20:3",
             crypto=self.token,

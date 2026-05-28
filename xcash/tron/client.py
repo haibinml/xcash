@@ -148,6 +148,19 @@ class TronHttpClient:
             raise TronClientError(f"invalid latest solid block from {self.chain.code}")
         return block_number
 
+    def get_solid_block_id(self, *, block_number: int) -> str:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/walletsolidity/getblockbynum",
+            request_label="failed to fetch solid block",
+            json_body={"num": block_number},
+        )
+        payload = response.json()
+        block_id = str(payload.get("blockID") or "").strip().lower()
+        if len(block_id) != 64:
+            raise TronClientError(f"invalid solid block id from {self.chain.code}")
+        return block_id
+
     def get_transaction_info_by_id(self, tx_hash: str) -> dict:
         response = self._request_with_retry(
             method="POST",

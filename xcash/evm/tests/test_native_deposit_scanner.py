@@ -6,11 +6,9 @@ from django.core.cache import cache
 from django.test import SimpleTestCase
 from django.test import TestCase
 from django.test import override_settings
-from django.utils import timezone
 from web3 import Web3
 
 from chains.models import Transfer
-from chains.models import TransferStatus
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from evm.models import VaultSlot
 from evm.models import EvmScanCursor
@@ -44,7 +42,7 @@ class EvmNativeDepositScanWindowTests(SimpleTestCase):
             batch_size=100,
         )
 
-        self.assertEqual(from_block, 999)
+        self.assertEqual(from_block, 1001)
         self.assertEqual(to_block, 1100)
 
 
@@ -129,18 +127,15 @@ class EvmLogScannerTests(TestCase):
             },
         )()
 
-        logs, created = (
-            EvmLogScanner.scan_range(
-                chain=self.chain,
-                rpc_client=rpc_client,
-                watch_set=self.watch_set,
-                from_block=120,
-                to_block=120,
-            )
+        created = EvmLogScanner.scan_range(
+            chain=self.chain,
+            rpc_client=rpc_client,
+            watch_set=self.watch_set,
+            from_block=120,
+            to_block=120,
         )
 
         transfer = Transfer.objects.get()
-        self.assertEqual(len(logs), 1)
         self.assertEqual(created, 1)
         self.assertEqual(transfer.crypto, self.native)
         self.assertEqual(transfer.from_address, self.payer)
@@ -210,17 +205,14 @@ class EvmLogScannerTests(TestCase):
             },
         )()
 
-        logs, created = (
-            EvmLogScanner.scan_range(
-                chain=self.chain,
-                rpc_client=rpc_client,
-                watch_set=self.watch_set,
-                from_block=120,
-                to_block=120,
-            )
+        created = EvmLogScanner.scan_range(
+            chain=self.chain,
+            rpc_client=rpc_client,
+            watch_set=self.watch_set,
+            from_block=120,
+            to_block=120,
         )
 
-        self.assertEqual(len(logs), 3)
         self.assertEqual(created, 0)
         create_observed_transfer_mock.assert_not_called()
 
@@ -245,17 +237,14 @@ class EvmLogScannerTests(TestCase):
             },
         )()
 
-        logs, created = (
-            EvmLogScanner.scan_range(
-                chain=self.chain,
-                rpc_client=rpc_client,
-                watch_set=self.watch_set,
-                from_block=120,
-                to_block=120,
-            )
+        created = EvmLogScanner.scan_range(
+            chain=self.chain,
+            rpc_client=rpc_client,
+            watch_set=self.watch_set,
+            from_block=120,
+            to_block=120,
         )
 
-        self.assertEqual(len(logs), 4)
         self.assertEqual(created, 0)
         create_observed_transfer_mock.assert_not_called()
 
@@ -278,87 +267,7 @@ class EvmLogScannerTests(TestCase):
         result = EvmLogScanner.scan_chain(chain=self.chain, batch_size=32)
 
         cursor = EvmScanCursor.objects.get(chain=self.chain)
-        self.assertEqual(result.latest_block, 200)
-        self.assertEqual(result.created_transfers, 0)
+        self.assertEqual(result, 0)
         self.assertEqual(cursor.last_scanned_block, 32)
         get_logs_mock.assert_called_once()
         self.assertIsNone(get_logs_mock.call_args.kwargs["addresses"])
-
-    def test_scan_range_drops_reorged_native_transfer_when_replay_logs_empty(self):
-        old_transfer = Transfer.objects.create(
-            chain=self.chain,
-            block=120,
-            block_hash="0x" + "11" * 32,
-            hash="0x" + "cd" * 32,
-            event_id="native:7",
-            crypto=self.native,
-            from_address=self.payer,
-            to_address=self.slot.address,
-            value=Decimal(10**18),
-            amount=Decimal("1"),
-            timestamp=1_700_000_000,
-            datetime=timezone.now(),
-            status=TransferStatus.CONFIRMING,
-        )
-        rpc_client = type(
-            "Rpc",
-            (),
-            {
-                "get_logs": lambda *_args, **_kwargs: [],
-                "get_block_hash": lambda *_args, **_kwargs: "0x" + "22" * 32,
-                "get_block_timestamp": lambda *_args, **_kwargs: 1_700_000_000,
-            },
-        )()
-
-        logs, created = (
-            EvmLogScanner.scan_range(
-                chain=self.chain,
-                rpc_client=rpc_client,
-                watch_set=self.watch_set,
-                from_block=119,
-                to_block=121,
-            )
-        )
-
-        self.assertEqual(logs, [])
-        self.assertEqual(created, 0)
-        self.assertFalse(Transfer.objects.filter(pk=old_transfer.pk).exists())
-
-    def test_scan_range_ignores_removed_log_hash_when_dropping_reorged_transfer(self):
-        old_transfer = Transfer.objects.create(
-            chain=self.chain,
-            block=120,
-            block_hash="0x" + "11" * 32,
-            hash="0x" + "cd" * 32,
-            event_id="native:7",
-            crypto=self.native,
-            from_address=self.payer,
-            to_address=self.slot.address,
-            value=Decimal(10**18),
-            amount=Decimal("1"),
-            timestamp=1_700_000_000,
-            datetime=timezone.now(),
-            status=TransferStatus.CONFIRMING,
-        )
-        removed_log = self._build_native_log()
-        removed_log["removed"] = True
-        removed_log["blockHash"] = bytes.fromhex("11" * 32)
-        rpc_client = Mock()
-        rpc_client.get_logs.return_value = [removed_log]
-        rpc_client.get_block_hash.return_value = "0x" + "22" * 32
-
-        logs, created = (
-            EvmLogScanner.scan_range(
-                chain=self.chain,
-                rpc_client=rpc_client,
-                watch_set=self.watch_set,
-                from_block=119,
-                to_block=121,
-            )
-        )
-
-        self.assertEqual(logs, [removed_log])
-        self.assertEqual(created, 0)
-        rpc_client.get_block_hash.assert_called_once_with(block_number=120)
-        rpc_client.get_block_timestamp.assert_not_called()
-        self.assertFalse(Transfer.objects.filter(pk=old_transfer.pk).exists())

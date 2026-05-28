@@ -25,7 +25,6 @@ from evm.choices import TxKind
 from evm.intents import build_native_transfer_intent
 from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
-from evm.scanner.logs import EvmLogScanResult
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.service import EvmScannerService
 from evm.scanner.watchers import EvmWatchSet
@@ -67,26 +66,19 @@ class EvmChainScannerServiceTests(TestCase):
         result = EvmScannerService.scan_chain(chain=self.chain)
 
         scan_chain_mock.assert_not_called()
-        self.assertEqual(result.created_transfers, 0)
-        self.assertEqual(result.latest_block, 88)
+        self.assertEqual(result, 0)
 
     @patch("evm.scanner.service.EvmLogScanner.scan_chain")
     def test_scan_chain_scans_native_and_erc20(
         self,
         scan_chain_mock,
     ):
-        scan_chain_mock.return_value = EvmLogScanResult(
-            from_block=1,
-            to_block=1,
-            latest_block=88,
-            raw_logs=[],
-            created_transfers=3,
-        )
+        scan_chain_mock.return_value = 3
 
         result = EvmScannerService.scan_chain(chain=self.chain)
 
         scan_chain_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.created_transfers, 3)
+        self.assertEqual(result, 3)
 
     @patch(
         "evm.scanner.service.EvmLogScanner.scan_chain",
@@ -99,7 +91,7 @@ class EvmChainScannerServiceTests(TestCase):
         result = EvmScannerService.scan_chain(chain=self.chain)
 
         scan_chain_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
-        self.assertEqual(result.created_transfers, 0)
+        self.assertEqual(result, 0)
 
     @patch("evm.scanner.service.load_watch_set")
     @patch("evm.scanner.service.EvmLogScanner.scan_range")
@@ -112,13 +104,7 @@ class EvmChainScannerServiceTests(TestCase):
             matched_addresses=frozenset(),
             tokens_by_address={},
         )
-        scan_range_mock.return_value = EvmLogScanResult(
-            from_block=10,
-            to_block=10,
-            latest_block=10,
-            raw_logs=[{"kind": "log"}],
-            created_transfers=3,
-        )
+        scan_range_mock.return_value = 3
 
         result = EvmScannerService.reconcile_blocks(
             chain=self.chain,
@@ -481,6 +467,7 @@ class EvmChainScannerServiceTests(TestCase):
         observed = ObservedTransferPayload(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             tx_hash="0x" + "2" * 64,
             event_id="native:0",
             from_address="0x0000000000000000000000000000000000000001",

@@ -77,6 +77,7 @@ class TronHttpClientTests(SimpleTestCase):
                 chain = SimpleNamespace(
                     rpc="https://api.trongrid.io",
                     chain="tron-mainnet",
+                    code="tron-mainnet",
                     tron_api_key="tron-key",
                 )
 
@@ -84,6 +85,41 @@ class TronHttpClientTests(SimpleTestCase):
                     TronClientError, "invalid latest solid block"
                 ):
                     TronHttpClient(chain=chain).get_latest_solid_block_number()
+
+    @patch("tron.client.httpx.post")
+    def test_get_solid_block_id_posts_block_number(self, post_mock):
+        post_mock.return_value.json.return_value = {"blockID": "A" * 64}
+        post_mock.return_value.raise_for_status.return_value = None
+
+        chain = SimpleNamespace(
+            rpc="https://api.trongrid.io",
+            chain="tron-mainnet",
+            code="tron-mainnet",
+            tron_api_key="",
+        )
+        block_id = TronHttpClient(chain=chain).get_solid_block_id(block_number=123456)
+
+        self.assertEqual(block_id, "a" * 64)
+        call_args, call_kwargs = post_mock.call_args
+        self.assertEqual(
+            call_args[0],
+            "https://api.trongrid.io/walletsolidity/getblockbynum",
+        )
+        self.assertEqual(call_kwargs["json"], {"num": 123456})
+
+    @patch("tron.client.httpx.post")
+    def test_get_solid_block_id_rejects_invalid_block_id(self, post_mock):
+        post_mock.return_value.json.return_value = {"blockID": ""}
+        post_mock.return_value.raise_for_status.return_value = None
+
+        chain = SimpleNamespace(
+            rpc="https://api.trongrid.io",
+            chain="tron-mainnet",
+            code="tron-mainnet",
+            tron_api_key="",
+        )
+        with self.assertRaisesMessage(TronClientError, "invalid solid block id"):
+            TronHttpClient(chain=chain).get_solid_block_id(block_number=123456)
 
     @patch("tron.client.httpx.post")
     def test_get_transaction_info_by_id_posts_tx_hash(self, post_mock):
@@ -560,6 +596,7 @@ class TronUsdtPaymentScannerTests(TestCase):
 
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
 
         summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
 
@@ -580,6 +617,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
 
         summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
@@ -602,12 +640,14 @@ class TronUsdtPaymentScannerTests(TestCase):
 
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123500
+        client.get_solid_block_id.return_value = "0" * 64
         TronUsdtPaymentScanner.scan_chain(chain=self.chain)
 
         client.list_confirmed_contract_events.assert_not_called()
 
         client.reset_mock()
         client.get_latest_solid_block_number.return_value = 123501
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
         TronUsdtPaymentScanner.scan_chain(chain=self.chain)
         client.list_confirmed_contract_events.assert_called_once()
@@ -615,6 +655,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         TronUsdtPaymentScanner._debug_bootstrapped_cursors.clear()
         client.reset_mock()
         client.get_latest_solid_block_number.return_value = 123510
+        client.get_solid_block_id.return_value = "0" * 64
         TronUsdtPaymentScanner.scan_chain(chain=self.chain)
         client.list_confirmed_contract_events.assert_not_called()
 
@@ -653,6 +694,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": [
                 self._build_contract_event(
@@ -691,6 +733,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": [
                 self._build_contract_event(
@@ -725,6 +768,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.side_effect = TronClientError(
             "probe failed"
         )
@@ -753,6 +797,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = []
 
         with self.assertRaisesMessage(
@@ -779,6 +824,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": {"unexpected": "shape"},
             "meta": {},
@@ -808,6 +854,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.side_effect = [
             {
                 "data": [],
@@ -840,6 +887,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.side_effect = [
             {
                 "data": [
@@ -890,6 +938,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": [
                 self._build_contract_event(
@@ -926,6 +975,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": [
                 self._build_contract_event(
@@ -956,6 +1006,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         event = self._build_contract_event(
             tx_hash="6" * 64,
             block_number=123456,
@@ -986,6 +1037,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         event = self._build_contract_event(
             tx_hash="7" * 64,
             block_number=123456,
@@ -1015,6 +1067,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         event = self._build_contract_event(
             tx_hash="8" * 64,
             block_number=123456,
@@ -1044,6 +1097,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.side_effect = [
             {
                 "data": [
@@ -1125,6 +1179,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=start_cursor)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = latest_block
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
 
         TronUsdtPaymentScanner.scan_chain(chain=self.chain)
@@ -1154,6 +1209,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=start_cursor)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = latest_block
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
 
         summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
@@ -1201,6 +1257,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=100)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 120
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
 
         TronUsdtPaymentScanner.scan_chain(chain=self.chain)
@@ -1239,6 +1296,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self._get_or_create_contract_cursor(last_scanned_block=123450)
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123451
+        client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": [
                 self._build_contract_event(

@@ -19,7 +19,6 @@ from evm.models import EvmScanCursor
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.logs import EvmLogScanner
-from evm.scanner.observed_transfers import EvmObservedTransferProcessResult
 from evm.scanner.watchers import EvmWatchSet
 from evm.tests._fixtures import make_crypto
 from evm.tests._fixtures import make_evm_chain
@@ -113,10 +112,7 @@ class EvmLogScannerTests(TestCase):
         transfer_processor_mock,
     ):
         native_log = self._native_log()
-        transfer_processor_mock.return_value = EvmObservedTransferProcessResult(
-            raw_logs=[native_log],
-            created_transfers=0,
-        )
+        transfer_processor_mock.return_value = 0
         rpc_client = Mock()
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.slot.address}),
@@ -128,19 +124,15 @@ class EvmLogScannerTests(TestCase):
             logs=[native_log],
             rpc_client=rpc_client,
             watch_set=watch_set,
-            from_block=99,
-            to_block=99,
         )
 
         transfer_processor_mock.assert_called_once()
         processor_kwargs = transfer_processor_mock.call_args.kwargs
         self.assertEqual(processor_kwargs["chain"], self.chain)
         self.assertEqual(processor_kwargs["rpc_client"], rpc_client)
-        self.assertEqual(processor_kwargs["from_block"], 99)
-        self.assertEqual(processor_kwargs["to_block"], 99)
         self.assertEqual(processor_kwargs["raw_logs"], [native_log])
         self.assertEqual(processor_kwargs["watch_set"], watch_set)
-        self.assertEqual(result.created_transfers, 0)
+        self.assertEqual(result, 0)
 
     @patch("chains.service.TransferService._mark_tx_task_pending_confirm")
     @patch("chains.service.TransferService.enqueue_processing")
@@ -164,7 +156,7 @@ class EvmLogScannerTests(TestCase):
         self.assertEqual(EvmScanCursor.objects.filter(chain=self.chain).count(), 1)
         cursor = EvmScanCursor.objects.get(chain=self.chain)
         self.assertEqual(cursor.last_scanned_block, 32)
-        self.assertEqual(result.created_transfers, 2)
+        self.assertEqual(result, 2)
         self.assertEqual(Transfer.objects.count(), 2)
         self.assertEqual(
             set(Transfer.objects.values_list("event_id", flat=True)),
@@ -209,7 +201,7 @@ class EvmLogScannerTests(TestCase):
 
         cursor = EvmScanCursor.objects.get(chain=self.chain)
         self.assertEqual(cursor.last_scanned_block, 32)
-        self.assertEqual(result.created_transfers, 0)
+        self.assertEqual(result, 0)
         get_logs_mock.assert_has_calls(
             [
                 call(
@@ -248,10 +240,7 @@ class EvmLogScannerTests(TestCase):
             "logIndex": 5,
             "transactionHash": bytes.fromhex("24" * 32),
         }
-        transfer_processor_mock.return_value = EvmObservedTransferProcessResult(
-            raw_logs=[native_log, erc20_log, unknown_log],
-            created_transfers=0,
-        )
+        transfer_processor_mock.return_value = 0
         rpc_client = Mock()
 
         EvmLogScanner._process_logs(
@@ -262,8 +251,6 @@ class EvmLogScannerTests(TestCase):
                 matched_addresses=frozenset(),
                 tokens_by_address={self.token_deployment.address: self.token_deployment},
             ),
-            from_block=99,
-            to_block=99,
         )
 
         processor_watch_set = transfer_processor_mock.call_args.kwargs["watch_set"]
@@ -294,10 +281,8 @@ class EvmLogScannerTests(TestCase):
                 matched_addresses=frozenset({self.slot.address}),
                 tokens_by_address={self.token_deployment.address: self.token_deployment},
             ),
-            from_block=99,
-            to_block=99,
         )
 
-        self.assertEqual(result.created_transfers, 0)
+        self.assertEqual(result, 0)
         self.assertFalse(Transfer.objects.filter(hash=tx_hash).exists())
         rpc_client.get_block_timestamp.assert_not_called()

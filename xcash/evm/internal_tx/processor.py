@@ -42,11 +42,9 @@ def _lookup_block_timestamp(*, chain: Chain, receipt: dict) -> tuple[int, dateti
     return ts, occurred_at
 
 
-def _block_hash_from_receipt(receipt: dict) -> str | None:
-    """从 receipt 提取 block_hash，未填则返回 None。"""
-    raw = receipt.get("blockHash")
-    if raw is None:
-        return None
+def _block_hash_from_receipt(receipt: dict) -> str:
+    """从 receipt 提取必填 block_hash。"""
+    raw = receipt["blockHash"]
     return _normalize_tx_hash(raw)
 
 

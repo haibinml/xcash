@@ -70,6 +70,7 @@ class DepositServiceCoreTests(TestCase):
         transfer = SimpleNamespace(
             chain=SimpleNamespace(chain="ethereum"),
             block=100,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "a" * 64,
             crypto=SimpleNamespace(symbol="USDT"),
             amount=Decimal("1.5"),
@@ -259,6 +260,7 @@ class DepositNotificationTests(TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "4" * 64,
             event_id="erc20:4",
             crypto=crypto,
@@ -339,6 +341,7 @@ def create_deposit_context(*, native: bool = False):
     transfer = Transfer.objects.create(
         chain=chain,
         block=1,
+        block_hash="0x" + "aa" * 32,
         hash="0x" + ("1" if native else "2") * 64,
         event_id="native:1" if native else "erc20:2",
         crypto=crypto,

@@ -138,6 +138,7 @@ class WithdrawalTxTaskTests(TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "2" * 64,
             event_id="native:0",
             crypto=crypto,
@@ -182,6 +183,7 @@ class WithdrawalTxTaskTests(TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "3" * 64,
             event_id="native:0",
             crypto=crypto,
@@ -232,6 +234,7 @@ class WithdrawalTxTaskTests(TestCase):
         transfer = Transfer.objects.create(
             chain=chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash="0x" + "5" * 64,
             event_id="native:5",
             crypto=crypto,
@@ -1555,6 +1558,7 @@ class WithdrawalStateTransitionTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id=f"native:{out_no}",
             crypto=self.crypto,
@@ -1682,6 +1686,7 @@ class WithdrawalStateTransitionTests(TestCase):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash,
             event_id="native:drop-task",
             crypto=self.crypto,
@@ -1889,6 +1894,7 @@ class WithdrawalTryMatchTests(TestCase):
         return Transfer.objects.create(
             chain=chain or self.chain,
             block=1,
+            block_hash="0x" + "aa" * 32,
             hash=tx_hash or self._next_hash(),
             event_id=event_id,
             crypto=self.crypto,
