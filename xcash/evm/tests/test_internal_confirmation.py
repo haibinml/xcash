@@ -9,6 +9,7 @@ from django.test import TestCase
 from django.utils import timezone
 from web3 import Web3
 
+from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import Chain
@@ -41,12 +42,8 @@ class EvmInternalTaskConfirmationTests(TestCase):
             decimals=6,
         )
         self.chain = Chain.objects.create(
-            code="eth-internal-confirm",
-            name="Ethereum Internal Confirm",
-            type=ChainType.EVM,
-            chain_id=20002,
-            rpc="http://localhost:8545",
-            native_coin=self.native,
+            code=ChainCode.Anvil,
+            rpc="",
             active=True,
         )
         ChainToken.objects.create(
@@ -142,6 +139,16 @@ class EvmInternalTaskConfirmationTests(TestCase):
         )
         evm_task.save(update_fields=["last_attempt_at"])
 
+    def _make_receipt_pollable(self, evm_task):
+        """将 evm_task 调整到只应查 receipt、尚不应重播的时间窗口。"""
+
+        from evm.constants import EVM_PENDING_RECEIPT_POLL_DELAY
+
+        evm_task.last_attempt_at = timezone.now() - timedelta(
+            seconds=EVM_PENDING_RECEIPT_POLL_DELAY + 1
+        )
+        evm_task.save(update_fields=["last_attempt_at"])
+
     @patch("withdrawals.service.WebhookService.create_event")
     @patch.object(Chain, "w3", new_callable=PropertyMock)
     def test_poller_fails_internal_withdrawal_when_receipt_status_zero(
@@ -181,14 +188,14 @@ class EvmInternalTaskConfirmationTests(TestCase):
         chain_w3_mock,
         webhook_mock,
     ):
-        """未超时的 PENDING_CHAIN 任务不做任何处理，等待 scanner 自然闭环。"""
+        """未达到 receipt 轮询延迟的 PENDING_CHAIN 任务不做任何处理。"""
         from evm.poller import EvmTaskPoller
         from withdrawals.models import WithdrawalStatus
 
         withdrawal, base_task, evm_task = self._create_withdrawal_with_pending_evm_task(
             tx_hash="0x" + "8" * 64
         )
-        # last_attempt_at=None 或在阈值内，都视为未超时
+        # last_attempt_at=None 或在短轮询延迟内，都视为暂不处理。
         chain_w3_mock.return_value = SimpleNamespace(
             eth=SimpleNamespace(
                 get_transaction_receipt=Mock(return_value={"status": 1}),
@@ -205,11 +212,73 @@ class EvmInternalTaskConfirmationTests(TestCase):
         webhook_mock.assert_not_called()
 
     @patch.object(Chain, "w3", new_callable=PropertyMock)
-    def test_poller_calls_observe_when_receipt_found_and_overdue(
+    def test_poller_processes_receipt_before_rebroadcast_timeout(
         self,
         chain_w3_mock,
     ):
-        """超时后查到 receipt status=1，协调器调用 _observe_confirmed_transaction 收口内部交易。"""
+        """receipt 轮询不应等到重播超时；命中 receipt 后立即交给内部处理器。"""
+        from evm.poller import EvmTaskPoller
+
+        tx_hash = "0x" + "a" * 64
+        receipt = {"status": 1, "blockNumber": 100}
+        _, _base_task, evm_task = self._create_withdrawal_with_pending_evm_task(
+            tx_hash=tx_hash
+        )
+        self._make_receipt_pollable(evm_task)
+        chain_w3_mock.return_value = SimpleNamespace(
+            eth=SimpleNamespace(
+                get_transaction_receipt=Mock(return_value=receipt),
+            )
+        )
+
+        with patch.object(
+            EvmTaskPoller,
+            "_process_succeeded_receipt",
+        ) as process_mock:
+            EvmTaskPoller.poll_chain(chain=self.chain)
+
+        process_mock.assert_called_once()
+        self.assertEqual(process_mock.call_args.kwargs["tx_hash"], tx_hash)
+
+    @patch.object(Chain, "w3", new_callable=PropertyMock)
+    def test_poller_does_not_rebroadcast_before_rebroadcast_timeout(
+        self,
+        chain_w3_mock,
+    ):
+        """receipt 暂不可见时，未达到重播阈值只等待下一轮 poll。"""
+        from web3.exceptions import TransactionNotFound
+
+        from evm.poller import EvmTaskPoller
+
+        _, base_task, evm_task = self._create_withdrawal_with_pending_evm_task(
+            tx_hash="0x" + "6" * 64
+        )
+        self._make_receipt_pollable(evm_task)
+        old_attempt_at = evm_task.last_attempt_at
+        send_raw_mock = Mock(return_value="0x" + "f" * 64)
+        chain_w3_mock.return_value = SimpleNamespace(
+            eth=SimpleNamespace(
+                get_transaction_receipt=Mock(
+                    side_effect=TransactionNotFound("missing")
+                ),
+                send_raw_transaction=send_raw_mock,
+            )
+        )
+
+        EvmTaskPoller.poll_chain(chain=self.chain)
+
+        evm_task.refresh_from_db()
+        base_task.refresh_from_db()
+        self.assertEqual(evm_task.last_attempt_at, old_attempt_at)
+        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        send_raw_mock.assert_not_called()
+
+    @patch.object(Chain, "w3", new_callable=PropertyMock)
+    def test_poller_processes_succeeded_receipt_when_found_and_overdue(
+        self,
+        chain_w3_mock,
+    ):
+        """超时后查到 receipt status=1，协调器调用 _process_succeeded_receipt 收口内部交易。"""
         from evm.poller import EvmTaskPoller
 
         tx_hash = "0x" + "b" * 64
@@ -226,11 +295,11 @@ class EvmInternalTaskConfirmationTests(TestCase):
 
         with patch.object(
             EvmTaskPoller,
-            "_observe_confirmed_transaction",
-        ) as observe_mock:
+            "_process_succeeded_receipt",
+        ) as process_mock:
             EvmTaskPoller.poll_chain(chain=self.chain)
-            observe_mock.assert_called_once()
-            call_kwargs = observe_mock.call_args.kwargs
+            process_mock.assert_called_once()
+            call_kwargs = process_mock.call_args.kwargs
             self.assertEqual(call_kwargs["tx_hash"], tx_hash)
             self.assertEqual(call_kwargs["receipt"], dict(receipt))
 
@@ -310,11 +379,11 @@ class EvmInternalTaskConfirmationTests(TestCase):
 
         with patch.object(
             EvmTaskPoller,
-            "_observe_confirmed_transaction",
-        ) as observe_mock:
+            "_process_succeeded_receipt",
+        ) as process_mock:
             EvmTaskPoller.poll_chain(chain=self.chain)
-            observe_mock.assert_called_once()
-            call_kwargs = observe_mock.call_args.kwargs
+            process_mock.assert_called_once()
+            call_kwargs = process_mock.call_args.kwargs
             self.assertEqual(call_kwargs["tx_hash"], old_hash)
             self.assertEqual(call_kwargs["receipt"], dict(old_receipt))
 

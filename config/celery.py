@@ -37,6 +37,10 @@ EVM_BROADCAST_SCHEDULE_SECONDS = get_int_default(
     "CELERY_EVM_BROADCAST_SCHEDULE_SECONDS",
     8,
 )
+EVM_SCAN_SCHEDULE_SECONDS = get_int(
+    "CELERY_EVM_SCAN_SCHEDULE_SECONDS",
+    "evm_scan_seconds",
+)
 EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS = get_int_default(
     "CELERY_EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS",
     60,
@@ -90,6 +94,10 @@ evm_tasks = {
     "dispatch_evm_tx_tasks": {
         "task": "evm.tasks.dispatch_evm_tx_tasks",
         "schedule": EVM_BROADCAST_SCHEDULE_SECONDS,
+    },
+    "scan_active_evm_chains": {
+        "task": "evm.tasks.scan_active_evm_chains",
+        "schedule": EVM_SCAN_SCHEDULE_SECONDS,
     },
     "confirm_non_transfer_tx_tasks": {
         "task": "evm.tasks.confirm_non_transfer_tx_tasks",

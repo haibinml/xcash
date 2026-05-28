@@ -753,7 +753,7 @@ class EvmTxTask(UndeletableModel):
         status = receipt.get("status")
         if status == 1:
             self._mark_pending_chain()
-            EvmTaskPoller._observe_confirmed_transaction(
+            EvmTaskPoller._process_succeeded_receipt(
                 evm_task=self,
                 tx_hash=tx_hash,
                 receipt=receipt,

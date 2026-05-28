@@ -4,30 +4,22 @@ from unittest.mock import Mock
 from django.test import TestCase
 from web3 import Web3
 
+from chains.constants import ChainCode
 from chains.models import Chain
-from chains.models import ChainType
 from currencies.models import ChainToken
 from currencies.models import Crypto
 
 
 class EvmAdapterTests(TestCase):
     def test_get_balance_treats_native_symbol_token_as_erc20_on_non_native_chain(self):
-        native = Crypto.objects.create(
-            name="Adapter Ether",
-            symbol="AETH",
-            coingecko_id="adapter-ether",
-        )
         token = Crypto.objects.create(
             name="Adapter BSC Token",
             symbol="BSC",
             coingecko_id="adapter-bsc-token",
         )
         chain = Chain.objects.create(
-            code="adapter-erc20-chain",
-            name="Adapter ERC20 Chain",
-            type=ChainType.EVM,
-            chain_id=919_001,
-            native_coin=native,
+            code=ChainCode.Anvil,
+            rpc="",
         )
         token_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000b01"
@@ -55,13 +47,9 @@ class EvmAdapterTests(TestCase):
         chain.w3.eth.contract.assert_called_once()
         balance_of.assert_called_once_with(owner)
 
-    def test_tx_result_returns_confirmed_when_status_is_one(self):
+    def test_tx_result_returns_succeeded_when_status_is_one(self):
         chain = Chain(
-            code="eth",
-            name="Ethereum",
-            type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            code=ChainCode.Anvil,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(
@@ -73,16 +61,12 @@ class EvmAdapterTests(TestCase):
         from evm.adapter import EvmAdapter
 
         result = EvmAdapter.tx_result(chain, "0x" + "ab" * 32)
-        self.assertEqual(result, TxCheckStatus.CONFIRMED)
+        self.assertEqual(result, TxCheckStatus.SUCCEEDED)
 
     def test_tx_result_returns_failed_when_status_is_zero(self):
         # 链上执行失败（revert）应返回 FAILED，而不是和 pending / not found 混为一类。
         chain = Chain(
-            code="eth",
-            name="Ethereum",
-            type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            code=ChainCode.Anvil,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(
@@ -96,15 +80,11 @@ class EvmAdapterTests(TestCase):
         result = EvmAdapter.tx_result(chain, "0x" + "ab" * 32)
         self.assertEqual(result, TxCheckStatus.FAILED)
 
-    def test_tx_result_returns_confirming_when_transaction_not_found(self):
+    def test_tx_result_returns_missing_when_transaction_not_found(self):
         from web3.exceptions import TransactionNotFound
 
         chain = Chain(
-            code="eth",
-            name="Ethereum",
-            type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            code=ChainCode.Anvil,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(
@@ -118,15 +98,11 @@ class EvmAdapterTests(TestCase):
         from evm.adapter import EvmAdapter
 
         result = EvmAdapter.tx_result(chain, "0x" + "ab" * 32)
-        self.assertEqual(result, TxCheckStatus.CONFIRMING)
+        self.assertEqual(result, TxCheckStatus.MISSING)
 
-    def test_tx_result_returns_confirming_when_receipt_is_none(self):
+    def test_tx_result_returns_missing_when_receipt_is_none(self):
         chain = Chain(
-            code="eth",
-            name="Ethereum",
-            type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            code=ChainCode.Anvil,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(
@@ -138,15 +114,11 @@ class EvmAdapterTests(TestCase):
         from evm.adapter import EvmAdapter
 
         result = EvmAdapter.tx_result(chain, "0x" + "ab" * 32)
-        self.assertEqual(result, TxCheckStatus.CONFIRMING)
+        self.assertEqual(result, TxCheckStatus.MISSING)
 
     def test_tx_result_returns_exception_when_receipt_missing_status(self):
         chain = Chain(
-            code="eth",
-            name="Ethereum",
-            type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            code=ChainCode.Anvil,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(
@@ -162,11 +134,7 @@ class EvmAdapterTests(TestCase):
     def test_tx_result_returns_exception_on_rpc_error(self):
         # RPC 调用异常（网络问题等）应返回异常对象，由上层决定是否重试。
         chain = Chain(
-            code="eth",
-            name="Ethereum",
-            type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            code=ChainCode.Anvil,
         )
         rpc_error = ConnectionError("node unreachable")
         chain.__dict__["w3"] = SimpleNamespace(

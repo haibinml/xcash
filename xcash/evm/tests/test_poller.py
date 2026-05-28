@@ -1,5 +1,5 @@
 """
-轮询器 _observe_confirmed_transaction 和 ERC20 Transfer 日志工具的单元测试。
+轮询器 _process_succeeded_receipt 和 ERC20 Transfer 日志工具的单元测试。
 
 覆盖：
 - 原生币路径：get_transaction + receipt → 内部交易处理器
@@ -184,9 +184,9 @@ class Erc20TransferLogUtilsTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Task 4：_observe_confirmed_transaction — 原生币路径
+# Task 4：_process_succeeded_receipt — 原生币路径
 # ---------------------------------------------------------------------------
-class ObserveConfirmedNativeTest(TestCase):
+class ProcessSucceededReceiptNativeTest(TestCase):
     """原生币路径：从 get_transaction 取 from/to/value，交给内部交易处理器。"""
 
     def setUp(self):
@@ -223,8 +223,8 @@ class ObserveConfirmedNativeTest(TestCase):
             tx_kind=TxKind.NATIVE_TRANSFER,
         )
 
-    def test_native_confirmed_feeds_to_internal_processor(self):
-        """原生币已确认时，_observe_confirmed_transaction 用正确载荷调用 TransferService。"""
+    def test_native_succeeded_receipt_feeds_to_internal_processor(self):
+        """原生币 receipt 成功时，_process_succeeded_receipt 用正确载荷调用内部处理器。"""
         tx_hash = "0x" + "ab" * 32
         receipt = {
             "blockNumber": 100,
@@ -253,7 +253,7 @@ class ObserveConfirmedNativeTest(TestCase):
                 "evm.internal_tx.processor.process_internal_transaction"
             ) as process_mock,
         ):
-            EvmTaskPoller._observe_confirmed_transaction(
+            EvmTaskPoller._process_succeeded_receipt(
                 evm_task=self.evm_task,
                 tx_hash=tx_hash,
                 receipt=receipt,
@@ -267,9 +267,9 @@ class ObserveConfirmedNativeTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Task 5b：_observe_confirmed_transaction — ERC-20 路径
+# Task 5b：_process_succeeded_receipt — ERC-20 路径
 # ---------------------------------------------------------------------------
-class ObserveConfirmedErc20Test(TestCase):
+class ProcessSucceededReceiptErc20Test(TestCase):
     """ERC-20 路径：从 receipt.logs 解析 Transfer，无需调用 get_transaction。"""
 
     def setUp(self):
@@ -319,8 +319,8 @@ class ObserveConfirmedErc20Test(TestCase):
             tx_kind=TxKind.CONTRACT_CALL,
         )
 
-    def test_erc20_confirmed_feeds_to_internal_processor(self):
-        """ERC-20 已确认时，从 receipt.logs 解析 Transfer，不调用 get_transaction。"""
+    def test_erc20_succeeded_receipt_feeds_to_internal_processor(self):
+        """ERC-20 receipt 成功时，从 receipt.logs 解析 Transfer，不调用 get_transaction。"""
         tx_hash = "0x" + "cd" * 32
         transfer_log = _make_erc20_transfer_log(
             contract_address=_CONTRACT_HEX,
@@ -351,7 +351,7 @@ class ObserveConfirmedErc20Test(TestCase):
                 "evm.internal_tx.processor.process_internal_transaction"
             ) as process_mock,
         ):
-            EvmTaskPoller._observe_confirmed_transaction(
+            EvmTaskPoller._process_succeeded_receipt(
                 evm_task=self.evm_task,
                 tx_hash=tx_hash,
                 receipt=receipt,
@@ -362,7 +362,7 @@ class ObserveConfirmedErc20Test(TestCase):
         self.assertEqual(process_mock.call_args.kwargs["receipt"], receipt)
         mock_w3.eth.get_transaction.assert_called_once_with(tx_hash)
 
-    def test_erc20_confirmed_ignores_mismatched_transfer_log(self):
+    def test_erc20_succeeded_receipt_ignores_mismatched_transfer_log(self):
         """receipt 内没有符合任务参数的 Transfer 日志时，不应创建观察转账。"""
         tx_hash = "0x" + "ce" * 32
         wrong_transfer_log = _make_erc20_transfer_log(
@@ -394,7 +394,7 @@ class ObserveConfirmedErc20Test(TestCase):
                 "evm.internal_tx.processor.process_internal_transaction"
             ) as process_mock,
         ):
-            EvmTaskPoller._observe_confirmed_transaction(
+            EvmTaskPoller._process_succeeded_receipt(
                 evm_task=self.evm_task,
                 tx_hash=tx_hash,
                 receipt=receipt,
@@ -656,7 +656,12 @@ class PollerIntegrationTest(TestCase):
             value_int=100_000_000,  # 100 USDC (6 decimals)
             log_index=3,
         )
-        receipt = {"status": 1, "blockNumber": block_number, "logs": [transfer_log]}
+        receipt = {
+            "status": 1,
+            "blockNumber": block_number,
+            "blockHash": "0x" + "61" * 32,
+            "logs": [transfer_log],
+        }
         return SimpleNamespace(
             eth=SimpleNamespace(
                 get_transaction_receipt=Mock(return_value=receipt),
@@ -674,7 +679,12 @@ class PollerIntegrationTest(TestCase):
 
     def _mock_native_rpc(self, *, tx_hash, block_number=100, timestamp=1700000000):
         """返回一个配好 native 场景 RPC mock 的 SimpleNamespace。"""
-        receipt = {"status": 1, "blockNumber": block_number, "logs": []}
+        receipt = {
+            "status": 1,
+            "blockNumber": block_number,
+            "blockHash": "0x" + "61" * 32,
+            "logs": [],
+        }
         return SimpleNamespace(
             eth=SimpleNamespace(
                 get_transaction_receipt=Mock(return_value=receipt),
@@ -740,7 +750,12 @@ class PollerIntegrationTest(TestCase):
         )
 
     def _mock_vault_slot_deploy_rpc(self, *, tx_hash, block_number=100):
-        receipt = {"status": 1, "blockNumber": block_number, "logs": []}
+        receipt = {
+            "status": 1,
+            "blockNumber": block_number,
+            "blockHash": "0x" + "61" * 32,
+            "logs": [],
+        }
         return SimpleNamespace(
             eth=SimpleNamespace(
                 get_transaction_receipt=Mock(return_value=receipt),
@@ -855,7 +870,7 @@ class PollerIntegrationTest(TestCase):
         self.chain.latest_block_number = 120
         self.chain.save(update_fields=["latest_block_number"])
         get_adapter_mock.return_value.tx_result.return_value = TxCheckResult(
-            status=TxCheckStatus.CONFIRMED,
+            status=TxCheckStatus.SUCCEEDED,
             block_number=100,
             block_hash="0x" + "62" * 32,
         )
@@ -988,7 +1003,7 @@ class PollerIntegrationTest(TestCase):
         Transfer.objects.create(
             chain=self.chain,
             block=100,
-            block_hash="0x" + "aa" * 32,
+            block_hash="0x" + "61" * 32,
             hash=tx_hash,
             crypto=self.token,
             from_address=_VAULT_HEX,

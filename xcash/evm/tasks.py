@@ -159,14 +159,12 @@ def confirm_non_transfer_tx_tasks() -> None:
 
         result_meta = raw_result if isinstance(raw_result, TxCheckResult) else None
         status = _tx_check_status(raw_result)
-        if status == TxCheckStatus.CONFIRMED:
+        if status == TxCheckStatus.SUCCEEDED:
             if not _has_required_confirmations(chain=task.chain, result=result_meta):
                 continue
             TxTask.mark_finalized_success(chain=task.chain, tx_hash=task.tx_hash)
-        elif status == TxCheckStatus.CONFIRMING:
+        elif status == TxCheckStatus.MISSING:
             continue
-        elif status == TxCheckStatus.DROPPED:
-            TxTask.reset_to_pending_chain(chain=task.chain, tx_hash=task.tx_hash)
         elif status == TxCheckStatus.FAILED:
             updated = TxTask.mark_finalized_failed(
                 task_id=task.pk,

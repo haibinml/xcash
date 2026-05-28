@@ -73,14 +73,14 @@ class EvmAdapter(AdapterInterface):
             receipt = chain.w3.eth.get_transaction_receipt(tx_hash)  # noqa: SLF001
         except TransactionNotFound:
             # 负载均衡 RPC 滞后、索引延迟或 pending 交易都可能暂时查不到 receipt。
-            # 这里保持确认中，由 confirm_transfer 做退避确认后再判断是否 drop。
-            return TxCheckStatus.CONFIRMING
+            # 这里返回 MISSING，由调用侧按自身确认/重播策略处理。
+            return TxCheckStatus.MISSING
         except Exception as exc:  # noqa: BLE001
             return exc
 
         if receipt is None:
             # 有些节点对 pending tx 返回 None，不能直接视为 reorg/drop。
-            return TxCheckStatus.CONFIRMING
+            return TxCheckStatus.MISSING
 
         status = receipt.get("status")
         result_meta = {
@@ -88,7 +88,7 @@ class EvmAdapter(AdapterInterface):
             "block_hash": cls._receipt_block_hash(receipt),
         }
         if status == 1:
-            return TxCheckResult(status=TxCheckStatus.CONFIRMED, **result_meta)
+            return TxCheckResult(status=TxCheckStatus.SUCCEEDED, **result_meta)
 
         if status == 0:
             # receipt 存在且明确执行失败，才可终局为 FAILED。

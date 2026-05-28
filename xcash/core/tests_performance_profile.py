@@ -50,3 +50,31 @@ class PerformanceProfileTests(SimpleTestCase):
 
         self.assertIn("export GUNICORN_WORKERS=9", completed.stdout)
         self.assertIn("export GUNICORN_THREADS=5", completed.stdout)
+
+    def test_celery_schedule_includes_evm_scan(self):
+        env = {
+            **os.environ,
+            "CELERY_EVM_SCAN_SCHEDULE_SECONDS": "13",
+            "DJANGO_SETTINGS_MODULE": "config.settings.test",
+        }
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from config.celery import app;"
+                    "item = app.conf.beat_schedule['scan_active_evm_chains'];"
+                    "print(item['task']);"
+                    "print(item['schedule'])"
+                ),
+            ],
+            check=True,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(
+            completed.stdout.splitlines(),
+            ["evm.tasks.scan_active_evm_chains", "13"],
+        )

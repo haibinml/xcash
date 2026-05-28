@@ -12,12 +12,13 @@ class TxCheckStatus(StrEnum):
     """链上交易结果查询的内存枚举。
 
     这里只描述“当前查到的交易结果”，不落库，也不参与业务状态机建模。
+    SUCCEEDED 表示适配器已查到成功交易结果；需要区块确认窗口的业务必须在调用侧
+    另行校验 block_number / block_hash 与 chain.confirm_block_count 后再进入确认态。
     """
 
-    CONFIRMING = "confirming"
-    CONFIRMED = "confirmed"
-    DROPPED = "dropped"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
+    MISSING = "missing"
 
 
 @dataclass(frozen=True, eq=False)

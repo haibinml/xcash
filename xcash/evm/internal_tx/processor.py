@@ -81,7 +81,7 @@ def process_internal_transaction(
     block_timestamp: int | None = None,
     occurred_at: datetime | None = None,
 ) -> ObservedTransferCreateResult | None:
-    """处理 tx.from 已确认是系统地址的 EVM 交易。"""
+    """处理 tx.from 已识别为系统地址的 EVM 交易。"""
     tx_hash = _normalize_tx_hash(tx["hash"])
     from_address = _normalize_address(tx["from"])
 

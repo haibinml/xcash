@@ -853,33 +853,6 @@ class TransferConfirmDispatchTests(TestCase):
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
     @patch("chains.tasks.AdapterFactory.get_adapter")
-    def test_confirm_transfer_handles_dropped_result_by_reverting_pending_chain(
-        self, get_adapter_mock, _cache_add_mock, _cache_delete_mock
-    ):
-        from chains.adapters import TxCheckStatus
-        from chains.tasks import confirm_transfer
-        from withdrawals.models import WithdrawalStatus
-
-        transfer, withdrawal, tx_task = self._create_withdrawal_transfer_fixture(
-            tx_hash="0x" + "e" * 64
-        )
-        adapter = Mock()
-        adapter.tx_result.return_value = TxCheckStatus.DROPPED
-        get_adapter_mock.return_value = adapter
-
-        confirm_transfer.run(transfer.pk)
-
-        self.assertFalse(Transfer.objects.filter(pk=transfer.pk).exists())
-        withdrawal.refresh_from_db()
-        self.assertEqual(withdrawal.status, WithdrawalStatus.PENDING)
-        self.assertIsNone(withdrawal.transfer)
-        tx_task.refresh_from_db()
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(tx_task.success)
-
-    @patch("common.decorators.cache.delete", return_value=True)
-    @patch("common.decorators.cache.add", return_value=True)
-    @patch("chains.tasks.AdapterFactory.get_adapter")
     def test_confirm_transfer_refreshes_block_when_receipt_moves_higher(
         self, get_adapter_mock, _cache_add_mock, _cache_delete_mock
     ):
@@ -893,7 +866,7 @@ class TransferConfirmDispatchTests(TestCase):
         )
         adapter = Mock()
         adapter.tx_result.return_value = TxCheckResult(
-            status=TxCheckStatus.CONFIRMED,
+            status=TxCheckStatus.SUCCEEDED,
             block_number=120,
             block_hash="0x" + "12" * 32,
         )
@@ -929,7 +902,7 @@ class TransferConfirmDispatchTests(TestCase):
         )
         adapter = Mock()
         adapter.tx_result.return_value = TxCheckResult(
-            status=TxCheckStatus.CONFIRMED,
+            status=TxCheckStatus.SUCCEEDED,
             block_number=transfer.block,
             block_hash="0x" + "22" * 32,
         )
@@ -949,7 +922,7 @@ class TransferConfirmDispatchTests(TestCase):
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
     @patch("chains.tasks.AdapterFactory.get_adapter")
-    def test_confirm_transfer_retries_confirming_result_before_drop(
+    def test_confirm_transfer_retries_missing_result_before_drop(
         self, get_adapter_mock, _cache_add_mock, _cache_delete_mock
     ):
         from chains.adapters import TxCheckStatus
@@ -960,7 +933,7 @@ class TransferConfirmDispatchTests(TestCase):
             tx_hash="0x" + "d" * 64
         )
         adapter = Mock()
-        adapter.tx_result.return_value = TxCheckStatus.CONFIRMING
+        adapter.tx_result.return_value = TxCheckStatus.MISSING
         get_adapter_mock.return_value = adapter
 
         with patch.object(
@@ -981,7 +954,7 @@ class TransferConfirmDispatchTests(TestCase):
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
     @patch("chains.tasks.AdapterFactory.get_adapter")
-    def test_confirm_transfer_drops_confirming_result_after_retry_limit(
+    def test_confirm_transfer_drops_missing_result_after_retry_limit(
         self, get_adapter_mock, _cache_add_mock, _cache_delete_mock
     ):
         from chains.adapters import TxCheckStatus
@@ -992,7 +965,7 @@ class TransferConfirmDispatchTests(TestCase):
             tx_hash="0x" + "c" * 64
         )
         adapter = Mock()
-        adapter.tx_result.return_value = TxCheckStatus.CONFIRMING
+        adapter.tx_result.return_value = TxCheckStatus.MISSING
         get_adapter_mock.return_value = adapter
 
         old_retries = confirm_transfer.request.retries

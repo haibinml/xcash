@@ -10,6 +10,7 @@ from chains.models import TxTask
 from chains.models import TxTaskStage
 from common.time import ago
 from evm.constants import EVM_PENDING_REBROADCAST_TIMEOUT
+from evm.constants import EVM_PENDING_RECEIPT_POLL_DELAY
 from evm.models import EvmTxTask
 
 logger = structlog.get_logger()
@@ -18,10 +19,10 @@ logger = structlog.get_logger()
 class EvmTaskPoller:
     """轮询内部 EVM 任务的链上终局状态。
 
-    对 PENDING_CHAIN 超过阈值仍未终局的任务，遍历所有历史 tx_hash 查询 receipt：
+    对 PENDING_CHAIN 超过短轮询延迟仍未终局的任务，遍历所有历史 tx_hash 查询 receipt：
     - 查到 receipt (status=1) -> 交给内部交易处理器按 TxTask 收口
     - 查到 receipt (status=0) -> 标记失败终局
-    - 所有 hash 均无 receipt -> 交易已被 mempool 丢弃，重新广播
+    - 所有 hash 均无 receipt 且超过重播阈值 -> 交易可能已被 mempool 丢弃，重新广播
     """
 
     @classmethod
@@ -32,7 +33,7 @@ class EvmTaskPoller:
                 chain=chain,
                 base_task__stage=TxTaskStage.PENDING_CHAIN,
                 base_task__success__isnull=True,
-                last_attempt_at__lt=ago(seconds=EVM_PENDING_REBROADCAST_TIMEOUT),
+                last_attempt_at__lt=ago(seconds=EVM_PENDING_RECEIPT_POLL_DELAY),
             )
             .order_by("address_id", "nonce", "created_at")
         )
@@ -52,18 +53,18 @@ class EvmTaskPoller:
                 )
                 continue
 
-            if status == TxCheckStatus.CONFIRMED:
-                assert tx_hash is not None  # CONFIRMED 分支一定携带命中的 hash
+            if status == TxCheckStatus.SUCCEEDED:
+                assert tx_hash is not None  # SUCCEEDED 分支一定携带命中的 hash
                 assert receipt is not None
                 try:
-                    cls._observe_confirmed_transaction(
+                    cls._process_succeeded_receipt(
                         evm_task=evm_task,
                         tx_hash=tx_hash,
                         receipt=receipt,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        "轮询器观察确认交易失败",
+                        "轮询器处理成功 receipt 失败",
                         chain=chain.code,
                         address=evm_task.address.address,
                         nonce=evm_task.nonce,
@@ -82,7 +83,11 @@ class EvmTaskPoller:
                     )
                     continue
             else:
-                # 所有历史 hash 都找不到 receipt，交易已被 mempool 丢弃，重新广播。
+                if evm_task.last_attempt_at >= ago(
+                    seconds=EVM_PENDING_REBROADCAST_TIMEOUT
+                ):
+                    continue
+                # 长时间所有历史 hash 都找不到 receipt，按 mempool 丢弃路径重新广播。
                 try:
                     evm_task.broadcast(allow_pending_chain_rebroadcast=True)
                 except Exception:  # noqa: BLE001
@@ -107,8 +112,9 @@ class EvmTaskPoller:
         """遍历任务的所有历史 tx_hash 查找链上 receipt。
 
         返回 (status, tx_hash, receipt):
-        - 找到 receipt -> (CONFIRMED 或 FAILED, 命中的 hash, receipt)
-        - 全部未找到 -> (CONFIRMING, None, None)
+        - 找到成功 receipt -> (SUCCEEDED, 命中的 hash, receipt)
+        - 找到失败 receipt -> (FAILED, 命中的 hash, None)
+        - 全部未找到 -> (MISSING, None, None)
         - RPC 异常 -> (Exception, None, None)
         """
         for tx_hash in evm_task._known_tx_hashes():
@@ -124,21 +130,21 @@ class EvmTaskPoller:
 
             status = receipt.get("status")
             if status == 1:
-                return TxCheckStatus.CONFIRMED, tx_hash, dict(receipt)
+                return TxCheckStatus.SUCCEEDED, tx_hash, dict(receipt)
             if status == 0:
                 return TxCheckStatus.FAILED, tx_hash, None
             return RuntimeError("EVM receipt status missing or invalid"), None, None
 
-        return TxCheckStatus.CONFIRMING, None, None
+        return TxCheckStatus.MISSING, None, None
 
     @staticmethod
-    def _observe_confirmed_transaction(
+    def _process_succeeded_receipt(
         *,
         evm_task: EvmTxTask,
         tx_hash: str,
         receipt: dict,
     ) -> None:
-        """轮询命中 receipt 时，把交易交给内部处理器统一推进。"""
+        """轮询命中成功 receipt 时，把交易交给内部处理器统一推进。"""
         from evm.internal_tx.processor import process_internal_transaction
 
         chain = evm_task.chain

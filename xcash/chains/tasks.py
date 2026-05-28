@@ -63,14 +63,14 @@ def confirm_transfer(self, pk):
         raise self.retry(exc=raw_result, countdown=countdown)
     result_meta = raw_result if isinstance(raw_result, TxCheckResult) else None
     result = result_meta.status if result_meta is not None else raw_result
-    if result == TxCheckStatus.CONFIRMED:
+    if result == TxCheckStatus.SUCCEEDED:
         if _refresh_transfer_chain_position_from_receipt(
             transfer=transfer,
             result=result_meta,
         ):
             return
         transfer.confirm()
-    elif result == TxCheckStatus.CONFIRMING:
+    elif result == TxCheckStatus.MISSING:
         if self.request.retries >= self.max_retries:
             transfer.drop()
             return
@@ -79,8 +79,6 @@ def confirm_transfer(self, pk):
             exc=RuntimeError(f"交易 receipt 暂不可见: {transfer.hash}"),
             countdown=countdown,
         )
-    elif result == TxCheckStatus.DROPPED:
-        transfer.drop()
     elif result == TxCheckStatus.FAILED:
         raise RuntimeError(
             "失败交易不应存在 Transfer 记录；请检查扫描器与内部任务协调器语义"

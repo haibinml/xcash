@@ -30,6 +30,5 @@ class TronAdapter(AdapterInterface):
 
         receipt = payload.get("receipt") or {}
         if payload.get("id") == tx_hash and receipt.get("result") == "SUCCESS":
-            return TxCheckStatus.CONFIRMED
-        return RuntimeError(f"tron tx {tx_hash} not confirmed")
-
+            return TxCheckStatus.SUCCEEDED
+        return RuntimeError(f"tron tx {tx_hash} not succeeded")

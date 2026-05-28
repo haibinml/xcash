@@ -9,6 +9,7 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.exceptions import TransactionNotFound
 
+from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import TxTask
@@ -994,12 +995,8 @@ class EvmTxTaskTests(TestCase):
             coingecko_id="ethereum-queued-receipt-recovery",
         )
         chain = Chain.objects.create(
-            code="eth-queued-receipt-recovery",
-            name="Ethereum Queued Receipt Recovery",
-            type=ChainType.EVM,
-            chain_id=20105,
-            rpc="http://localhost:8545",
-            native_coin=native,
+            code=ChainCode.Anvil,
+            rpc="",
             active=True,
         )
         addr = Address.objects.create(
@@ -1055,12 +1052,12 @@ class EvmTxTaskTests(TestCase):
         )
 
         with patch(
-            "evm.poller.EvmTaskPoller._observe_confirmed_transaction"
-        ) as observe_mock:
+            "evm.poller.EvmTaskPoller._process_succeeded_receipt"
+        ) as process_mock:
             tx_task.broadcast()
 
         send_raw_mock.assert_not_called()
-        observe_mock.assert_called_once()
+        process_mock.assert_called_once()
         base_task.refresh_from_db()
         self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
 
@@ -1072,12 +1069,8 @@ class EvmTxTaskTests(TestCase):
             coingecko_id="ethereum-nonce-too-low-recovery",
         )
         chain = Chain.objects.create(
-            code="eth-nonce-too-low-recovery",
-            name="Ethereum Nonce Too Low Recovery",
-            type=ChainType.EVM,
-            chain_id=20106,
-            rpc="http://localhost:8545",
-            native_coin=native,
+            code=ChainCode.Anvil,
+            rpc="",
             active=True,
         )
         addr = Address.objects.create(
@@ -1136,11 +1129,11 @@ class EvmTxTaskTests(TestCase):
         )
 
         with patch(
-            "evm.poller.EvmTaskPoller._observe_confirmed_transaction"
-        ) as observe_mock:
+            "evm.poller.EvmTaskPoller._process_succeeded_receipt"
+        ) as process_mock:
             tx_task.broadcast()
 
         send_raw_mock.assert_called_once()
-        observe_mock.assert_called_once()
+        process_mock.assert_called_once()
         base_task.refresh_from_db()
         self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
