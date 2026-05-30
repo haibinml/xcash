@@ -59,7 +59,7 @@ class InvoiceSetCryptoChainSerializer(Serializer):
             crypto = CryptoService.get_by_symbol(attrs["crypto"])
         except ObjectDoesNotExist:
             return False
-        return CryptoService.is_supported_on_chain(crypto, chain=chain)
+        return crypto.support_this_chain(chain)
 
 
 class InvoiceCreateSerializer(Serializer):
@@ -209,7 +209,7 @@ class InvoiceCreateSerializer(Serializer):
             crypto = CryptoService.get_by_symbol(crypto_symbol)
             for chain_code in chain_codes:
                 chain = chains_by_chain[chain_code]
-                if not CryptoService.is_supported_on_chain(crypto, chain=chain):
+                if not crypto.support_this_chain(chain):
                     raise APIError(ErrorCode.CHAIN_CRYPTO_NOT_SUPPORT)
 
     def _validate_differ_billing(self, attrs):

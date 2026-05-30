@@ -14,16 +14,14 @@ class ChainTokenSerializer(serializers.ModelSerializer):
 
 
 class InternalCryptoSerializer(serializers.ModelSerializer):
-    chain_tokens = ChainTokenSerializer(
-        source="chaintoken_set", many=True, read_only=True
-    )
+    chain_tokens = ChainTokenSerializer(many=True, read_only=True)
 
     class Meta:
         model = Crypto
         fields = [
             "name",
             "symbol",
-            "decimals",
+            "is_native",
             "prices",
             "active",
             "chain_tokens",

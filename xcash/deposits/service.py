@@ -11,7 +11,6 @@ from common.internal_callback import send_internal_callback
 from common.utils.math import format_decimal_stripped
 from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
-from deposits.models import DepositStatus
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
 from webhooks.service import WebhookService
@@ -27,7 +26,7 @@ class DepositService:
         deposit: Deposit, *, confirmed: bool | None = None
     ) -> dict:
         if confirmed is None:
-            confirmed = deposit.status == DepositStatus.COMPLETED
+            confirmed = deposit.confirmed
 
         customer = deposit.customer
         return {
@@ -67,10 +66,8 @@ class DepositService:
         deposit.worth = worth
 
     @classmethod
-    def _notify(cls, deposit: Deposit, status: str) -> None:
-        payload = cls.build_webhook_payload(
-            deposit, confirmed=status == DepositStatus.COMPLETED
-        )
+    def _notify(cls, deposit: Deposit, *, confirmed: bool) -> None:
+        payload = cls.build_webhook_payload(deposit, confirmed=confirmed)
         try:
             WebhookService.create_event(
                 project=deposit.customer.project, payload=payload
@@ -81,11 +78,11 @@ class DepositService:
     @classmethod
     def _pre_notify(cls, deposit: Deposit) -> None:
         if deposit.customer.project.pre_notify:
-            cls._notify(deposit, DepositStatus.CONFIRMING)
+            cls._notify(deposit, confirmed=False)
 
     @classmethod
     def notify_completed(cls, deposit: Deposit) -> None:
-        cls._notify(deposit, DepositStatus.COMPLETED)
+        cls._notify(deposit, confirmed=True)
 
     @classmethod
     def initialize_deposit(cls, deposit: Deposit) -> Deposit:
@@ -113,48 +110,33 @@ class DepositService:
         deposit = Deposit.objects.create(
             customer=customer,
             transfer=transfer,
-            status=DepositStatus.CONFIRMING,
         )
         cls.initialize_deposit(deposit)
         db_transaction.on_commit(lambda: mark_deposit_risk.delay(deposit.pk))
         return True
 
     @classmethod
-    @db_transaction.atomic
-    def _transition_status(cls, deposit: Deposit, target: str) -> bool:
-        Deposit.objects.select_for_update().filter(pk=deposit.pk).first()
-        deposit.refresh_from_db()
-
-        if deposit.status == target:
-            return False
-        if deposit.status != DepositStatus.CONFIRMING:
-            raise DepositStatusError("Deposit status must be CONFIRMING")
-
-        deposit.status = target
-        deposit.save(update_fields=["status", "updated_at"])
-        return True
-
-    @classmethod
     def confirm_deposit(cls, deposit: Deposit) -> None:
-        if cls._transition_status(deposit, DepositStatus.COMPLETED):
-            try:
-                cls.schedule_collect_for_completed_deposit(deposit)
-            except Exception:  # noqa
-                logger.exception("调度 VaultSlot 归集任务失败", deposit_id=deposit.pk)
-            cls.notify_completed(deposit)
-            send_internal_callback(
-                event="deposit.confirmed",
-                appid=deposit.customer.project.appid,
-                sys_no=deposit.sys_no,
-                worth=str(deposit.worth),
-                currency=deposit.transfer.crypto.symbol,
-            )
+        # 确认副作用（归集调度、webhook、内部回调）的「恰好一次」由上游
+        # Transfer.confirm 的行锁 + 幂等护栏保证，这里不再维护独立状态机。
+        try:
+            cls.schedule_collect_for_completed_deposit(deposit)
+        except Exception:  # noqa
+            logger.exception("调度 VaultSlot 归集任务失败", deposit_id=deposit.pk)
+        cls.notify_completed(deposit)
+        send_internal_callback(
+            event="deposit.confirmed",
+            appid=deposit.customer.project.appid,
+            sys_no=deposit.sys_no,
+            worth=str(deposit.worth),
+            currency=deposit.transfer.crypto.symbol,
+        )
 
     @staticmethod
     def schedule_collect_for_completed_deposit(deposit: Deposit) -> bool:
         deposit.refresh_from_db()
-        if deposit.status != DepositStatus.COMPLETED:
-            raise DepositStatusError("Deposit status must be COMPLETED")
+        if not deposit.confirmed:
+            raise DepositStatusError("Deposit transfer must be confirmed")
 
         transfer = deposit.transfer
         if transfer.crypto_id == transfer.chain.native_coin.pk:
@@ -163,11 +145,9 @@ class DepositService:
         return VaultSlot.schedule_collect_for_deposit(deposit.pk) is not None
 
     @classmethod
-    @db_transaction.atomic
     def drop_deposit(cls, deposit: Deposit) -> None:
-        if not Deposit.objects.select_for_update().filter(pk=deposit.pk).exists():
-            return
-        deposit.refresh_from_db()
-        if deposit.status != DepositStatus.CONFIRMING:
-            raise DepositStatusError("Deposit status must be CONFIRMING")
-        deposit.delete()
+        # Deposit 经 OneToOne(on_delete=CASCADE) 绑定 Transfer，Transfer.drop 删除转账时
+        # 会级联清除未确认充值，无需在此显式删除。但已确认充值不允许随 Transfer 回退被
+        # 静默抹除（典型为确认后 reorg），抛错中断整个 drop 事务交由人工排查。
+        if deposit.confirmed:
+            raise DepositStatusError("已确认充值不可回退")

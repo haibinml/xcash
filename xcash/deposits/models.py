@@ -5,13 +5,6 @@ from risk.models import RiskLevel
 from common.fields import SysNoField
 
 
-class DepositStatus(models.TextChoices):
-    # 状态1: 交易已上链，等待区块链确认数达标
-    CONFIRMING = "confirming", _("确认中")
-    # 状态2: 交易确认数达标，充值成功
-    COMPLETED = "completed", _("已完成")
-
-
 class Deposit(models.Model):
     sys_no = SysNoField(prefix="DXC")
     customer = models.ForeignKey(
@@ -29,11 +22,6 @@ class Deposit(models.Model):
         max_digits=16,
         decimal_places=6,
         default=0,
-    )
-    status = models.CharField(
-        choices=DepositStatus,
-        verbose_name=_("状态"),
-        default=DepositStatus.CONFIRMING,
     )
     risk_level = models.CharField(  # noqa: DJ001
         _("风险等级"),
@@ -58,7 +46,15 @@ class Deposit(models.Model):
         verbose_name_plural = _("充币")
 
     def __str__(self) -> str:
-        return f"Deposit({self.sys_no}, status={self.status})"
+        return f"Deposit({self.sys_no}, confirmed={self.confirmed})"
+
+    @property
+    def confirmed(self) -> bool:
+        # Deposit 与其 Transfer 完全同步、共存亡，确认状态直接取自链上转账，
+        # 不再维护独立状态机，避免双份真相。
+        from chains.models import TransferStatus
+
+        return self.transfer.status == TransferStatus.CONFIRMED
 
     @property
     def content(self):

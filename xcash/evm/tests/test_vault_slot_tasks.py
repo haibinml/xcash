@@ -24,7 +24,6 @@ from core.models import SystemWallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from deposits.models import Deposit
-from deposits.models import DepositStatus
 from evm.choices import TxKind
 from evm.constants import XCASH_VAULT_SLOT_FACTORY_ADDRESS
 from evm.intents import DEFAULT_VAULT_SLOT_COLLECT_GAS
@@ -164,6 +163,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
             crypto=self.token,
             chain=self.chain,
             address=self.token_address,
+            decimals=6,
         )
         deployed_patch = patch.object(
             VaultSlot,
@@ -712,5 +712,4 @@ class VaultSlotAddressSchedulingTests(TestCase):
         return Deposit.objects.create(
             customer=self.customer,
             transfer=transfer,
-            status=DepositStatus.COMPLETED,
         )

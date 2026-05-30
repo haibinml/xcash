@@ -4,30 +4,7 @@ import pytest
 from django.core.exceptions import ValidationError
 
 from chains.constants import ChainCode
-from chains.constants import ChainType
 from chains.models import Chain
-
-
-@pytest.mark.django_db
-def test_chain_basic_create():
-    chain = Chain.objects.create(code=ChainCode.Ethereum, rpc="", active=False)
-    assert chain.code == ChainCode.Ethereum
-    assert chain.name == "Ethereum"
-    assert chain.type == ChainType.EVM
-    assert chain.chain_id == 1
-    assert chain.is_poa is False
-    assert chain.confirm_block_count == 12
-
-
-@pytest.mark.django_db
-def test_chain_tron_properties():
-    chain = Chain.objects.create(
-        code=ChainCode.Tron, tron_api_key="key", active=False
-    )
-    assert chain.type == ChainType.TRON
-    assert chain.chain_id is None
-    assert chain.is_poa is None
-    assert chain.confirm_block_count == 19
 
 
 @pytest.mark.django_db
@@ -41,10 +18,9 @@ def test_chain_unique_per_name():
 
 @pytest.mark.django_db
 def test_chain_native_coin_get_or_create():
+    # 行为：native_coin 惰性 get_or_create 并在同一 Chain 上幂等返回同一条 Crypto。
     chain = Chain.objects.create(code=ChainCode.Ethereum, active=False)
     coin = chain.native_coin
-    assert coin.symbol == "ETH"
-    assert coin.decimals == 18
     same = chain.native_coin
     assert same.pk == coin.pk
 

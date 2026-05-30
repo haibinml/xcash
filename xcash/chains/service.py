@@ -81,7 +81,7 @@ class ObservedTransferPayload:
     value: Decimal
     amount: Decimal
     timestamp: int
-    occurred_at: datetime
+    datetime: datetime
     source: str = "observer"
 
 
@@ -136,7 +136,7 @@ class TransferService:
             "value": observed.value,
             "amount": observed.amount,
             "timestamp": observed.timestamp,
-            "datetime": observed.occurred_at,
+            "datetime": observed.datetime,
         }
 
     @staticmethod
@@ -152,8 +152,8 @@ class TransferService:
             updates["block_hash"] = observed.block_hash
         if transfer.timestamp != observed.timestamp:
             updates["timestamp"] = observed.timestamp
-        if transfer.datetime != observed.occurred_at:
-            updates["datetime"] = observed.occurred_at
+        if transfer.datetime != observed.datetime:
+            updates["datetime"] = observed.datetime
 
         if not updates:
             return []

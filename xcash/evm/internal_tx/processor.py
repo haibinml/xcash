@@ -127,7 +127,7 @@ def process_internal_transaction(
         value=fact.value,
         amount=fact.amount,
         timestamp=block_timestamp,
-        occurred_at=occurred_at,
+        datetime=occurred_at,
         block_hash=_block_hash_from_receipt(receipt),
         source="evm-internal-tx",
     )

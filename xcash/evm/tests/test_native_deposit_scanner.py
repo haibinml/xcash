@@ -52,8 +52,6 @@ class EvmLogScannerTests(TestCase):
     def setUp(self):
         cache.delete(SYSTEM_SETTINGS_CACHE_KEY)
         self.native = make_crypto(symbol="NATIVE-SCAN", name="Native Scanner Coin")
-        self.native.decimals = 18
-        self.native.save(update_fields=["decimals"])
         self.chain = make_evm_chain(
             code="native-scan",
             chain_id=910101,

@@ -28,22 +28,28 @@ class DepositAdmin(ReadOnlyModelAdmin):
         "created_at",
     )
     search_fields = ("sys_no", "customer__uid", "transfer__hash")
-    list_filter = ("status", "risk_level", "transfer__crypto", "transfer__chain")
+    list_filter = (
+        "transfer__status",
+        "risk_level",
+        "transfer__crypto",
+        "transfer__chain",
+    )
     readonly_fields = (
         "sys_no",
         "customer",
         "transfer",
         "worth",
-        "status",
+        "display_status",
         "risk_level",
         "risk_score",
         "created_at",
         "updated_at",
     )
 
-    @display(description="状态", label={"确认中": "info", "已完成": "success"})
+    @display(description="状态", label={"确认中": "info", "已确认": "success"})
     def display_status(self, instance: Deposit):
-        return instance.get_status_display()
+        # 充值状态与 Transfer 同步，直接展示链上转账状态。
+        return instance.transfer.get_status_display()
 
     @display(description="项目")
     def display_project(self, instance: Deposit):

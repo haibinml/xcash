@@ -123,7 +123,6 @@ class EvmErc20ScannerTests(TestCase):
             name="Scanner Tether USD",
             symbol="USDT-SCANNER",
             coingecko_id="tether-scanner",
-            decimals=18,
         )
         self.token_deployment = ChainToken.objects.create(
             crypto=self.token,

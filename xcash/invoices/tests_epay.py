@@ -375,6 +375,7 @@ class EpaySubmitServiceTests(TestCase):
             address=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000B1"
             ),
+            decimals=6,
         )
         Fiat.objects.get_or_create(code="CNY")
         DifferRecipientAddress.objects.create(

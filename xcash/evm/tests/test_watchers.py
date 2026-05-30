@@ -45,7 +45,6 @@ class EvmWatchSetCacheTests(TestCase):
             name="Watcher Token",
             symbol="WTKN",
             coingecko_id="watcher-token",
-            decimals=18,
         )
         self.token_deployment = ChainToken.objects.create(
             crypto=self.token,
@@ -167,7 +166,6 @@ class EvmWatchSetCacheTests(TestCase):
             name="Watcher Token Two",
             symbol="WTKN2",
             coingecko_id="watcher-token-two",
-            decimals=6,
         )
         token_address = Web3.to_checksum_address(
             "0x00000000000000000000000000000000000000ee"

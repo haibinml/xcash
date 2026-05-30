@@ -143,8 +143,10 @@ class Chain(models.Model):
             defaults={
                 "name": symbol,
                 "coingecko_id": symbol.lower(),
-                "decimals": self.spec.native_coin_decimals,
                 "active": True,
+                # 原生币精度落到 ChainToken（见 ensure_native_crypto_mapping_for_chain）；
+                # 这里仅在 Crypto 上标记原生币身份。
+                "is_native": True,
             },
         )
         return crypto
@@ -698,17 +700,18 @@ class TxTask(UndeletableModel):
         return TxTask.objects.filter(chain=chain, tx_hash=tx_hash).first()
 
     @staticmethod
-    def mark_finalized_success(*, chain: Chain, tx_hash: str) -> int:
-        """将匹配的任务标记为已确认终局。
+    def mark_finalized_success(*, chain: Chain, tx_hash: str) -> bool:
+        """将匹配的任务标记为已确认终局，返回是否真正发生了状态推进。
 
         使用 .update() 绕过 save()/full_clean() 以避免逐行加载；
         排除已处于终局态的任务，保证终局幂等且不被覆盖。
+        按单个主键过滤，故 .update() 至多命中一条，结果收敛为布尔。
         """
         if not tx_hash:
-            return 0
+            return False
         task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
-            return 0
+            return False
         updated = (
             TxTask.objects.filter(pk=task.pk)
             .exclude(status__in=TERMINAL_TX_TASK_STATUSES)
@@ -725,35 +728,41 @@ class TxTask(UndeletableModel):
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
-        return updated
+        return bool(updated)
 
     @staticmethod
     def mark_finalized_failed(
         *,
         task_id: int,
         expected_status: TxTaskStatus | None = None,
-    ) -> int:
-        """将匹配的任务标记为失败终局。"""
+    ) -> bool:
+        """将匹配的任务标记为失败终局，返回是否真正发生了状态推进。
+
+        按单个主键过滤，故 .update() 至多命中一条，结果收敛为布尔。
+        """
         queryset = TxTask.objects.filter(pk=task_id).exclude(
             status__in=TERMINAL_TX_TASK_STATUSES
         )
         if expected_status is not None:
             queryset = queryset.filter(status=expected_status)
-        return queryset.update(
-            status=TxTaskStatus.FAILED,
-            updated_at=timezone.now(),
+        return bool(
+            queryset.update(
+                status=TxTaskStatus.FAILED,
+                updated_at=timezone.now(),
+            )
         )
 
     @staticmethod
-    def reset_to_pending_chain(*, chain: Chain, tx_hash: str) -> int:
+    def reset_to_pending_chain(*, chain: Chain, tx_hash: str) -> bool:
         """将匹配的任务回退到待上链状态（用于 Transfer drop / reorg 恢复）。
 
         使用 .update() 绕过 save()/full_clean() 以避免逐行加载；
         只回退仍处于确认中的任务，已终局者不动。
+        按单个主键过滤，故 .update() 至多命中一条，结果收敛为布尔。
         """
         task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
-            return 0
+            return False
         updated = TxTask.objects.filter(
             pk=task.pk,
             status=TxTaskStatus.PENDING_CONFIRM,
@@ -769,20 +778,21 @@ class TxTask(UndeletableModel):
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
-        return updated
+        return bool(updated)
 
     @staticmethod
-    def mark_pending_confirm(*, chain: Chain, tx_hash: str) -> int:
+    def mark_pending_confirm(*, chain: Chain, tx_hash: str) -> bool:
         """链上已观察到交易后，将未终结的任务推进到确认中状态。
 
         使用 .update() 绕过 save()/full_clean() 以避免逐行加载；
         已终局的任务不再回拨。
+        按单个主键过滤，故 .update() 至多命中一条，结果收敛为布尔。
         """
         if not tx_hash:
-            return 0
+            return False
         task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
-            return 0
+            return False
         updated = (
             TxTask.objects.filter(pk=task.pk)
             .exclude(status__in=TERMINAL_TX_TASK_STATUSES)
@@ -799,7 +809,7 @@ class TxTask(UndeletableModel):
                 hash=tx_hash,
                 updated_at=timezone.now(),
             )
-        return updated
+        return bool(updated)
 
 
 class TransferStatus(models.TextChoices):
@@ -934,14 +944,8 @@ class Transfer(models.Model):
                 return False
             return handler.match(self, tx_task)
 
-        return self._legacy_match_internal_non_evm(tx_task)
-
-    def _legacy_match_internal_non_evm(self, tx_task: TxTask) -> bool:
-        from withdrawals.service import WithdrawalService
-
-        tt = tx_task.tx_type
-        if tt == TxTaskType.Withdrawal:
-            return WithdrawalService.try_match_withdrawal(self, tx_task)
+        # 提币等内部任务仅在 EVM 链创建（submit_withdrawal 强制 EVM），
+        # 非 EVM 链不存在可认领的内部任务，统一交回外部收款逻辑。
         return False
 
     @db_transaction.atomic
@@ -1032,29 +1036,19 @@ class Transfer(models.Model):
             return
 
     def _dispatch_withdrawal_confirm(self) -> None:
-        if self.chain.type == ChainType.EVM:
-            from evm.internal_tx.routing import get_handler
+        # 提币仅在 EVM 链产生（submit_withdrawal 强制 EVM），非 EVM 不存在提币 Transfer。
+        if self.chain.type != ChainType.EVM:
+            return
+        from evm.internal_tx.routing import get_handler
 
-            with contextlib.suppress(KeyError):
-                get_handler(TxTaskType.Withdrawal).confirm(self)
-                return
-
-        from withdrawals.models import Withdrawal
-        from withdrawals.service import WithdrawalService
-
-        with contextlib.suppress(Withdrawal.DoesNotExist):
-            WithdrawalService.confirm_withdrawal(self)
+        with contextlib.suppress(KeyError):
+            get_handler(TxTaskType.Withdrawal).confirm(self)
 
     def _dispatch_withdrawal_drop(self) -> None:
-        if self.chain.type == ChainType.EVM:
-            from evm.internal_tx.routing import get_handler
+        # 提币仅在 EVM 链产生（submit_withdrawal 强制 EVM），非 EVM 不存在提币 Transfer。
+        if self.chain.type != ChainType.EVM:
+            return
+        from evm.internal_tx.routing import get_handler
 
-            with contextlib.suppress(KeyError):
-                get_handler(TxTaskType.Withdrawal).drop(self)
-                return
-
-        from withdrawals.models import Withdrawal
-        from withdrawals.service import WithdrawalService
-
-        with contextlib.suppress(Withdrawal.DoesNotExist):
-            WithdrawalService.drop_withdrawal(self)
+        with contextlib.suppress(KeyError):
+            get_handler(TxTaskType.Withdrawal).drop(self)

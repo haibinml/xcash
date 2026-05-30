@@ -24,7 +24,6 @@ class EvmTxTaskScheduleTests(TestCase):
         self.native = Crypto.objects.create(
             name="Schedule Ether",
             symbol="ETHSCH",
-            decimals=18,
             coingecko_id="schedule-ether",
         )
         self.chain = make_evm_chain(

@@ -34,16 +34,12 @@ class EvmLogScannerTests(TestCase):
     def setUp(self):
         cache.delete(SYSTEM_SETTINGS_CACHE_KEY)
         self.native = make_crypto(symbol="LOG-NATIVE", name="Log Native")
-        self.native.decimals = 18
-        self.native.save(update_fields=["decimals"])
         self.chain = make_evm_chain(
             code="deposit-log-scan",
             chain_id=991001,
             native_coin=self.native,
         )
         self.token = make_crypto(symbol="LOG-USDT", name="Log USDT")
-        self.token.decimals = 18
-        self.token.save(update_fields=["decimals"])
         self.token_deployment = ChainToken.objects.create(
             crypto=self.token,
             chain=self.chain,

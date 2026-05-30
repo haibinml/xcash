@@ -13,8 +13,6 @@ from chains.models import TransferType
 from chains.models import TxTask
 from chains.models import TxTaskStatus
 from chains.models import TxTaskType
-from chains.transfer_matching import raw_amount
-from chains.transfer_matching import transfer_matches
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from common.internal_callback import send_internal_callback
@@ -613,64 +611,19 @@ class WithdrawalService:
         except Withdrawal.DoesNotExist:
             return False
 
-        update_fields = ["transfer", "updated_at"]
-
-        # 提币 chain 在创建时已强制写入，链不一致即视为错配，直接忽略。
-        if withdrawal.chain_id != transfer.chain_id:
-            logger.warning(
-                "链不匹配，忽略提币匹配",
-                withdrawal_id=withdrawal.id,
-                transfer_hash=transfer.hash,
-                expected_chain_id=withdrawal.chain_id,
-                actual_chain_id=transfer.chain_id,
-            )
-            return False
-
-        expected_chain = withdrawal.chain
-        expected_value = raw_amount(
-            amount=withdrawal.amount,
-            crypto=withdrawal.crypto,
-            chain=expected_chain,
-        )
-        if not transfer_matches(
-            transfer,
-            chain=expected_chain,
-            crypto=withdrawal.crypto,
-            from_address=tx_task.sender.address,
-            to_address=withdrawal.to,
-            value=expected_value,
-        ):
-            logger.warning(
-                "提币链上转账与提币单不匹配，忽略",
-                withdrawal_id=withdrawal.id,
-                tx_task_id=tx_task.pk,
-                transfer_id=transfer.pk,
-                tx_hash=transfer.hash,
-            )
-            return False
-
-        if withdrawal.review_status != WithdrawalReviewStatus.APPROVED:
-            # 非 APPROVED 通常意味着审核拒绝或异常脏数据，不应抛异常
-            # 抛 TypeError 会导致 Celery 任务失败并进入重试风暴
-            logger.warning(
-                "提币未批准，忽略匹配（可能为重复事件）",
-                withdrawal_id=withdrawal.id,
-                current_review_status=withdrawal.review_status,
-                transfer_hash=transfer.hash,
-            )
-            return False
-
+        # 命中 tx_task 即视为命中本提币单，无需再复核链上 chain/crypto/from/to/value：
+        # tx_task 由 tx_hash 解析，Transfer 在 (chain, hash) 唯一约束下一个 hash 仅一条，
+        # 且 EVM fact 提取（match_direct_transfer_fact）建 Transfer 前已严格校验过这些字段。
+        # 提币仅支持 EVM（submit_withdrawal 强制），不存在绕过 fact 校验的匹配入口。
         withdrawal.transfer = transfer
-        # 合并写入，避免 chain 为 None 时产生两次 DB 写操作
         # 明确 update_fields 防止覆盖其他字段的并发修改
-        withdrawal.save(update_fields=update_fields)
-        if withdrawal.tx_task_id:
-            # 提币一旦命中链上转账，就进入"待确认"；真正稳定成功仍要等确认数达标。
-            TxTask.mark_pending_confirm(
-                chain=transfer.chain,
-                tx_hash=transfer.hash,
-            )
-            withdrawal.tx_task.status = TxTaskStatus.PENDING_CONFIRM
+        withdrawal.save(update_fields=["transfer", "updated_at"])
+        # 提币一旦命中链上转账，就进入"待确认"；真正稳定成功仍要等确认数达标。
+        TxTask.mark_pending_confirm(
+            chain=transfer.chain,
+            tx_hash=transfer.hash,
+        )
+        withdrawal.tx_task.status = TxTaskStatus.PENDING_CONFIRM
         WithdrawalService.notify_status_changed(withdrawal)
 
         transfer.type = TransferType.Withdrawal

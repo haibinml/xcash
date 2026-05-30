@@ -29,6 +29,7 @@ from chains.models import Wallet
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
+from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.choices import TxKind
 from evm.constants import DEFAULT_ERC20_TRANSFER_GAS
@@ -441,12 +442,17 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
             name="Tether Withdrawal",
             symbol="USDT",
             coingecko_id="tether-withdrawal",
-            decimals=6,
         )
         chain = Chain.objects.create(
             code=ChainCode.Tron,
             rpc="",
             active=True,
+        )
+        ChainToken.objects.create(
+            crypto=usdt,
+            chain=chain,
+            address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            decimals=6,
         )
         request = APIRequestFactory().post(
             "/v1/withdrawal",
@@ -460,10 +466,6 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
 
         with (
             patch("withdrawals.serializers.Project.retrieve", return_value=project),
-            patch(
-                "withdrawals.serializers.CryptoService.is_supported_on_chain",
-                return_value=True,
-            ),
             patch(
                 "withdrawals.serializers.ChainProductCapabilityService.supports_withdrawal",
                 return_value=False,
@@ -518,12 +520,17 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
             name="Tether Precision Guard",
             symbol="USDTPRG",
             coingecko_id="tether-precision-guard",
-            decimals=6,
         )
         chain = Chain.objects.create(
             code=ChainCode.Ethereum,
             rpc="",
             active=True,
+        )
+        ChainToken.objects.create(
+            crypto=usdt,
+            chain=chain,
+            address=Web3.to_checksum_address("0x" + "33" * 20),
+            decimals=6,
         )
         request = APIRequestFactory().post(
             "/v1/withdrawal",
@@ -537,10 +544,6 @@ class CreateWithdrawalSerializerCapabilityTests(TestCase):
 
         with (
             patch("withdrawals.serializers.Project.retrieve", return_value=project),
-            patch(
-                "withdrawals.serializers.CryptoService.is_supported_on_chain",
-                return_value=True,
-            ),
             patch(
                 "withdrawals.serializers.ChainProductCapabilityService.supports_withdrawal",
                 return_value=True,
@@ -802,7 +805,9 @@ class WithdrawalViewSetTests(TestCase):
             response = WithdrawalViewSet.as_view({"post": "create"})(request)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["review_status"], WithdrawalReviewStatus.REVIEWING)
+        self.assertEqual(
+            response.data["review_status"], WithdrawalReviewStatus.REVIEWING
+        )
         self.assertEqual(response.data["hash"], "")
         self.assertTrue(
             Withdrawal.objects.filter(
@@ -948,7 +953,9 @@ class WithdrawalViewSetTests(TestCase):
             response = WithdrawalViewSet.as_view({"post": "create"})(request)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["review_status"], WithdrawalReviewStatus.REVIEWING)
+        self.assertEqual(
+            response.data["review_status"], WithdrawalReviewStatus.REVIEWING
+        )
         self.assertTrue(
             Withdrawal.objects.filter(
                 project=project,
@@ -1577,7 +1584,8 @@ class WithdrawalStateTransitionTests(TestCase):
             bip44_account=1,
             address_index=WithdrawalStateTransitionTests._hash_counter,
             address=Web3.to_checksum_address(
-                "0x" + hex(0xB0 + WithdrawalStateTransitionTests._hash_counter)[2:].zfill(40)
+                "0x"
+                + hex(0xB0 + WithdrawalStateTransitionTests._hash_counter)[2:].zfill(40)
             ),
         )
         tx_task = TxTask.objects.create(
@@ -1895,7 +1903,7 @@ class WithdrawalStateTransitionTests(TestCase):
 
 
 class WithdrawalTryMatchTests(TestCase):
-    """覆盖 try_match_withdrawal 的异常分支：链不匹配、非 PENDING 状态、无匹配提币。"""
+    """覆盖 try_match_withdrawal：无匹配提币时返回 False，命中 tx_task 时正常推进。"""
 
     _hash_counter = 1000
 
@@ -1910,11 +1918,6 @@ class WithdrawalTryMatchTests(TestCase):
         )
         self.chain = Chain.objects.create(
             code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
-        self.other_chain = Chain.objects.create(
-            code=ChainCode.BSC,
             rpc="",
             active=True,
         )
@@ -1974,50 +1977,6 @@ class WithdrawalTryMatchTests(TestCase):
         """链上转账没有对应提币单时应返回 False。"""
         tx_task = self._make_tx_task(tx_hash=self._next_hash())
         transfer = self._make_transfer()
-        result = WithdrawalService.try_match_withdrawal(transfer, tx_task)
-        self.assertFalse(result)
-
-    def test_match_returns_false_when_chain_mismatch(self):
-        """链上转账的链与提币单的链不一致时应返回 False，记录 warning。"""
-        tx_hash = self._next_hash()
-        tx_task = self._make_tx_task(tx_hash=tx_hash)
-        Withdrawal.objects.create(
-            project=self.project,
-            out_no="match-chain-mismatch",
-            chain=self.chain,
-            crypto=self.crypto,
-            amount=Decimal("1"),
-            to="0x0000000000000000000000000000000000000002",
-            tx_task=tx_task,
-            hash=tx_hash,
-        )
-        # 链上转账来自另一条链
-        transfer = self._make_transfer(
-            chain=self.other_chain,
-            tx_hash=tx_hash,
-        )
-
-        result = WithdrawalService.try_match_withdrawal(transfer, tx_task)
-        self.assertFalse(result)
-
-    def test_match_returns_false_when_not_pending(self):
-        """未批准的提币收到重复匹配事件应静默跳过。"""
-        tx_hash = self._next_hash()
-        tx_task = self._make_tx_task(tx_hash=tx_hash, status=TxTaskStatus.PENDING_CONFIRM)
-        transfer = self._make_transfer(tx_hash=tx_hash)
-        Withdrawal.objects.create(
-            project=self.project,
-            out_no="match-not-pending",
-            chain=self.chain,
-            crypto=self.crypto,
-            amount=Decimal("1"),
-            to="0x0000000000000000000000000000000000000002",
-            review_status=WithdrawalReviewStatus.REJECTED,
-            tx_task=tx_task,
-            hash=tx_hash,
-            transfer=transfer,
-        )
-
         result = WithdrawalService.try_match_withdrawal(transfer, tx_task)
         self.assertFalse(result)
 

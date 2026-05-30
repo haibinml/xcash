@@ -56,6 +56,13 @@ CHAIN_SPECS: dict[str, ChainSpec] = {
 }
 
 
+# 系统已知的链原生币符号集合，作为 Crypto.is_native 的合法域来源。
+# 直接从 CHAIN_SPECS 派生，避免在别处再硬编码一份易漂移的名单。
+NATIVE_COIN_SYMBOLS: frozenset[str] = frozenset(
+    spec.native_coin_symbol for spec in CHAIN_SPECS.values()
+)
+
+
 EVM_CHAIN_CODES: tuple[str, ...] = tuple(
     code for code, spec in CHAIN_SPECS.items() if spec.type == ChainType.EVM
 )

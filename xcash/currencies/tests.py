@@ -1,12 +1,9 @@
-from unittest.mock import patch
-
+from django.core.exceptions import ValidationError
 from django.test import TestCase
-from django.utils import timezone
+from web3 import Web3
 
 from chains.constants import ChainCode
 from chains.models import Chain
-from chains.models import Transfer
-from chains.models import TransferStatus
 from currencies.models import ChainToken
 from currencies.models import Crypto
 
@@ -22,61 +19,51 @@ class ChainNativeCryptoMappingTests(TestCase):
 
         native_mapping = ChainToken.objects.get(crypto=native_coin, chain=chain)
         self.assertEqual(native_mapping.address, "")
-        self.assertIsNone(native_mapping.decimals)
+        # 原生币精度以 ChainToken 为唯一真相，取自链的 ChainSpec（ETH=18）。
+        self.assertEqual(native_mapping.decimals, chain.spec.native_coin_decimals)
 
 
-class ChainTokenRemapTests(TestCase):
-    @patch("chains.tasks.process_transfer.apply_async")
-    @patch("chains.tasks.process_transfer.delay")
-    def test_remap_chain_mapping_updates_transfers_and_triggers_rematch(
-        self,
-        process_transfer_delay_mock,
-        _process_transfer_apply_async_mock,
-    ):
-        # 修改 ChainToken.crypto 后，历史 Transfer 应自动切到新币种，并触发一次业务重归类。
-        placeholder = Crypto.objects.create(
-            name="Pending eth usdt",
-            symbol="PENDING:eth:0x00000000000000000000000000000000000000aa",
-            coingecko_id="PENDING:eth:0x00000000000000000000000000000000000000aa",
-            active=False,
-        )
-        real_crypto = Crypto.objects.create(
-            name="Tether",
-            symbol="USDT",
-            coingecko_id="tether",
-        )
-        chain = Chain.objects.create(
+class ChainTokenImmutabilityTests(TestCase):
+    """ChainToken 的「地址↔币」身份定死：crypto/chain 创建后不可经 save() 变更。"""
+
+    def setUp(self):
+        self.chain = Chain.objects.create(
             code=ChainCode.Ethereum,
             rpc="",
             active=True,
         )
-        chain_token = ChainToken.objects.create(
-            crypto=placeholder,
-            chain=chain,
-            address="0x00000000000000000000000000000000000000AA",
+        self.usdt = Crypto.objects.create(
+            name="Tether", symbol="USDT", coingecko_id="tether"
         )
-        transfer = Transfer.objects.create(
-            chain=chain,
-            block=1,
-            block_hash="0x" + "aa" * 32,
-            hash="0x" + "1" * 64,
-            crypto=placeholder,
-            from_address="0x0000000000000000000000000000000000000002",
-            to_address="0x0000000000000000000000000000000000000003",
-            value="1",
-            amount="1",
-            timestamp=1,
-            datetime=timezone.now(),
-            status=TransferStatus.CONFIRMING,
-            processed_at=timezone.now(),
+        self.usdc = Crypto.objects.create(
+            name="USD Coin", symbol="USDC", coingecko_id="usd-coin"
+        )
+        self.token = ChainToken.objects.create(
+            crypto=self.usdt,
+            chain=self.chain,
+            address=Web3.to_checksum_address("0x" + "11" * 20),
+            decimals=6,
         )
 
-        # save() 内部通过 on_commit 调度重归类任务；TestCase 事务里要显式执行回调。
-        with self.captureOnCommitCallbacks(execute=True):
-            chain_token.crypto = real_crypto
-            chain_token.save(update_fields=["crypto"])
+    def test_changing_crypto_via_save_is_rejected(self):
+        self.token.crypto = self.usdc
+        with self.assertRaises(ValidationError):
+            self.token.save()
 
-        transfer.refresh_from_db()
-        self.assertEqual(transfer.crypto_id, real_crypto.id)
-        self.assertIsNone(transfer.processed_at)
-        process_transfer_delay_mock.assert_called_once_with(transfer.pk)
+        self.token.refresh_from_db()
+        self.assertEqual(self.token.crypto_id, self.usdt.id)
+
+    def test_changing_decimals_via_save_is_allowed(self):
+        # 精度等非身份字段可正常更新，守卫只锁 crypto/chain。
+        self.token.decimals = 8
+        self.token.save(update_fields=["decimals"])
+
+        self.token.refresh_from_db()
+        self.assertEqual(self.token.decimals, 8)
+
+    def test_merge_update_path_bypasses_guard(self):
+        # 占位符合并走 QuerySet.update()，是变更 crypto 的唯一受控入口，不受守卫限制。
+        ChainToken.objects.filter(pk=self.token.pk).update(crypto=self.usdc)
+
+        self.token.refresh_from_db()
+        self.assertEqual(self.token.crypto_id, self.usdc.id)

@@ -60,7 +60,9 @@ def merge_placeholder_crypto(modeladmin, request, queryset):
                         )
                         continue
                     ct.crypto = target
-                    # 占位符合并只改写 crypto 外键，不依赖 save() 信号，直接 update 更收敛。
+                    # 这是变更 ChainToken.crypto 的唯一受控入口：用 QuerySet.update() 直接落库，
+                    # 既旁路 ChainToken.save() 的不变量守卫（ensure_mapping_immutable），
+                    # 也不触发 save() 信号，改写更收敛。
                     ChainToken.objects.filter(pk=ct.pk).update(crypto=target)
 
                 # 步骤 2：全量更新 Transfer（含 CONFIRMING），确保后续重归类使用目标币种
@@ -88,7 +90,7 @@ class ChainTokenInline(TabularInline):
     extra = 0
     verbose_name = _("链上部署")
     verbose_name_plural = _("链上部署")
-    fields = ("chain", "address", "decimals")
+    fields = ("chain", "address", "decimals", "active")
 
 
 @admin.register(Crypto)
@@ -97,7 +99,7 @@ class CryptoAdmin(ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         if obj:
-            return "symbol", "decimals", "prices"
+            return "symbol", "prices"
         return ()
 
     list_display = (
@@ -105,10 +107,10 @@ class CryptoAdmin(ModelAdmin):
         "symbol",
         "supported_chains",
         "display_type",
-        "decimals",
+        "is_native",
         "active",
     )
-    list_filter = ("active",)
+    list_filter = ("active", "is_native")
     actions = [merge_placeholder_crypto]
 
     @display(

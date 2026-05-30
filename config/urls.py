@@ -1,9 +1,8 @@
 # ruff: noqa
 from django.conf import settings
 from django.contrib import admin
-from django.urls import include, reverse_lazy
+from django.urls import include
 from django.urls import path
-from django.views.generic import RedirectView
 
 from core.dashboard import operational_inspection_view, signer_overview_view
 from invoices.epay_views import EpaySubmitView

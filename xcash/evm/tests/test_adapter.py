@@ -27,8 +27,10 @@ class EvmAdapterTests(TestCase):
         owner = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000b02"
         )
-        ChainToken.objects.create(chain=chain, crypto=token, address=token_address)
-        assert token.is_native
+        ChainToken.objects.create(
+            chain=chain, crypto=token, address=token_address, decimals=6
+        )
+        # 该币虽以 ERC20 形式部署在 Anvil，但不是该链原生币，get_balance 应走合约路径。
         assert token != chain.native_coin
         balance_call = Mock(return_value=77)
         balance_of = Mock(return_value=SimpleNamespace(call=balance_call))

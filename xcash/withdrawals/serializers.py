@@ -88,7 +88,7 @@ class CreateWithdrawalSerializer(Serializer):
         adapter = AdapterFactory.get_adapter(chain_type=chain.type)
 
         # 1. 链+币种组合校验（本地）
-        if not CryptoService.is_supported_on_chain(crypto, chain=chain):
+        if not crypto.support_this_chain(chain):
             raise APIError(ErrorCode.CHAIN_CRYPTO_NOT_SUPPORT)
         if not ChainProductCapabilityService.supports_withdrawal(
             chain=chain,

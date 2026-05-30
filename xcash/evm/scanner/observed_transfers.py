@@ -151,7 +151,7 @@ class EvmObservedTransferProcessor:
             to_address=slot_address,
             crypto=chain.native_coin,
             value=value,
-            amount=value.scaleb(-chain.native_coin.decimals),
+            amount=value.scaleb(-chain.native_coin.get_decimals(chain)),
         )
 
     @classmethod
@@ -200,9 +200,7 @@ class EvmObservedTransferProcessor:
         if value <= 0:
             return None
 
-        decimals = (
-            token.decimals if token.decimals is not None else token.crypto.decimals
-        )
+        decimals = token.decimals
         return ParsedEvmTransferLog(
             block_number=block_number,
             block_hash=block_hash,
@@ -255,7 +253,7 @@ class EvmObservedTransferProcessor:
                     value=log.value,
                     amount=log.amount,
                     timestamp=timestamp,
-                    occurred_at=datetime.fromtimestamp(
+                    datetime=datetime.fromtimestamp(
                         timestamp,
                         tz=timezone.get_current_timezone(),
                     ),

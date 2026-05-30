@@ -413,7 +413,7 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
         # 节点查不到 hash 时，Transfer 被 drop，提币回退到 PENDING 等待重新匹配。
         self._require_anvil()
         chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
+            code=ChainCode.Anvil,
             rpc=self.EVM_RPC,
             active=True,
         )
@@ -432,7 +432,7 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
         )
         tx_task = TxTask.objects.create(
             chain=chain,
-            address=addr,
+            sender=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "9" * 64,
             status=TxTaskStatus.PENDING_CONFIRM,

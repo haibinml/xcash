@@ -62,7 +62,7 @@ def _xcash_collected_log(*, slot, token, value_raw, log_index):
 def _base_task_without_asset_fields(*, chain, address, tx_type, tx_hash_suffix):
     return TxTask.objects.create(
         chain=chain,
-        address=address,
+        sender=address,
         tx_type=tx_type,
         tx_hash=make_tx_hash(tx_hash_suffix),
         status=TxTaskStatus.PENDING_CHAIN,
@@ -72,7 +72,7 @@ def _base_task_without_asset_fields(*, chain, address, tx_type, tx_hash_suffix):
 def _native_evm_task(*, base_task, address, chain, to, value_raw, nonce=0):
     return EvmTxTask.objects.create(
         base_task=base_task,
-        address=address,
+        sender=address,
         chain=chain,
         nonce=nonce,
         to=Web3.to_checksum_address(to),
@@ -111,16 +111,19 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
     def test_vault_slot_collect_erc20_success_creates_collect_transfer(self):
         chain = make_evm_chain(code="eth-slot-collect", chain_id=43016)
         address = make_evm_system_address(suffix="ad06", usage=AddressUsage.HotWallet)
-        project = Project.objects.create(name="SlotCollectProject", wallet=address.wallet)
         slot_address = Web3.to_checksum_address("0x" + "88" * 20)
         vault_address = Web3.to_checksum_address("0x" + "99" * 20)
+        project = Project.objects.create(
+            name="SlotCollectProject",
+            wallet=address.wallet,
+            vault=vault_address,
+        )
         VaultSlot.objects.create(
             project=project,
             chain=chain,
             usage=VaultSlotUsage.INVOICE,
             invoice_index=1,
             address=slot_address,
-            vault_address=vault_address,
             salt=b"\x01" * 32,
         )
         token = make_erc20_token(chain=chain, address_suffix="c016", decimals=6)
@@ -131,14 +134,14 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
             tx_hash_suffix="7777",
         )
         intent = build_vault_slot_collect_intent(
-            address=address,
+            sender=address,
             chain=chain,
             vault_slot_address=slot_address,
             token_address=token.address(chain),
         )
         EvmTxTask.objects.create(
             base_task=task,
-            address=address,
+            sender=address,
             chain=chain,
             nonce=0,
             to=intent.to,
@@ -216,7 +219,7 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         )
         EvmTxTask.objects.create(
             base_task=task,
-            address=address,
+            sender=address,
             chain=chain,
             nonce=0,
             to=Web3.to_checksum_address("0x" + "88" * 20),

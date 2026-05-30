@@ -916,7 +916,6 @@ class StressRecipientSetupTests(TestCase):
             symbol="USDT",
             defaults={
                 "name": "Tether USD",
-                "decimals": 6,
                 "coingecko_id": "tether",
                 "prices": {"USD": "1"},
             },
@@ -931,7 +930,7 @@ class StressRecipientSetupTests(TestCase):
         ChainToken.objects.update_or_create(
             chain=self.ethereum_local,
             crypto=self.eth,
-            defaults={"address": "", "decimals": None},
+            defaults={"address": "", "decimals": 18},
         )
         ChainToken.objects.update_or_create(
             chain=self.ethereum_local,

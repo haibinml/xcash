@@ -55,6 +55,7 @@ class TronUsdtPaymentScanner:
                 chain=chain,
                 crypto__symbol="USDT",
                 crypto__active=True,
+                active=True,
             )
             .get()
         )
@@ -325,11 +326,7 @@ class TronUsdtPaymentScanner:
             timestamp_ms / 1000,
             tz=timezone.get_current_timezone(),
         )
-        decimals = (
-            usdt_mapping.decimals
-            if usdt_mapping.decimals is not None
-            else usdt_mapping.crypto.decimals
-        )
+        decimals = usdt_mapping.decimals
         return ParsedTronTransferEvent(
             observed=ObservedTransferPayload(
                 chain=chain,
@@ -341,7 +338,7 @@ class TronUsdtPaymentScanner:
                 value=value,
                 amount=value.scaleb(-decimals),
                 timestamp=timestamp_ms // 1000,
-                occurred_at=occurred_at,
+                datetime=occurred_at,
                 block_hash=block_hash,
                 source="tron-scan",
             )

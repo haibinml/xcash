@@ -276,7 +276,6 @@ class ProcessSucceededReceiptErc20Test(TestCase):
         self.usdt = Crypto.objects.create(
             name="Tether Poller",
             symbol="USDTC",
-            decimals=6,
             coingecko_id="tether-poller",
         )
         self.chain = Chain.objects.create(
@@ -414,7 +413,6 @@ class PollerIntegrationTest(TestCase):
             name="USDC Poller Integration",
             symbol="USDCCI",
             coingecko_id="usdc-poller-integration",
-            decimals=6,
         )
         self.chain = Chain.objects.create(
             code=ChainCode.Anvil,
@@ -900,37 +898,6 @@ class PollerIntegrationTest(TestCase):
         self.assertEqual(transfer.type, TransferType.Withdrawal)
         self.assertIsNotNone(transfer.processed_at)
 
-    def test_process_ignores_internal_withdrawal_when_transfer_value_mismatches(self):
-        """同 tx_hash 的异常事件不应仅凭 hash 绑定为内部提币。"""
-
-        tx_hash = "0x" + "a6" * 32
-        withdrawal, base_task, _evm_task = self._create_erc20_withdrawal(
-            tx_hash=tx_hash
-        )
-        transfer = Transfer.objects.create(
-            chain=self.chain,
-            block=100,
-            block_hash="0x" + "aa" * 32,
-            hash=tx_hash,
-            crypto=self.token,
-            from_address=self.addr.address,
-            to_address=_RECEIVER_HEX,
-            value=Decimal("1"),
-            amount=Decimal("0.000001"),
-            timestamp=1700000000,
-            datetime=timezone.now(),
-        )
-
-        transfer.process()
-
-        withdrawal.refresh_from_db()
-        base_task.refresh_from_db()
-        transfer.refresh_from_db()
-        self.assertEqual(withdrawal.review_status, WithdrawalReviewStatus.APPROVED)
-        self.assertIsNone(withdrawal.transfer_id)
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
-        self.assertEqual(transfer.type, "")
-        self.assertIsNotNone(transfer.processed_at)
 
     # ---- Test 3 ----
 

@@ -367,7 +367,7 @@ class DashboardEnvironmentStatusTests(TestCase):
 
         badge = environment_callback(self.factory.get("/admin/"))
 
-        self.assertEqual(badge, ["3项待处理", "warning"])
+        self.assertEqual(badge, ["2项待处理", "warning"])
 
     @patch("core.monitoring.OperationalRiskService.build_summary")
     @patch("core.dashboard.build_signer_dashboard_summary")

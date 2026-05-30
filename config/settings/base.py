@@ -279,7 +279,7 @@ STATIC_URL = "/static/"
 STATICFILES_DIRS = [
     str(APPS_DIR / "static"),
     # 支付前端构建产物，collectstatic 后托管至 /static/pay/
-    ("pay", str(BASE_DIR / "pay-fronted" / "dist")),
+    ("pay", str(BASE_DIR / "pay-fronted" / "dist")),  # noqa
 ]
 
 # TEMPLATES

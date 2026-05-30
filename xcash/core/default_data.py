@@ -24,14 +24,17 @@ LOCAL_EVM_TOKEN_MAPPINGS = (
     {
         "crypto_symbol": "USDT",
         "env": "LOCAL_EVM_USDT_ADDRESS",
+        "decimals": LOCAL_EVM_USDT_DECIMALS,
     },
     {
         "crypto_symbol": "USDC",
         "env": "LOCAL_EVM_USDC_ADDRESS",
+        "decimals": 6,
     },
     {
         "crypto_symbol": "DAI",
         "env": "LOCAL_EVM_DAI_ADDRESS",
+        "decimals": 18,
     },
 )
 
@@ -100,32 +103,27 @@ def ensure_base_currencies(*, using: str = "default", stdout=None) -> None:
         # Coingecko 正确 ID 为 ethereum，错误 ID 会导致价格刷新永远取不到数据。
         name="Ethereum",
         symbol="ETH",
-        coingecko_id="ethereum",
-        decimals=18,
+        defaults={"coingecko_id": "ethereum", "is_native": True},
     )
     crypto_manager.get_or_create(
         name="TRON",
         symbol="TRX",
-        coingecko_id="tron",
-        decimals=6,
+        defaults={"coingecko_id": "tron", "is_native": True},
     )
     crypto_manager.get_or_create(
         name="Tether",
         symbol="USDT",
-        coingecko_id="tether",
-        decimals=6,
+        defaults={"coingecko_id": "tether"},
     )
     crypto_manager.get_or_create(
         name="USDC",
         symbol="USDC",
-        coingecko_id="usd-coin",
-        decimals=6,
+        defaults={"coingecko_id": "usd-coin"},
     )
     crypto_manager.get_or_create(
         name="Dai",
         symbol="DAI",
-        coingecko_id="dai",
-        decimals=18,
+        defaults={"coingecko_id": "dai"},
     )
     if stdout is not None:
         stdout.write("✅ 货币初始化完成")
@@ -138,21 +136,18 @@ def ensure_production_currencies(*, using: str = "default", stdout=None) -> None
     crypto_manager.get_or_create(
         name="BNB",
         symbol="BNB",
-        coingecko_id="binancecoin",
-        decimals=18,
+        defaults={"coingecko_id": "binancecoin", "is_native": True},
     )
     # Polygon PoS 主网当前 gas token 为 POL；这里显式建模，避免把 Polygon 误绑到 ETH/BNB。
     crypto_manager.get_or_create(
         name="Polygon Ecosystem Token",
         symbol="POL",
-        coingecko_id="polygon",
-        decimals=18,
+        defaults={"coingecko_id": "polygon", "is_native": True},
     )
     crypto_manager.get_or_create(
         name="Avalanche",
         symbol="AVAX",
-        coingecko_id="avalanche-2",
-        decimals=18,
+        defaults={"coingecko_id": "avalanche-2", "is_native": True},
     )
     if stdout is not None:
         stdout.write("✅ 生产主网原生币初始化完成")
@@ -167,7 +162,8 @@ def ensure_chain_native_mapping(
     ChainToken.objects.using(using).get_or_create(
         crypto=crypto_obj,
         chain=chain_obj,
-        defaults={"address": ""},
+        # 原生币精度以 ChainToken 为唯一真相，取自链的 ChainSpec。
+        defaults={"address": "", "decimals": chain_obj.spec.native_coin_decimals},
     )
 
 
@@ -177,9 +173,12 @@ def ensure_chain_token_mapping(
     chain_name: str,
     crypto_symbol: str,
     address: str,
-    decimals: int | None = None,
+    decimals: int,
 ) -> None:
-    """为链上 ERC20/同类合约资产补齐 ChainToken 映射。"""
+    """为链上 ERC20/同类合约资产补齐 ChainToken 映射。
+
+    decimals 为该币在本链上的精度，必填——它是精度的唯一真相。
+    """
     chain_obj = Chain.objects.using(using).get(code=chain_name)
     normalized_address = address.strip()
     if not normalized_address:
@@ -226,6 +225,7 @@ def ensure_default_evm_token_mappings(
             chain_name=chain_name,
             crypto_symbol=token_config["crypto_symbol"],
             address=address,
+            decimals=token_config["decimals"],
         )
         created_symbols.append(token_config["crypto_symbol"])
 

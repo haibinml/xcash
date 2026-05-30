@@ -16,7 +16,6 @@ from django.test import TestCase
 from django.test import override_settings
 from django.utils import timezone
 from web3 import Web3
-from web3.exceptions import ExtraDataLengthError
 
 from chains.constants import ChainCode
 from chains.constants import ChainType
@@ -71,12 +70,18 @@ class TransferMatchingTests(TestCase):
             name="Transfer Match Coin",
             symbol="TMC",
             coingecko_id="transfer-match-coin",
-            decimals=6,
         )
         chain = Chain.objects.create(
             code=ChainCode.BSC,
             rpc="",
             active=True,
+        )
+        # 精度以 ChainToken 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
+        ChainToken.objects.create(
+            crypto=native,
+            chain=chain,
+            address=Web3.to_checksum_address("0x" + "11" * 20),
+            decimals=6,
         )
         from_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000001"
@@ -125,12 +130,18 @@ class TransferMatchingTests(TestCase):
             name="Raw Amount Trunc",
             symbol="RAT",
             coingecko_id="raw-amount-trunc",
-            decimals=6,
         )
         chain = Chain.objects.create(
             code=ChainCode.Polygon,
             rpc="",
             active=True,
+        )
+        # 精度以 ChainToken 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
+        ChainToken.objects.create(
+            crypto=crypto,
+            chain=chain,
+            address=Web3.to_checksum_address("0x" + "22" * 20),
+            decimals=6,
         )
 
         value_raw = int(Decimal("0.01480216") * Decimal(10**6))
@@ -178,38 +189,6 @@ class TransferMatchingTests(TestCase):
         )
 
 
-class ChainPoaRetryTests(TestCase):
-    def setUp(self):
-        self.chain = Chain.objects.create(
-            code=ChainCode.BSC,
-            rpc="",
-            active=True,
-        )
-        Chain.objects.filter(pk=self.chain.pk).update(rpc="http://bsc.local")
-        self.chain.rpc = "http://bsc.local"
-
-    @patch("chains.models.Web3")
-    def test_get_block_with_poa_retry_marks_chain_and_rebuilds_cached_w3(
-        self, web3_mock
-    ):
-        failing_w3 = Mock()
-        failing_w3.eth.get_block.side_effect = ExtraDataLengthError(
-            "poa extraData too long"
-        )
-        retry_w3 = Mock()
-        retry_w3.eth.get_block.return_value = {"timestamp": 1_776_734_136}
-        web3_mock.return_value = retry_w3
-        self.chain.__dict__["w3"] = failing_w3
-
-        block = self.chain.get_block_with_poa_retry(93_739_122)
-
-        self.assertEqual(block["timestamp"], 1_776_734_136)
-        self.chain.refresh_from_db()
-        self.assertTrue(self.chain.is_poa)
-        self.assertIs(self.chain.__dict__["w3"], retry_w3)
-        retry_w3.middleware_onion.inject.assert_called_once()
-
-
 class TxTaskValidationTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
@@ -255,7 +234,7 @@ class TxHashModelTests(TestCase):
         )
         self.task = TxTask.objects.create(
             chain=self.chain,
-            address=self.addr,
+            sender=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "a1" * 32,
             status=TxTaskStatus.QUEUED,
@@ -329,7 +308,7 @@ class TxTaskTxHashHistoryTests(TestCase):
         )
         self.task = TxTask.objects.create(
             chain=self.chain,
-            address=self.addr,
+            sender=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "e1" * 32,
             status=TxTaskStatus.QUEUED,
@@ -719,7 +698,7 @@ class TransferConfirmDispatchTests(TestCase):
                 value=Decimal("1"),
                 amount=Decimal("1"),
                 timestamp=2,
-                occurred_at=observed_at,
+                datetime=observed_at,
                 source="test-reorg",
             )
         )
@@ -782,7 +761,7 @@ class TransferConfirmDispatchTests(TestCase):
                 value=Decimal("1"),
                 amount=Decimal("1"),
                 timestamp=1,
-                occurred_at=observed_at - timedelta(seconds=15),
+                datetime=observed_at - timedelta(seconds=15),
                 source="test-reorg-stale",
             )
         )
@@ -1348,7 +1327,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=1000,
             amount=1,
             timestamp=1700000000,
-            occurred_at=timezone.now(),
+            datetime=timezone.now(),
             source="test",
         )
 
@@ -1402,7 +1381,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=self.payload.value,
             amount=self.payload.amount,
             timestamp=self.payload.timestamp,
-            datetime=self.payload.occurred_at,
+            datetime=self.payload.datetime,
         )
         current = ObservedTransferPayload(
             chain=self.chain,
@@ -1415,7 +1394,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=self.payload.value,
             amount=self.payload.amount,
             timestamp=self.payload.timestamp + 1,
-            occurred_at=self.payload.occurred_at + timedelta(seconds=1),
+            datetime=self.payload.datetime + timedelta(seconds=1),
             source="test-reorg",
         )
 
@@ -1450,7 +1429,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=self.payload.value,
             amount=self.payload.amount,
             timestamp=self.payload.timestamp,
-            datetime=self.payload.occurred_at,
+            datetime=self.payload.datetime,
             confirm_mode=ConfirmMode.QUICK,
             status=TransferStatus.CONFIRMED,
             processed_at=timezone.now(),
@@ -1466,7 +1445,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=self.payload.value,
             amount=self.payload.amount,
             timestamp=self.payload.timestamp + 1,
-            occurred_at=self.payload.occurred_at + timedelta(seconds=1),
+            datetime=self.payload.datetime + timedelta(seconds=1),
             source="test-reorg",
         )
 
@@ -1485,7 +1464,7 @@ class TransferServiceCreateObservedTests(TestCase):
         self.assertEqual(old_transfer.timestamp, self.payload.timestamp + 1)
         self.assertEqual(
             old_transfer.datetime,
-            self.payload.occurred_at + timedelta(seconds=1),
+            self.payload.datetime + timedelta(seconds=1),
         )
         enqueue_mock.assert_not_called()
 
@@ -1509,7 +1488,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=self.payload.value,
             amount=self.payload.amount,
             timestamp=self.payload.timestamp,
-            datetime=self.payload.occurred_at,
+            datetime=self.payload.datetime,
             confirm_mode=ConfirmMode.QUICK,
             status=TransferStatus.CONFIRMED,
             processed_at=timezone.now(),
@@ -1525,7 +1504,7 @@ class TransferServiceCreateObservedTests(TestCase):
             value=self.payload.value,
             amount=self.payload.amount,
             timestamp=self.payload.timestamp,
-            occurred_at=self.payload.occurred_at,
+            datetime=self.payload.datetime,
             source="test-reobserve",
         )
 
@@ -1563,7 +1542,7 @@ class TxTaskTransitionTests(TestCase):
         )
         self.task = TxTask.objects.create(
             chain=self.chain,
-            address=self.addr,
+            sender=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "dd" * 32,
             status=TxTaskStatus.PENDING_CONFIRM,
@@ -1573,7 +1552,7 @@ class TxTaskTransitionTests(TestCase):
         updated = TxTask.mark_finalized_success(
             chain=self.chain, tx_hash=self.task.tx_hash
         )
-        self.assertEqual(updated, 1)
+        self.assertTrue(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
@@ -1581,7 +1560,7 @@ class TxTaskTransitionTests(TestCase):
         updated = TxTask.reset_to_pending_chain(
             chain=self.chain, tx_hash=self.task.tx_hash
         )
-        self.assertEqual(updated, 1)
+        self.assertTrue(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.PENDING_CHAIN)
 
@@ -1595,7 +1574,7 @@ class TxTaskTransitionTests(TestCase):
             tx_hash=old_hash,
         )
 
-        self.assertEqual(updated, 1)
+        self.assertTrue(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
         self.assertEqual(self.task.tx_hash, old_hash)
@@ -1610,7 +1589,7 @@ class TxTaskTransitionTests(TestCase):
             tx_hash=old_hash,
         )
 
-        self.assertEqual(updated, 1)
+        self.assertTrue(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.PENDING_CHAIN)
         self.assertEqual(self.task.tx_hash, old_hash)
@@ -1619,7 +1598,7 @@ class TxTaskTransitionTests(TestCase):
         updated = TxTask.mark_finalized_failed(
             task_id=self.task.pk,
         )
-        self.assertEqual(updated, 1)
+        self.assertTrue(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.FAILED)
 
@@ -1629,7 +1608,7 @@ class TxTaskTransitionTests(TestCase):
             expected_status=TxTaskStatus.PENDING_CHAIN,
         )
 
-        self.assertEqual(updated, 0)
+        self.assertFalse(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.PENDING_CONFIRM)
 
@@ -1643,7 +1622,7 @@ class TxTaskTransitionTests(TestCase):
             tx_hash=self.task.tx_hash,
         )
 
-        self.assertEqual(updated, 0)
+        self.assertFalse(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.FAILED)
 
@@ -1657,7 +1636,7 @@ class TxTaskTransitionTests(TestCase):
             task_id=self.task.pk,
         )
 
-        self.assertEqual(updated, 0)
+        self.assertFalse(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
@@ -1670,13 +1649,13 @@ class TxTaskTransitionTests(TestCase):
         updated = TxTask.mark_pending_confirm(
             chain=self.chain, tx_hash=self.task.tx_hash
         )
-        self.assertEqual(updated, 0)
+        self.assertFalse(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
     def test_mark_pending_confirm_with_empty_hash_is_noop(self):
         updated = TxTask.mark_pending_confirm(chain=self.chain, tx_hash="")
-        self.assertEqual(updated, 0)
+        self.assertFalse(updated)
 
     def test_mark_pending_confirm_can_resolve_old_hash(self):
         old_hash = self.task.tx_hash
@@ -1688,7 +1667,7 @@ class TxTaskTransitionTests(TestCase):
             tx_hash=old_hash,
         )
 
-        self.assertEqual(updated, 1)
+        self.assertTrue(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.PENDING_CONFIRM)
         self.assertEqual(self.task.tx_hash, old_hash)
@@ -1702,7 +1681,7 @@ class TxTaskTransitionTests(TestCase):
             tx_hash=self.task.tx_hash,
         )
 
-        self.assertEqual(updated, 0)
+        self.assertFalse(updated)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, TxTaskStatus.QUEUED)
 
@@ -1851,7 +1830,6 @@ def test_address_send_crypto_schedules_erc20_transfer_intent():
         name="Task12 BSC Wrapped",
         symbol="BSC",
         coingecko_id="task12-bsc-wrapped",
-        decimals=6,
     )
     chain = Chain.objects.create(
         code=ChainCode.Ethereum,
@@ -1864,7 +1842,7 @@ def test_address_send_crypto_schedules_erc20_transfer_intent():
         ),
         decimals=6,
     )
-    assert token.is_native
+    # 该币以 ERC20 形式部署（有合约地址），且不是该链原生币，应走 CONTRACT_CALL 路径。
     assert token != chain.native_coin
     address = Address.objects.create(
         wallet=Wallet.objects.create(),

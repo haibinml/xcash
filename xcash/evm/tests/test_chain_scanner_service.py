@@ -444,7 +444,7 @@ class EvmChainScannerServiceTests(TestCase):
             value=1,
             amount=1,
             timestamp=1,
-            occurred_at=SimpleNamespace(),
+            datetime=SimpleNamespace(),
         )
 
         TransferService.create_observed_transfer(observed=observed)

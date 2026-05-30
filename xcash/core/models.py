@@ -133,7 +133,9 @@ class SystemSettings(models.Model):
         max_length=255,
         blank=True,
         default="",
-        help_text=_("MistTrack 官方 OpenAPI API Key；配置后优先使用 V3 风险评分接口。"),
+        help_text=_(
+            "MistTrack 官方 OpenAPI API Key；配置后优先使用 MistTrack V3 风险评分接口。"
+        ),
     )
     created_by = models.ForeignKey(
         "users.User",

@@ -367,7 +367,6 @@ class TronWatchCursorTests(TestCase):
             name="Tether Tron Cursor Sync",
             symbol="USDT",
             coingecko_id="tether-tron-cursor-sync",
-            decimals=6,
         )
         chain = Chain.objects.create(
             code=ChainCode.Tron,
@@ -508,7 +507,6 @@ class TronUsdtPaymentScannerTests(TestCase):
             symbol="USDT",
             prices={"USD": "1"},
             coingecko_id="tether-tron-scan",
-            decimals=6,
         )
         self.chain = Chain.objects.create(
             code=ChainCode.Tron,

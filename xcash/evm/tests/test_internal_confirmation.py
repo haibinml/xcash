@@ -40,7 +40,6 @@ class EvmInternalTaskConfirmationTests(TestCase):
             name="USD Coin Internal Confirm",
             symbol="USDCIC",
             coingecko_id="usd-coin-internal-confirm",
-            decimals=6,
         )
         self.chain = Chain.objects.create(
             code=ChainCode.Anvil,

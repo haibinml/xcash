@@ -5,9 +5,11 @@ from decimal import Decimal
 from functools import cached_property
 
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from chains.constants import NATIVE_COIN_SYMBOLS
 from chains.models import Chain
 from common.utils.math import round_decimal
 
@@ -15,9 +17,7 @@ from common.utils.math import round_decimal
 class Crypto(models.Model):
     name = models.CharField(_("名称"), unique=True)
     symbol = models.CharField(_("代码"), help_text=_("例如:ETH、USDT"), unique=True)
-    # 代币默认精度；链特定精度（如 BNB 链 USDT 使用 18）通过 ChainToken.decimals 覆盖
-    decimals = models.PositiveSmallIntegerField(_("精度"), default=18)
-    # M2M 关联，通过 ChainToken 中间表，保存合约地址和链特定精度等额外信息
+    # M2M 关联，通过 ChainToken 中间表，保存合约地址和链特定精度等部署信息
     chains = models.ManyToManyField(
         Chain,
         through="ChainToken",
@@ -28,6 +28,8 @@ class Crypto(models.Model):
     prices = models.JSONField(_("价格"), default=dict, blank=True)
     coingecko_id = models.CharField(unique=True, blank=True)
     active = models.BooleanField(default=True)
+    # 是否为链原生币，建币时定死，运行期作为唯一真相（取代旧的硬编码符号名单）。
+    is_native = models.BooleanField(_("原生币"), default=False)
 
     class Meta:
         verbose_name = _("加密货币")
@@ -36,18 +38,27 @@ class Crypto(models.Model):
     def __str__(self):
         return f"{self.symbol}"
 
-    def get_decimals(self, chain: Chain) -> int:
-        """获取代币在指定链上的实际精度。
+    def clean(self) -> None:
+        # 兜底校验：标记为原生币的 Crypto，symbol 必须落在系统已知的链原生币集合内，
+        # 防止把任意代币误标为原生币（原生币集合权威来源是 CHAIN_SPECS）。
+        super().clean()
+        if self.is_native and self.symbol not in NATIVE_COIN_SYMBOLS:
+            raise ValidationError(
+                {
+                    "is_native": _(
+                        "仅已知链原生币可标记为原生币，允许的符号：%(symbols)s"
+                    )
+                    % {"symbols": ", ".join(sorted(NATIVE_COIN_SYMBOLS))}
+                }
+            )
 
-        优先使用 ChainToken 上的链特定覆盖值（解决如 BNB 链 USDT=18 的特例），
-        未配置时回退到 Crypto.decimals 默认值。
+    def get_decimals(self, chain: Chain) -> int:
+        """获取代币在指定链上的精度，以 ChainToken 部署记录为唯一来源。
+
+        精度本质是「币×链」的部署属性（如 USDT 在 ETH/Tron 为 6、BSC 为 18），
+        统一存于 ChainToken.decimals；未在该链登记部署时视为不可用，抛出 DoesNotExist。
         """
-        try:
-            ct = ChainToken.objects.get(crypto=self, chain=chain)
-        except ChainToken.DoesNotExist:
-            return self.decimals
-        else:
-            return ct.decimals if ct.decimals is not None else self.decimals
+        return ChainToken.objects.get(crypto=self, chain=chain).decimals
 
     def supported_chains(self) -> str:
         return ", ".join(self.chains.values_list("name", flat=True))
@@ -61,12 +72,6 @@ class Crypto(models.Model):
             if chain_codes:
                 methods[crypto.symbol] = chain_codes
         return methods
-
-    @property
-    def is_native(self):
-        # 当前系统保留的原生币符号：EVM 系与 Tron。
-        natives = ["ETH", "BSC", "POL", "BNB", "TRX"]
-        return self.symbol in natives
 
     def price(self, fiat):
         if fiat == "USD" and self.symbol in ["USDT", "USDC", "DAI"]:
@@ -118,15 +123,19 @@ class Crypto(models.Model):
             "BNB": "https://assets.coingecko.com/coins/images/825/standard/bnb-icon2_2x.png",
             "USDC": "https://assets.coingecko.com/coins/images/6319/standard/usdc.png",
             "USDT": "https://assets.coingecko.com/coins/images/325/standard/Tether.png",
+            "TRX": "https://assets.coingecko.com/coins/images/1094/standard/photo_2026-04-13_09-59-16.png?1776048311",
         }
         return icons.get(self.symbol, "")
 
 
 class ChainToken(models.Model):
-    """记录代币与链的部署关系，包含链上合约地址及可选的链特定精度覆盖。
+    """记录代币与链的部署关系，包含链上合约地址及该币在本链的精度。
 
     原生币（ETH 等）也在此建立记录，address 为空字符串，
     以使 support_this_chain 等逻辑能统一通过此表查询。
+
+    「地址↔币」是链上定死的身份事实，故 crypto/chain 一经创建即不可变更
+    （见 ensure_mapping_immutable）；纠正占位映射只能走 admin 的占位符合并动作。
     """
 
     crypto = models.ForeignKey(
@@ -143,8 +152,10 @@ class ChainToken(models.Model):
     )
     # 合约地址；原生币为空字符串
     address = models.CharField(_("合约地址"), blank=True, default="", db_index=True)
-    # 链特定精度覆盖：为 None 时使用 Crypto.decimals（如 BNB 链 USDT 设为 18 覆盖默认 6）
-    decimals = models.PositiveSmallIntegerField(_("精度覆盖"), null=True, blank=True)
+    # 该币在本链上的精度，必填；它是精度的唯一真相（如 USDT 在 ETH=6、BSC=18）。
+    decimals = models.PositiveSmallIntegerField(_("精度"))
+    # 部署级开关：可单独停用某「币×链」组合，而不影响该币在其他链或整条链的可用性。
+    active = models.BooleanField(_("启用"), default=True)
 
     class Meta:
         # 统一采用具名 UniqueConstraint，便于数据库约束报错定位和后续约束扩展。
@@ -164,6 +175,39 @@ class ChainToken(models.Model):
 
     def __str__(self):
         return f"{self.crypto.symbol} @ {self.chain.code}"
+
+    def save(self, *args, **kwargs):
+        # clean() 不会在 save() 时自动触发，这里直接兜底，挡住绕过表单的程序化改写。
+        self.ensure_mapping_immutable()
+        super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        super().clean()
+        self.ensure_mapping_immutable()
+
+    def ensure_mapping_immutable(self) -> None:
+        """禁止变更已存在部署的 crypto/chain。
+
+        链上「合约地址 ↔ 币种」是永久不变的身份事实，误改会静默污染历史 Transfer
+        的资产归属（且按当前策略不追溯回填），属于不可逆的金融数据事故。新建（pk 为空）
+        不受限；占位符纠正请走 admin 合并动作——它用 QuerySet.update() 旁路本守卫，
+        是唯一受控的变更入口。
+        """
+        if self.pk is None:
+            return
+        old = (
+            ChainToken.objects.filter(pk=self.pk)
+            .values("crypto_id", "chain_id")
+            .first()
+        )
+        if old is None:
+            return
+        if old["crypto_id"] != self.crypto_id or old["chain_id"] != self.chain_id:
+            raise ValidationError(
+                _(
+                    "代币部署的链与币种一经创建不可变更；如需纠正占位映射请使用占位符合并动作。"
+                )
+            )
 
 
 class Fiat(models.Model):
@@ -198,24 +242,57 @@ class Fiat(models.Model):
     def icon(self):
         flags = {
             # 亚洲
-            "CNY": "🇨🇳", "HKD": "🇭🇰", "JPY": "🇯🇵", "KRW": "🇰🇷",
-            "SGD": "🇸🇬", "INR": "🇮🇳", "THB": "🇹🇭", "PHP": "🇵🇭",
-            "IDR": "🇮🇩", "MYR": "🇲🇾", "VND": "🇻🇳", "PKR": "🇵🇰",
-            "BDT": "🇧🇩", "ILS": "🇮🇱", "TWD": "🇹🇼",
+            "CNY": "🇨🇳",
+            "HKD": "🇭🇰",
+            "JPY": "🇯🇵",
+            "KRW": "🇰🇷",
+            "SGD": "🇸🇬",
+            "INR": "🇮🇳",
+            "THB": "🇹🇭",
+            "PHP": "🇵🇭",
+            "IDR": "🇮🇩",
+            "MYR": "🇲🇾",
+            "VND": "🇻🇳",
+            "PKR": "🇵🇰",
+            "BDT": "🇧🇩",
+            "ILS": "🇮🇱",
+            "TWD": "🇹🇼",
             # 中东
-            "AED": "🇦🇪", "SAR": "🇸🇦", "KWD": "🇰🇼", "QAR": "🇶🇦",
+            "AED": "🇦🇪",
+            "SAR": "🇸🇦",
+            "KWD": "🇰🇼",
+            "QAR": "🇶🇦",
             # 美洲
-            "USD": "🇺🇸", "CAD": "🇨🇦", "BRL": "🇧🇷", "MXN": "🇲🇽",
-            "ARS": "🇦🇷", "CLP": "🇨🇱", "COP": "🇨🇴",
+            "USD": "🇺🇸",
+            "CAD": "🇨🇦",
+            "BRL": "🇧🇷",
+            "MXN": "🇲🇽",
+            "ARS": "🇦🇷",
+            "CLP": "🇨🇱",
+            "COP": "🇨🇴",
             # 欧洲
-            "EUR": "🇪🇺", "GBP": "🇬🇧", "GDB": "🇬🇧", "CHF": "🇨🇭",
-            "SEK": "🇸🇪", "NOK": "🇳🇴", "DKK": "🇩🇰", "PLN": "🇵🇱",
-            "CZK": "🇨🇿", "HUF": "🇭🇺", "RON": "🇷🇴", "BGN": "🇧🇬",
-            "RUB": "🇷🇺", "TRY": "🇹🇷", "UAH": "🇺🇦",
+            "EUR": "🇪🇺",
+            "GBP": "🇬🇧",
+            "GDB": "🇬🇧",
+            "CHF": "🇨🇭",
+            "SEK": "🇸🇪",
+            "NOK": "🇳🇴",
+            "DKK": "🇩🇰",
+            "PLN": "🇵🇱",
+            "CZK": "🇨🇿",
+            "HUF": "🇭🇺",
+            "RON": "🇷🇴",
+            "BGN": "🇧🇬",
+            "RUB": "🇷🇺",
+            "TRY": "🇹🇷",
+            "UAH": "🇺🇦",
             # 大洋洲
-            "AUD": "🇦🇺", "NZD": "🇳🇿",
+            "AUD": "🇦🇺",
+            "NZD": "🇳🇿",
             # 非洲
-            "ZAR": "🇿🇦", "EGP": "🇪🇬", "NGN": "🇳🇬",
+            "ZAR": "🇿🇦",
+            "EGP": "🇪🇬",
+            "NGN": "🇳🇬",
         }
 
         return flags.get(self.code, "")

@@ -1,6 +1,5 @@
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import Mock
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -20,7 +19,6 @@ from currencies.models import ChainToken
 from currencies.models import Crypto
 from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
-from deposits.models import DepositStatus
 from deposits.service import DepositService
 from evm.models import EvmTxTask
 from evm.models import VaultSlot
@@ -30,39 +28,17 @@ from users.models import Customer
 
 
 class DepositServiceCoreTests(TestCase):
-    """仅保留与当前 VaultSlot 充值生命周期无关的 Deposit 核心行为。"""
+    """Deposit 不再维护独立状态机，确认状态完全取自其 Transfer。"""
 
-    @patch("deposits.service.Deposit.objects")
-    def test_confirm_deposit_idempotent_when_already_completed(
-        self, deposit_objects_mock
-    ):
-        deposit = SimpleNamespace(
-            pk=1, status=DepositStatus.COMPLETED, refresh_from_db=Mock()
-        )
-
-        DepositService.confirm_deposit(deposit)
-
-        deposit_objects_mock.select_for_update.return_value.filter.assert_called_once_with(
-            pk=1
-        )
-
-    @patch("deposits.service.Deposit.objects")
-    def test_drop_deposit_idempotent_when_already_deleted(self, deposit_objects_mock):
-        deposit_objects_mock.select_for_update.return_value.filter.return_value.exists.return_value = (
-            False
-        )
-        deposit = SimpleNamespace(pk=1)
+    def test_drop_deposit_noop_when_transfer_unconfirmed(self):
+        # 未确认充值由 Transfer.drop 的级联删除收口，drop_deposit 不抛错、不显式删除。
+        deposit = SimpleNamespace(confirmed=False)
 
         DepositService.drop_deposit(deposit)
 
-    @patch("deposits.service.Deposit.objects")
-    def test_drop_deposit_rejects_non_confirming_status(self, deposit_objects_mock):
-        deposit = SimpleNamespace(pk=1, status=DepositStatus.COMPLETED)
-        deposit.refresh_from_db = Mock()
-        deposit.delete = Mock()
-        deposit_objects_mock.select_for_update.return_value.filter.return_value.exists.return_value = (
-            True
-        )
+    def test_drop_deposit_rejects_confirmed(self):
+        # 已确认充值不允许随 Transfer 回退被静默抹除，抛错中断 drop 事务。
+        deposit = SimpleNamespace(confirmed=True)
 
         with self.assertRaises(DepositStatusError):
             DepositService.drop_deposit(deposit)
@@ -80,7 +56,7 @@ class DepositServiceCoreTests(TestCase):
             sys_no="DXC-test",
             customer=None,
             transfer=transfer,
-            status=DepositStatus.CONFIRMING,
+            confirmed=False,
             risk_level=None,
             risk_score=None,
         )
@@ -118,7 +94,6 @@ class DepositCreationTests(TestCase):
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.CONFIRMING,
         )
 
         DepositService.initialize_deposit(deposit)
@@ -137,7 +112,6 @@ class DepositNotificationTests(TestCase):
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.CONFIRMING,
             worth=Decimal("1"),
         )
 
@@ -152,21 +126,20 @@ class DepositNotificationTests(TestCase):
         "schedule_collect_for_completed_deposit",
         side_effect=RuntimeError("collect failed"),
     )
-    def test_confirm_deposit_keeps_completed_when_collect_schedule_fails(
+    def test_confirm_deposit_still_notifies_when_collect_schedule_fails(
         self, schedule_collect, create_event_mock, send_internal_callback_mock
     ):
         context = create_deposit_context()
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.CONFIRMING,
             worth=Decimal("1"),
         )
 
         DepositService.confirm_deposit(deposit)
 
-        deposit.refresh_from_db()
-        self.assertEqual(deposit.status, DepositStatus.COMPLETED)
+        # 归集调度失败不应影响确认状态（取自 Transfer）与后续通知/回调。
+        self.assertTrue(deposit.confirmed)
         schedule_collect.assert_called_once_with(deposit)
         create_event_mock.assert_called_once()
         send_internal_callback_mock.assert_called_once()
@@ -180,7 +153,6 @@ class DepositNotificationTests(TestCase):
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.CONFIRMING,
             worth=Decimal("1"),
         )
 
@@ -196,7 +168,6 @@ class DepositNotificationTests(TestCase):
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.COMPLETED,
         )
 
         scheduled = DepositService.schedule_collect_for_completed_deposit(deposit)
@@ -212,7 +183,6 @@ class DepositNotificationTests(TestCase):
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.COMPLETED,
         )
 
         scheduled = DepositService.schedule_collect_for_completed_deposit(deposit)
@@ -221,14 +191,13 @@ class DepositNotificationTests(TestCase):
         schedule_collect.assert_not_called()
 
     @patch.object(VaultSlot, "schedule_collect_for_deposit")
-    def test_schedule_collect_for_completed_deposit_rejects_uncompleted(
+    def test_schedule_collect_for_completed_deposit_rejects_unconfirmed(
         self, schedule_collect
     ):
-        context = create_deposit_context()
+        context = create_deposit_context(confirmed=False)
         deposit = Deposit.objects.create(
             customer=context.customer,
             transfer=context.transfer,
-            status=DepositStatus.CONFIRMING,
         )
 
         with self.assertRaises(DepositStatusError):
@@ -276,7 +245,6 @@ class DepositNotificationTests(TestCase):
         deposit = Deposit.objects.create(
             customer=customer,
             transfer=transfer,
-            status=DepositStatus.CONFIRMING,
             worth=Decimal("1"),
         )
 
@@ -297,7 +265,7 @@ class DepositNotificationTests(TestCase):
         )
 
 
-def create_deposit_context(*, native: bool = False):
+def create_deposit_context(*, native: bool = False, confirmed: bool = True):
     wallet = Wallet.objects.create()
     project = Project.objects.create(name="DepositTestProject", wallet=wallet)
     customer = Customer.objects.create(project=project, uid="deposit-test-customer")
@@ -328,6 +296,7 @@ def create_deposit_context(*, native: bool = False):
             address=Web3.to_checksum_address(
                 "0x0000000000000000000000000000000000000e20"
             ),
+            decimals=6,
         )
         VaultSlot.objects.create(
             customer=customer,
@@ -352,7 +321,9 @@ def create_deposit_context(*, native: bool = False):
         amount=Decimal("1"),
         timestamp=1,
         datetime=timezone.now(),
-        status=TransferStatus.CONFIRMED,
+        status=(
+            TransferStatus.CONFIRMED if confirmed else TransferStatus.CONFIRMING
+        ),
     )
     return SimpleNamespace(
         wallet=wallet,

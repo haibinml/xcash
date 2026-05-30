@@ -106,6 +106,7 @@ def _load_evm_chain_tokens_from_db(*, chain: Chain) -> dict[str, ChainToken]:
         .filter(
             chain=chain,
             crypto__active=True,
+            active=True,
         )
         .exclude(address="")
     )

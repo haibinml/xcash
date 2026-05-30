@@ -632,13 +632,11 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             name="Tether USD",
             symbol="USDT",
             coingecko_id="tether-tron-invoice-capability",
-            decimals=6,
         )
         tron_usdc = Crypto.objects.create(
             name="USD Coin",
             symbol="USDC",
             coingecko_id="usd-coin-tron-invoice-capability",
-            decimals=6,
         )
         tron_chain = Chain.objects.create(
             code=ChainCode.Tron,
@@ -689,13 +687,11 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             name="USDT SaaS Allowed",
             symbol="USDTSAASAM",
             coingecko_id="usdt-saas-allowed-methods",
-            decimals=6,
         )
         usdc = Crypto.objects.create(
             name="USDC SaaS Denied",
             symbol="USDCSAASAM",
             coingecko_id="usdc-saas-allowed-methods",
-            decimals=6,
         )
         ChainToken.objects.create(
             crypto=usdt,
@@ -757,7 +753,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             name="USDT SaaS Empty",
             symbol="USDTSAASEM",
             coingecko_id="usdt-saas-empty-methods",
-            decimals=6,
         )
         ChainToken.objects.create(
             crypto=usdt,
