@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import ANY
@@ -12,6 +13,7 @@ from django.test import RequestFactory
 from django.test import SimpleTestCase
 from django.test import TestCase
 from django.test import override_settings
+from django.utils import timezone
 from hexbytes import HexBytes
 from stress.evm import send_erc20
 from stress.evm import send_native
@@ -22,9 +24,12 @@ from stress.models import StressRun
 from stress.models import StressRunStatus
 from stress.payment import simulate_payment
 from stress.service import _ANVIL_RECIPIENT_ADDRESSES
+from stress.service import STRESS_FIXED_METHODS
 from stress.service import StressService
 from stress.service import _build_deposit_cases
+from stress.service import _require_stress_methods_ready
 from stress.service import _setup_differ_recipient_addresses
+from stress.service import _setup_wallet_for_withdrawal
 from stress.tasks import _execute
 from stress.tasks import _execute_deposit
 from stress.tasks import execute_deposit_case_payment
@@ -33,11 +38,17 @@ from stress.tasks import prepare_stress
 from stress.views import _handle_webhook
 
 from chains.constants import ChainCode
+from chains.models import AddressUsage
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
+from currencies.models import Fiat
+from evm.models import VaultSlot
+from evm.models import VaultSlotUsage
+from invoices.models import Invoice
+from invoices.models import InvoiceBillingMode
 from projects.models import DifferRecipientAddress
 from projects.models import Project
 
@@ -73,8 +84,8 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.Invoice.available_methods",
                 return_value={
-                    "ETH": ["ethereum-local"],
-                    "USDT": ["ethereum-local"],
+                    "ETH": ["anvil"],
+                    "USDT": ["anvil"],
                 },
             ),
             patch.object(
@@ -92,8 +103,8 @@ class StressServiceTests(SimpleTestCase):
         self.assertEqual(
             payload["methods"],
             {
-                "ETH": ["ethereum-local"],
-                "USDT": ["ethereum-local"],
+                "ETH": ["anvil"],
+                "USDT": ["anvil"],
             },
         )
         self.assertEqual(payload["out_no"], "STRESS-12-7")
@@ -117,8 +128,8 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.Invoice.available_methods",
                 return_value={
-                    "ETH": ["ethereum-local"],
-                    "USDT": ["ethereum-local"],
+                    "ETH": ["anvil"],
+                    "USDT": ["anvil"],
                 },
             ),
             patch.object(
@@ -143,7 +154,7 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.Invoice.available_methods",
                 return_value={
-                    "ETH": ["ethereum-local"],
+                    "ETH": ["anvil"],
                 },
             ),
             patch("stress.service.httpx.post") as post_mock,
@@ -165,13 +176,13 @@ class StressServiceTests(SimpleTestCase):
         response.status_code = 200
         response.json.return_value = {
             "crypto": "USDT",
-            "chain": "ethereum-local",
+            "chain": "anvil",
         }
 
         with (
             patch(
                 "stress.service.random.choice",
-                return_value=("USDT", "ethereum-local"),
+                return_value=("USDT", "anvil"),
             ) as choice_mock,
             patch("stress.service.httpx.get") as get_mock,
             patch("stress.service.httpx.post", return_value=response) as post_mock,
@@ -182,7 +193,7 @@ class StressServiceTests(SimpleTestCase):
             result,
             {
                 "crypto": "USDT",
-                "chain": "ethereum-local",
+                "chain": "anvil",
             },
         )
         get_mock.assert_not_called()
@@ -192,7 +203,7 @@ class StressServiceTests(SimpleTestCase):
             payload,
             {
                 "crypto": "USDT",
-                "chain": "ethereum-local",
+                "chain": "anvil",
             },
         )
 
@@ -337,7 +348,7 @@ class StressServiceTests(SimpleTestCase):
             patch("stress.service.random.gauss", return_value=0.0),
             patch(
                 "stress.service.random.choice",
-                return_value=("ETH", "ethereum-local"),
+                return_value=("ETH", "anvil"),
             ),
             patch("stress.service.random.randint", return_value=1234567),
             patch("stress.service.random.shuffle"),
@@ -380,7 +391,7 @@ class StressServiceTests(SimpleTestCase):
                 "stress.tasks.StressService.select_method",
                 return_value={
                     "crypto": "ETH",
-                    "chain": "ethereum-local",
+                    "chain": "anvil",
                     "pay_address": "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
                     "pay_amount": "1.23",
                 },
@@ -550,7 +561,7 @@ class StressServiceTests(SimpleTestCase):
         ):
             result = simulate_payment(
                 to_address="0xtarget",
-                chain_code="ethereum-local",
+                chain_code="anvil",
                 crypto_symbol="ETH",
                 amount=Decimal("1.5"),
                 payment_ref="case-2",
@@ -585,7 +596,7 @@ class StressServiceTests(SimpleTestCase):
         ):
             result = simulate_payment(
                 to_address="0xtarget",
-                chain_code="ethereum-local",
+                chain_code="anvil",
                 crypto_symbol="BSC",
                 amount=Decimal("25"),
                 payment_ref="case-native-like",
@@ -621,7 +632,7 @@ class StressServiceTests(SimpleTestCase):
         ):
             result = simulate_payment(
                 to_address="0xtarget",
-                chain_code="ethereum-local",
+                chain_code="anvil",
                 crypto_symbol="USDT",
                 amount=Decimal("25"),
                 payment_ref="case-3",
@@ -650,7 +661,7 @@ class StressPaymentTaskTests(SimpleTestCase):
             pk=42,
             status=InvoiceStressCaseStatus.CREATED,
             crypto="ETH",
-            chain="ethereum-local",
+            chain="anvil",
             pay_address="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
             pay_amount=Decimal("1.23"),
             tx_hash="",
@@ -780,7 +791,7 @@ class StressPaymentTaskTests(SimpleTestCase):
             pk=77,
             status=DepositStressCaseStatus.CREATING,
             crypto="USDT",
-            chain="ethereum-local",
+            chain="anvil",
             deposit_address="0xdepositaddr",
             amount=Decimal("0.01"),
             tx_hash="",
@@ -865,7 +876,7 @@ class StressPaymentTaskTests(SimpleTestCase):
 
         simulate_mock.assert_called_once_with(
             to_address="0xdepositaddr",
-            chain_code="ethereum-local",
+            chain_code="anvil",
             crypto_symbol="USDT",
             amount=Decimal("0.01"),
             payment_ref=f"deposit-{case.pk}",
@@ -1128,7 +1139,7 @@ class StressWebhookTests(TestCase):
                 "sys_no": self.case.invoice_sys_no,
                 "out_no": self.case.invoice_out_no,
                 "crypto": "ETH",
-                "chain": "ethereum-local",
+                "chain": "anvil",
                 "pay_address": "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
                 "pay_amount": "1.23",
                 "hash": "0xa04a8394076c7f7ad4a974fc462ba2a0e08e83c820f99bbe1ea7c8f3da6e7f52",
@@ -1311,3 +1322,137 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
         self.assertIsNone(case.finished_at)
         on_finish_mock.assert_not_called()
         trigger_mock.assert_not_called()
+
+
+class StressContractProvisioningTests(TestCase):
+    """压测合约账单 provisioning 的真实路径验证（不 mock available_methods / select_method）。
+
+    覆盖 vault 修复与链命名收敛后、stress 合约单的建单前置与收款分配：
+    - _setup_wallet_for_withdrawal 把项目 EVM 热钱包地址写入 project.vault；
+    - _require_stress_methods_ready 按 CONTRACT 校验：缺 vault 时即便配了差额收款地址也要报错；
+    - 合约 Invoice.select_method 在 vault 就绪时真实分配 VaultSlot 收款地址，缺 vault 时分配失败。
+
+    这些路径在 stress 单元测试里被 mock 掩盖，必须走真实 DB + 真实分配逻辑才能暴露 vault 缺失。
+    """
+
+    def setUp(self):
+        # 本地链统一为 anvil（链代码收敛后）。rpc 留空：EVM 链的 full_clean 会对非空 rpc
+        # 发起实时连通校验，本测试不依赖链上调用。新建 Chain 的 post_save 会自动补齐原生币
+        # ETH 及其 ChainToken（见 ensure_native_crypto_mapping_for_chain），故 ETH 只取不建；
+        # USDT 为合约代币需显式登记。这样 available_methods(CONTRACT) 恰好产出 STRESS_FIXED_METHODS。
+        self.anvil = Chain.objects.create(
+            code=ChainCode.Anvil,
+            rpc="",
+            active=True,
+        )
+        self.eth = Crypto.objects.get(symbol="ETH")
+        self.usdt = Crypto.objects.create(
+            name="Tether USD",
+            symbol="USDT",
+            coingecko_id="tether-stress-contract",
+        )
+        ChainToken.objects.create(
+            crypto=self.usdt,
+            chain=self.anvil,
+            address="0x0000000000000000000000000000000000009902",
+            decimals=6,
+        )
+        # _set_current_payment 计算 worth 时按 USD 取价，需有 USD 法币记录。
+        Fiat.objects.get_or_create(code="USD")
+
+    def make_project(self, *, name, vault=None):
+        return Project.objects.create(
+            name=name,
+            wallet=Wallet.objects.create(),
+            vault=vault,
+        )
+
+    def make_contract_invoice(self, project, *, out_no, methods):
+        return Invoice.objects.create(
+            project=project,
+            out_no=out_no,
+            title="stress contract",
+            currency="USDT",
+            amount=Decimal("10"),
+            methods=methods,
+            expires_at=timezone.now() + timedelta(minutes=10),
+            billing_mode=InvoiceBillingMode.CONTRACT,
+        )
+
+    def test_setup_wallet_for_withdrawal_assigns_evm_hot_address_as_vault(self):
+        # vault 必须写成项目 EVM 热钱包地址，且与 _fund_evm_vault 注资的派生地址同址
+        # （二者用完全相同的 get_address(EVM, HotWallet) 参数）。
+        hot_address = "0x1000000000000000000000000000000000000001"
+
+        class _StubSigner:
+            def create_wallet(self, *, wallet_id):
+                return wallet_id
+
+            def derive_address(
+                self, *, wallet, chain_type, bip44_account, address_index
+            ):
+                return hot_address
+
+        project = self.make_project(name="stress-vault-wiring")
+        self.assertIsNone(project.vault)
+
+        with patch("chains.signer.get_signer_backend", return_value=_StubSigner()):
+            _setup_wallet_for_withdrawal(project)
+            funded_address = project.wallet.get_address(
+                chain_type=ChainType.EVM, usage=AddressUsage.HotWallet
+            ).address
+
+        project.refresh_from_db()
+        self.assertEqual(project.vault, hot_address)
+        self.assertEqual(project.vault, funded_address)
+
+    def test_require_stress_methods_ready_passes_with_vault(self):
+        project = self.make_project(
+            name="stress-ready-vault",
+            vault="0x0000000000000000000000000000000000009001",
+        )
+        self.assertEqual(_require_stress_methods_ready(project), STRESS_FIXED_METHODS)
+
+    def test_require_stress_methods_ready_raises_without_vault_even_with_differ(self):
+        # 关键回归：缺 vault 但配了 EVM 差额收款地址时，旧的 DIFFER 就绪校验会 silently 通过，
+        # 把失败推迟到建单 API；改按 CONTRACT 校验后必须在就绪检查阶段直接报错。
+        project = self.make_project(name="stress-ready-no-vault")
+        DifferRecipientAddress.objects.create(
+            name="evm-pay",
+            project=project,
+            chain_type=ChainType.EVM,
+            address="0x0000000000000000000000000000000000009101",
+        )
+        with self.assertRaisesMessage(RuntimeError, "收款地址未准备完整"):
+            _require_stress_methods_ready(project)
+
+    def test_contract_select_method_allocates_vault_slot_with_vault(self):
+        project = self.make_project(
+            name="stress-alloc-vault",
+            vault="0x0000000000000000000000000000000000009201",
+        )
+        invoice = self.make_contract_invoice(
+            project, out_no="alloc-1", methods=STRESS_FIXED_METHODS
+        )
+
+        invoice.select_method(self.usdt, self.anvil)
+
+        invoice.refresh_from_db()
+        self.assertTrue(invoice.pay_address)
+        self.assertEqual(invoice.crypto_id, self.usdt.id)
+        self.assertEqual(invoice.chain_id, self.anvil.id)
+        self.assertTrue(
+            VaultSlot.objects.filter(
+                project=project,
+                usage=VaultSlotUsage.INVOICE,
+                address=invoice.pay_address,
+            ).exists()
+        )
+
+    def test_contract_select_method_without_vault_raises_allocation_error(self):
+        project = self.make_project(name="stress-alloc-no-vault")
+        invoice = self.make_contract_invoice(
+            project, out_no="alloc-2", methods={"USDT": ["anvil"]}
+        )
+        with self.assertRaises(Invoice.InvoiceAllocationError):
+            invoice.select_method(self.usdt, self.anvil)

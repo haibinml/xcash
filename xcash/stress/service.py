@@ -34,16 +34,16 @@ logger = structlog.get_logger()
 
 # 压测链路只打本地测试链，避免误选到其他环境链导致支付不可达。
 STRESS_FIXED_METHODS = {
-    "ETH": ["ethereum-local"],
-    "USDT": ["ethereum-local"],
+    "ETH": ["anvil"],
+    "USDT": ["anvil"],
 }
 STRESS_FIXED_METHOD_CHOICES = (
-    ("ETH", "ethereum-local"),
-    ("USDT", "ethereum-local"),
+    ("ETH", "anvil"),
+    ("USDT", "anvil"),
 )
 STRESS_WITHDRAWAL_METHOD_CHOICES = (
-    ("ETH", "ethereum-local"),
-    ("USDT", "ethereum-local"),
+    ("ETH", "anvil"),
+    ("USDT", "anvil"),
 )
 STRESS_SAAS_PERMISSION_CACHE_TTL = 24 * 60 * 60
 
@@ -438,17 +438,31 @@ def _seed_stress_saas_permission_cache(project: Project) -> None:
 
 
 def _setup_wallet_for_withdrawal(project: Project) -> None:
-    """为 Stress Project 创建 Wallet 并预派生 Vault 地址。"""
+    """为 Stress Project 创建 Wallet、预派生 EVM 热钱包地址，并将其设为合约账单 vault。
+
+    压测的提币、充币、合约账单都依赖项目热钱包的 EVM 地址：
+    - 提币：作为链上发送方；
+    - 合约账单（CONTRACT）：project.vault 既是 CREATE2 派生 VaultSlot 的不可变归集地址，
+      也是 VaultSlot 归集（sweep）的最终终点。
+
+    这里把 vault 直接设为项目热钱包的 EVM 地址，使其与 _fund_evm_vault 注资的地址完全一致，
+    形成「派生 VaultSlot 收款 → 归集回热钱包」的闭环，且热钱包天然有 gas 支撑归集交易。
+    Project.vault 一旦写入不可修改（见 Project.save 校验），故只在本次首次准备时赋值。
+    """
     from chains.models import AddressUsage
     from chains.models import ChainType
     from chains.models import Wallet
 
     wallet = Wallet.generate()
     project.wallet = wallet
-    project.save(update_fields=["wallet"])
 
-    # 预派生 EVM Vault 地址
-    wallet.get_address(chain_type=ChainType.EVM, usage=AddressUsage.HotWallet)
+    # 预派生 EVM 热钱包地址：派生参数与 _fund_evm_vault 完全一致，确保 vault 与注资地址同址。
+    evm_hot_address = wallet.get_address(
+        chain_type=ChainType.EVM,
+        usage=AddressUsage.HotWallet,
+    ).address
+    project.vault = evm_hot_address
+    project.save(update_fields=["wallet", "vault"])
 
 
 def _pick_billing_mode() -> str:
@@ -546,8 +560,8 @@ def _build_withdrawal_cases(stress: StressRun) -> list[WithdrawalStressCase]:
 
 
 STRESS_DEPOSIT_METHOD_CHOICES = (
-    ("ETH", "ethereum-local"),
-    ("USDT", "ethereum-local"),
+    ("ETH", "anvil"),
+    ("USDT", "anvil"),
 )
 
 _DEPOSIT_AMOUNT_RANGES = {
@@ -571,7 +585,7 @@ def _build_deposit_cases(stress: StressRun) -> list[DepositStressCase]:
     """构建本轮待执行的 DepositStressCase 列表。
 
     将 deposit_count 均匀分配到 deposit_customer_count 个客户，
-    每个 case 随机选择 ETH 或 USDT on ethereum-local。
+    每个 case 随机选择 ETH 或 USDT on anvil。
     """
     customer_count = stress.deposit_customer_count
     deposit_count = stress.deposit_count
@@ -617,8 +631,14 @@ def _build_deposit_cases(stress: StressRun) -> list[DepositStressCase]:
 
 
 def _require_stress_methods_ready(project: Project) -> dict[str, list[str]]:
-    """校验 Stress Project 的本地链 methods 已完整可用。"""
-    methods = Invoice.available_methods(project)
+    """校验 Stress Project 在合约（CONTRACT）模式下的本地链 methods 已完整可用。
+
+    压测账单实际以 CONTRACT 计费（见 _pick_billing_mode），就绪检查必须按同一模式校验：
+    CONTRACT 模式依赖 project.vault，缺失时 available_methods 返回空集，这里会立即抛错并
+    阻断后续 HTTP 建单；若仍按默认 DIFFER 校验，缺 vault 时会 silently 通过，把失败推迟到
+    建单 API 阶段（服务端 NO_RECIPIENT_ADDRESS），错误现场与根因脱节、难以定位。
+    """
+    methods = Invoice.available_methods(project, InvoiceBillingMode.CONTRACT)
     if methods != STRESS_FIXED_METHODS:
         raise RuntimeError(
             "Stress Project 收款地址未准备完整，必须支持 ETH/USDT 本地链支付"
@@ -687,12 +707,12 @@ def _fund_evm_vault(project: Project) -> None:
     logger.info("stress.vault.evm_eth_funded", vault=vault_address, amount_eth=10000)
 
     # 2. 为 Vault 铸造 USDT
-    # 压测脚本默认以以太坊主网作为 EVM 入口（底层 RPC 实际指向 docker-compose 本地链）。
-    evm_chain = Chain.objects.get(code="ethereum")
+    # 直接用本地 anvil 链：其 USDT ChainToken 指向本地部署的 mock 合约，mint 才能在本地 RPC 生效。
+    evm_chain = Chain.objects.get(code="anvil")
     usdt = Crypto.objects.get(symbol="USDT")
     usdt_contract_address = usdt.address(evm_chain)
     if not usdt_contract_address:
-        raise RuntimeError("USDT 在以太坊主网链上没有合约地址，无法为 Vault 铸币")
+        raise RuntimeError("USDT 在本地 anvil 链上没有合约地址，无法为 Vault 铸币")
 
     checksum_token = _require_contract(w3, usdt_contract_address)
     contract = w3.eth.contract(address=checksum_token, abi=LOCAL_EVM_ERC20_ABI)
