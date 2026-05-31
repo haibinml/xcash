@@ -5,7 +5,7 @@ from django.urls import include
 from django.urls import path
 
 from core.dashboard import operational_inspection_view, signer_overview_view
-from invoices.epay_views import EpaySubmitView
+from invoices.epay.views import EpaySubmitView
 from invoices.views import payment_view
 
 urlpatterns = [

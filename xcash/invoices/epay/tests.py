@@ -18,13 +18,13 @@ from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
-from invoices.epay import build_epay_v1_sign
-from invoices.epay import epay_v1_signing_string
-from invoices.epay import format_epay_money
-from invoices.epay import verify_epay_v1_sign
-from invoices.epay_serializers import EpaySubmitSerializer
-from invoices.epay_service import EpaySubmitError
-from invoices.epay_service import EpaySubmitService
+from invoices.epay.serializers import EpaySubmitSerializer
+from invoices.epay.service import EpaySubmitError
+from invoices.epay.service import EpaySubmitService
+from invoices.epay.sign import build_epay_v1_sign
+from invoices.epay.sign import epay_v1_signing_string
+from invoices.epay.sign import format_epay_money
+from invoices.epay.sign import verify_epay_v1_sign
 from invoices.models import EpayMerchant
 from invoices.models import EpayOrder
 from invoices.models import Invoice
@@ -404,8 +404,8 @@ class EpaySubmitServiceTests(TestCase):
         params["sign"] = build_epay_v1_sign(params, self.merchant.signing_key)
         return params
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_creates_invoice_and_epay_order(self, mock_check, mock_initialize):
         mock_initialize.side_effect = lambda invoice: invoice
 
@@ -434,8 +434,8 @@ class EpaySubmitServiceTests(TestCase):
         )
         mock_initialize.assert_called_once_with(invoice)
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_uses_currency_from_request(self, mock_check, mock_initialize):
         # 商户必须显式指定 currency，且会写到 Invoice.currency 上；
         # CNY 在 setUp 中已注入 Fiat 表。
@@ -447,8 +447,8 @@ class EpaySubmitServiceTests(TestCase):
         self.assertEqual(invoice.currency, "CNY")
         mock_check.assert_called_once()
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_defaults_to_cny_when_currency_omitted(
         self,
         mock_check,
@@ -475,8 +475,8 @@ class EpaySubmitServiceTests(TestCase):
             EpaySubmitService.submit(params)
         self.assertFalse(Invoice.objects.filter(out_no=params["out_trade_no"]).exists())
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_normalizes_currency_to_uppercase(self, mock_check, mock_initialize):
         # 商户大小写不一致是常见错配，落库统一为大写避免后续匹配失败。
         # 注意签名是按原始 "cny" 计算的：currency 进入签名前 raw_params 还是小写。
@@ -490,8 +490,8 @@ class EpaySubmitServiceTests(TestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.currency, "CNY")
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_rejects_bad_sign(self, mock_check, mock_initialize):
         params = self._signed_params()
         params["sign"] = "bad-sign"
@@ -503,8 +503,8 @@ class EpaySubmitServiceTests(TestCase):
         mock_check.assert_not_called()
         mock_initialize.assert_not_called()
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_verifies_sign_with_raw_parameter_shape(
         self,
         mock_check,
@@ -525,8 +525,8 @@ class EpaySubmitServiceTests(TestCase):
             action="invoice",
         )
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_rejects_sign_built_from_normalized_parameter_shape(
         self,
         mock_check,
@@ -549,8 +549,8 @@ class EpaySubmitServiceTests(TestCase):
         mock_check.assert_not_called()
         mock_initialize.assert_not_called()
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_reuses_existing_order_when_metadata_matches(
         self,
         mock_check,
@@ -567,8 +567,8 @@ class EpaySubmitServiceTests(TestCase):
         self.assertEqual(mock_check.call_count, 2)
         mock_initialize.assert_called_once_with(first_invoice)
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_rejects_existing_order_when_money_differs(
         self,
         mock_check,
@@ -585,8 +585,8 @@ class EpaySubmitServiceTests(TestCase):
         self.assertEqual(mock_check.call_count, 2)
         mock_initialize.assert_called_once()
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_accepts_money_in_loose_format(
         self,
         mock_check,
@@ -619,8 +619,8 @@ class EpaySubmitServiceTests(TestCase):
         self.assertEqual(mock_check.call_count, len(cases))
         self.assertEqual(mock_initialize.call_count, len(cases))
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_accepts_missing_optional_type_param_and_return_url(
         self,
         mock_check,
@@ -699,7 +699,7 @@ class EpaySubmitServiceTests(TestCase):
                 self.assertFalse(serializer.is_valid())
                 self.assertIn("money", serializer.errors)
 
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_rejects_when_project_has_no_payment_methods(self, mock_check):
         # EPay 建单若项目没有任何可用收款方式，必须拒绝而不是创建不可支付账单并占用商户单号。
         DifferRecipientAddress.objects.filter(project=self.project).delete()
@@ -715,7 +715,7 @@ class EpaySubmitServiceTests(TestCase):
             action="invoice",
         )
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
     def test_create_invoice_and_order_reuses_existing_order_after_integrity_error(
         self,
         mock_initialize,
@@ -761,7 +761,7 @@ class EpaySubmitServiceTests(TestCase):
         )
 
         with patch(
-            "invoices.epay_service.Invoice.objects.create",
+            "invoices.epay.service.Invoice.objects.create",
             side_effect=IntegrityError("duplicate out_trade_no"),
         ):
             invoice = EpaySubmitService._create_invoice_and_order(
@@ -781,8 +781,8 @@ class EpaySubmitRouteTests(TestCase):
     def _signed_params(self, **overrides):
         return EpaySubmitServiceTests._signed_params(self, **overrides)
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_post_submit_php_redirects_to_hosted_checkout(
         self,
         mock_check,
@@ -800,8 +800,8 @@ class EpaySubmitRouteTests(TestCase):
             action="invoice",
         )
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_get_submit_php_redirects_to_hosted_checkout(
         self,
         mock_check,
@@ -822,8 +822,8 @@ class EpaySubmitRouteTests(TestCase):
             action="invoice",
         )
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_bad_sign_returns_fail_plain_text(
         self,
         mock_check,
@@ -842,8 +842,8 @@ class EpaySubmitRouteTests(TestCase):
         mock_check.assert_not_called()
         mock_initialize.assert_not_called()
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_invalid_pid_and_invalid_sign_return_identical_response(
         self,
         mock_check,
@@ -871,9 +871,9 @@ class EpaySubmitRouteTests(TestCase):
         mock_check.assert_not_called()
         mock_initialize.assert_not_called()
 
-    @patch("invoices.epay_views.logger")
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.views.logger")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_error_logged_with_pid_and_client_ip(
         self,
         mock_check,
@@ -895,8 +895,8 @@ class EpaySubmitRouteTests(TestCase):
         self.assertIsInstance(kwargs["error"], str)
         self.assertTrue(kwargs["error"])
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_post_submit_php_passes_csrf_check(
         self,
         mock_check,
@@ -916,8 +916,8 @@ class EpaySubmitRouteTests(TestCase):
         self.assertEqual(response.status_code, 302)
 
     @override_settings(EPAY_SUBMIT_RATE_LIMIT="2/m")
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_submit_php_rate_limited_after_threshold(
         self,
         mock_check,
@@ -966,8 +966,8 @@ class EpayNotifyTests(TestCase):
     def _signed_params(self, **overrides):
         return EpaySubmitServiceTests._signed_params(self, **overrides)
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_build_notify_payload_uses_epay_fields_and_signature(
         self, mock_check, mock_initialize
     ):
@@ -987,8 +987,8 @@ class EpayNotifyTests(TestCase):
         self.assertEqual(payload["sign_type"], "MD5")
         self.assertTrue(verify_epay_v1_sign(payload, self.merchant.signing_key))
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_build_notify_payload_uses_invoice_facts_and_epay_protocol_context(
         self, mock_check, mock_initialize
     ):
@@ -1023,8 +1023,8 @@ class EpayNotifyTests(TestCase):
         self.assertEqual(payload["sign_type"], "MD5")
         self.assertTrue(verify_epay_v1_sign(payload, self.merchant.signing_key))
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_build_return_url_appends_signed_query_for_completed_invoice(
         self, mock_check, mock_initialize
     ):
@@ -1054,8 +1054,8 @@ class EpayNotifyTests(TestCase):
         self.assertEqual(query["param"], "u=42")
         self.assertTrue(verify_epay_v1_sign(query, self.merchant.signing_key))
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_build_return_url_preserves_existing_query_on_return_url(
         self, mock_check, mock_initialize
     ):
@@ -1080,8 +1080,8 @@ class EpayNotifyTests(TestCase):
         self.assertIn("sign", query)
         self.assertEqual(query["trade_status"], ["TRADE_SUCCESS"])
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_build_return_url_returns_empty_when_not_completed(
         self, mock_check, mock_initialize
     ):
@@ -1098,8 +1098,8 @@ class EpayNotifyTests(TestCase):
         invoice.refresh_from_db()
         self.assertEqual(EpaySubmitService.build_return_url(invoice), "")
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_build_return_url_returns_empty_when_return_url_not_configured(
         self, mock_check, mock_initialize
     ):
@@ -1122,8 +1122,8 @@ class EpayNotifyTests(TestCase):
 
         self.assertEqual(EpaySubmitService.build_return_url(invoice), "")
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_public_serializer_returns_signed_return_url_when_completed(
         self, mock_check, mock_initialize
     ):
@@ -1147,8 +1147,8 @@ class EpayNotifyTests(TestCase):
         self.assertEqual(query["trade_no"], [invoice.sys_no])
         self.assertIn("sign", query)
 
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_public_serializer_returns_raw_return_url_when_not_completed(
         self, mock_check, mock_initialize
     ):
@@ -1180,8 +1180,8 @@ class EpayNotifyTests(TestCase):
         self.assertEqual(EpaySubmitService.build_return_url(native_invoice), "")
 
     @patch("webhooks.service.WebhookService.enqueue_delivery")
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_enqueue_paid_notify_creates_get_query_event(
         self, mock_check, mock_initialize, enqueue_mock
     ):
@@ -1201,8 +1201,8 @@ class EpayNotifyTests(TestCase):
         self.assertEqual(invoice.epay_order.notify_event_id, event.pk)
 
     @patch("webhooks.service.WebhookService.enqueue_delivery")
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_enqueue_paid_notify_uses_invoice_notify_url(
         self, mock_check, mock_initialize, enqueue_mock
     ):
@@ -1226,10 +1226,10 @@ class EpayNotifyTests(TestCase):
         enqueue_mock.assert_called_once_with(event)
 
     @patch("invoices.service.send_internal_callback")
-    @patch("invoices.epay_service.EpaySubmitService.enqueue_paid_notify")
+    @patch("invoices.epay.service.EpaySubmitService.enqueue_paid_notify")
     @patch("webhooks.service.WebhookService.create_event")
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_confirm_epay_invoice_uses_epay_notify_not_native_webhook(
         self, mock_check, mock_initialize, native_webhook_mock, epay_notify_mock, _
     ):
@@ -1250,10 +1250,10 @@ class EpayNotifyTests(TestCase):
         native_webhook_mock.assert_not_called()
 
     @patch("invoices.service.send_internal_callback")
-    @patch("invoices.epay_service.EpaySubmitService.enqueue_paid_notify")
+    @patch("invoices.epay.service.EpaySubmitService.enqueue_paid_notify")
     @patch("invoices.service.WebhookService.create_event")
-    @patch("invoices.epay_service.InvoiceService.initialize_invoice")
-    @patch("invoices.epay_service.check_saas_permission")
+    @patch("invoices.epay.service.InvoiceService.initialize_invoice")
+    @patch("invoices.epay.service.check_saas_permission")
     def test_confirm_native_invoice_uses_native_webhook_not_epay(
         self, mock_check, mock_initialize, native_webhook_mock, epay_notify_mock, _
     ):

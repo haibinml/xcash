@@ -226,8 +226,8 @@ class InvoicePublicSerializer(serializers.ModelSerializer):
             obj.protocol == InvoiceProtocol.EPAY_V1
             and obj.status == InvoiceStatus.COMPLETED
         ):
-            # lazy import 避免 serializers ↔ epay_service 顶层循环依赖。
-            from .epay_service import EpaySubmitService
+            # lazy import 避免 serializers ↔ epay.service 顶层循环依赖。
+            from .epay.service import EpaySubmitService
 
             signed = EpaySubmitService.build_return_url(obj)
             if signed:

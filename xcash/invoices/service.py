@@ -269,7 +269,7 @@ class InvoiceService:
             logger.exception("调度 Invoice VaultSlot 归集任务失败", invoice_id=invoice.pk)
 
         if invoice.protocol == InvoiceProtocol.EPAY_V1:
-            from .epay_service import EpaySubmitService
+            from .epay.service import EpaySubmitService
 
             EpaySubmitService.enqueue_paid_notify(invoice)
         elif invoice.protocol == InvoiceProtocol.NATIVE:

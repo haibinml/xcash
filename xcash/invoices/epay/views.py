@@ -7,8 +7,8 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django_smart_ratelimit import rate_limit
 
-from .epay_service import EpaySubmitError
-from .epay_service import EpaySubmitService
+from .service import EpaySubmitError
+from .service import EpaySubmitService
 
 logger = structlog.get_logger()
 
