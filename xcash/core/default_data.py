@@ -15,6 +15,7 @@ from currencies.models import Fiat
 from evm.local_erc20 import LOCAL_EVM_ERC20_ABI
 from evm.local_erc20 import LOCAL_EVM_ERC20_BYTECODE
 from evm.local_erc20 import has_standard_erc20_interface
+from evm.local_vault_slot import ensure_local_vault_slot_contracts
 
 env = environ.Env()
 
@@ -381,6 +382,11 @@ def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
             skip_symbols={"USDT"},
             stdout=stdout,
         )
+
+    # VaultSlot 工厂 / 模板：本地 anvil 不持久化状态，每次 bootstrap 用确定性 CREATE2
+    # 重新部署到全网统一地址，使合约账单 / 充币的 VaultSlot 归集链路在本地可用。
+    # 生产 / 测试网由 contracts/scripts/DeployXcashVaultSlot.s.sol 经 Foundry 部署。
+    ensure_local_vault_slot_contracts(w3=_build_local_evm_web3(rpc=local_evm_rpc))
 
     if stdout is not None:
         stdout.write("✅ 本地联调链初始化完成")

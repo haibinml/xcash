@@ -173,6 +173,9 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         )
 
     @override_settings(DEBUG=True, AUTO_BOOTSTRAP_REFERENCE_DATA=True)
+    # VaultSlot 工厂 / 模板的确定性部署是链上副作用，不属于本测试关注的「主数据落库」，
+    # mock 掉避免依赖真实 anvil；其部署正确性由 evm.tests.test_local_vault_slot 覆盖。
+    @patch("core.default_data.ensure_local_vault_slot_contracts")
     @patch("core.default_data.has_standard_erc20_interface", return_value=True)
     @patch.dict(
         os.environ,
@@ -183,7 +186,9 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         },
         clear=False,
     )
-    def test_post_migrate_bootstraps_local_reference_data_in_debug(self, _has_erc20):
+    def test_post_migrate_bootstraps_local_reference_data_in_debug(
+        self, _has_erc20, _ensure_vault_slot
+    ):
         bootstrap_reference_data_after_migrate(sender=None, using="default")
 
         evm_chain = Chain.objects.get(code="ethereum-local")
