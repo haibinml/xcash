@@ -103,11 +103,15 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_withdrawal_review_exempt_limit(self, value):
-        return self._validate_positive_limit(
-            value,
-            "withdrawal_review_exempt_limit",
-            WITHDRAWAL_LIMIT_MAX,
-        )
+        if value < 0:
+            raise serializers.ValidationError(
+                "withdrawal_review_exempt_limit 不能为负数"
+            )
+        if value > WITHDRAWAL_LIMIT_MAX:
+            raise serializers.ValidationError(
+                f"withdrawal_review_exempt_limit 不能超过 {WITHDRAWAL_LIMIT_MAX}"
+            )
+        return value
 
     def validate_withdrawal_single_limit(self, value):
         return self._validate_positive_limit(

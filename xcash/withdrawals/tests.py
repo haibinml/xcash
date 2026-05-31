@@ -2260,16 +2260,6 @@ class WithdrawalShouldRequireReviewTests(TestCase):
             )
         )
 
-    def test_review_required_no_exempt_limit(self):
-        """审核开关开启，无免审核门槛时，所有提币都需要审核。"""
-        project = self._make_project(
-            withdrawal_review_required=True,
-            withdrawal_review_exempt_limit=None,
-        )
-        self.assertTrue(
-            WithdrawalService.should_require_review(project=project, worth=Decimal("1"))
-        )
-
     def test_review_required_exempt_limit_zero(self):
         """免审核门槛为 0 时等同于未配置，所有提币都需要审核。"""
         project = self._make_project(

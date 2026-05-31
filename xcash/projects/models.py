@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
@@ -94,13 +95,10 @@ class Project(models.Model):
         _("免审核门槛(USD)"),
         max_digits=16,
         decimal_places=2,
-        # 与 single/daily 限额字段一致，允许留空；should_require_review 已按 `is not None` 处理。
-        # 留空（None）与 0 同义：表示全部提币都需要审核。
-        null=True,
-        blank=True,
         default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
         help_text=_(
-            "仅在开启提币审核时生效；低于该金额的提币可直接进入链上发送队列，留空表示全部需要审核"
+            "仅在开启提币审核时生效；0 表示全部需要审核；大于 0 时低于该金额的提币可直接进入链上发送队列"
         ),
     )
     withdrawal_single_limit = models.DecimalField(

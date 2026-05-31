@@ -178,15 +178,13 @@ class WithdrawalStressCase(models.Model):
     # 执行过程中填充
     withdrawal_sys_no = models.CharField(_("系统单号"), max_length=64, blank=True)
     withdrawal_out_no = models.CharField(_("商户单号"), max_length=64, blank=True)
-    crypto = models.CharField(_("币种"), max_length=32, blank=True)
-    chain = models.CharField(_("链"), max_length=32, blank=True)
-    to_address = models.CharField(_("目的地址"), max_length=256, blank=True)
+    crypto = models.CharField(_("币种"), max_length=32)
+    chain = models.CharField(_("链"), max_length=32)
+    to_address = models.CharField(_("目的地址"), max_length=256)
     amount = models.DecimalField(
         _("提币金额"),
         max_digits=36,
         decimal_places=18,
-        null=True,
-        blank=True,
     )
     tx_hash = models.CharField(_("交易哈希"), max_length=128, blank=True)
 
@@ -236,18 +234,16 @@ class DepositStressCase(models.Model):
     )
 
     # 客户信息
-    customer_uid = models.CharField(_("客户 UID"), max_length=128, blank=True)
+    customer_uid = models.CharField(_("客户 UID"), max_length=128)
 
     # 执行过程中填充
-    crypto = models.CharField(_("币种"), max_length=32, blank=True)
-    chain = models.CharField(_("链"), max_length=32, blank=True)
+    crypto = models.CharField(_("币种"), max_length=32)
+    chain = models.CharField(_("链"), max_length=32)
     deposit_address = models.CharField(_("充值地址"), max_length=256, blank=True)
     amount = models.DecimalField(
         _("充值金额"),
         max_digits=36,
         decimal_places=18,
-        null=True,
-        blank=True,
     )
     payer_address = models.CharField(_("付款地址"), max_length=256, blank=True)
     tx_hash = models.CharField(_("交易哈希"), max_length=128, blank=True)

@@ -84,6 +84,7 @@ class LoginView(AdminContextMixin, FormView):
                 request=self.request,
                 action=AdminAccessLog.Action.PASSWORD_LOGIN,
                 result=AdminAccessLog.Result.FAILED,
+                username_snapshot=username,
                 reason="invalid_credentials",
             )
             form.add_error(None, _("用户名或密码错误。"))

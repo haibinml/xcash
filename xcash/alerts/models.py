@@ -53,17 +53,13 @@ class ProjectTelegramAlertConfig(models.Model):
     last_error_at = models.DateTimeField(_("最近报错时间"), null=True, blank=True)
     created_by = models.ForeignKey(
         "users.User",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         related_name="created_project_telegram_alert_configs",
         verbose_name=_("创建人"),
     )
     updated_by = models.ForeignKey(
         "users.User",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         related_name="updated_project_telegram_alert_configs",
         verbose_name=_("更新人"),
     )
@@ -125,7 +121,7 @@ class ProjectAlertState(models.Model):
     severity = models.CharField(_("级别"), max_length=16, choices=ProjectAlertSeverity)
     title = models.CharField(_("标题"), max_length=128)
     detail = models.TextField(_("详情"))
-    admin_url = models.CharField(_("后台链接"), max_length=255, blank=True, default="")
+    admin_url = models.CharField(_("后台链接"), max_length=255)
     status = models.CharField(
         _("状态"),
         max_length=16,

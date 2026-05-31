@@ -262,11 +262,8 @@ class WithdrawalService:
         """审核开关开启后，允许低价值提币按项目门槛直接放行，减少人工审核噪音。"""
         if not project.withdrawal_review_required:
             return False
-        return not (
-            project.withdrawal_review_exempt_limit is not None
-            and project.withdrawal_review_exempt_limit > 0
-            and worth < project.withdrawal_review_exempt_limit
-        )
+        exempt_limit = project.withdrawal_review_exempt_limit
+        return not (exempt_limit > 0 and worth < exempt_limit)
 
     @classmethod
     def _make_balance_verify_fn(

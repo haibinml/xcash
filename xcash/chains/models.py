@@ -510,6 +510,7 @@ class TxTaskType(models.TextChoices):
 class TransferType(models.TextChoices):
     """Transfer.type 的枚举：仅描述对一笔链上转账的业务归属。"""
 
+    Unmatched = "unmatched", _("未归类")
     Invoice = "invoice", _("💳 支付")
     Deposit = "deposit", "💰 充币"
     Withdrawal = "withdrawal", "🏧 提币"
@@ -601,7 +602,6 @@ class TxTask(UndeletableModel):
     tx_hash = HashField(
         unique=False,
         verbose_name=_("交易哈希"),
-        blank=True,
         null=True,
     )
     status = models.CharField(
@@ -855,8 +855,7 @@ class Transfer(models.Model):
     type = models.CharField(
         _("类型"),
         choices=TransferType,
-        blank=True,
-        default="",
+        default=TransferType.Unmatched,
     )
     confirm_mode = models.CharField(
         choices=ConfirmMode,

@@ -57,12 +57,21 @@ def get_admin_otp_ratelimit_key(request, *_args, **_kwargs) -> str:
 
 
 def record_admin_access(
-    *, request, action: str, result: str, user=None, reason: str = ""
+    *,
+    request,
+    action: str,
+    result: str,
+    user=None,
+    reason: str = "",
+    username_snapshot: str | None = None,
 ) -> None:
     # 登录与 OTP 审计要尽量轻量，失败也不能影响主登录链路。
+    username = (
+        username_snapshot or getattr(user, "username", "") or "anonymous"
+    ).strip() or "anonymous"
     AdminAccessLog.objects.create(
         user=user,
-        username_snapshot=getattr(user, "username", "") or "",
+        username_snapshot=username[:150],
         ip=request.META.get("REMOTE_ADDR") or None,
         user_agent=request.headers.get("user-agent", "")[:1024],
         action=action,

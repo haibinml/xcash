@@ -277,6 +277,36 @@ class TestFastConfirmThresholdValidation:
 
 
 @pytest.mark.django_db
+class TestWithdrawalReviewExemptLimitValidation:
+    def test_accepts_zero(self, client, project):
+        response = client.patch(
+            _url(project),
+            data={"withdrawal_review_exempt_limit": "0"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=AUTH_HEADER,
+        )
+        assert response.status_code == 200
+
+    def test_rejects_negative(self, client, project):
+        response = client.patch(
+            _url(project),
+            data={"withdrawal_review_exempt_limit": "-1"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=AUTH_HEADER,
+        )
+        assert response.status_code == 400
+
+    def test_rejects_null(self, client, project):
+        response = client.patch(
+            _url(project),
+            data={"withdrawal_review_exempt_limit": None},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=AUTH_HEADER,
+        )
+        assert response.status_code == 400
+
+
+@pytest.mark.django_db
 class TestWithdrawalSingleLimitValidation:
     def test_rejects_zero(self, client, project):
         response = client.patch(
@@ -318,5 +348,4 @@ class TestWithdrawalSingleLimitValidation:
             HTTP_AUTHORIZATION=AUTH_HEADER,
         )
         assert response.status_code == 400
-
 

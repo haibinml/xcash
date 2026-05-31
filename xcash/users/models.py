@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser
+from django.core.validators import MinLengthValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -54,7 +55,7 @@ class AdminAccessLog(models.Model):
         verbose_name=_("用户"),
     )
     username_snapshot = models.CharField(
-        _("用户名快照"), max_length=150, blank=True, default=""
+        _("用户名快照"), max_length=150, validators=[MinLengthValidator(1)]
     )
     ip = models.GenericIPAddressField(_("IP"), null=True, blank=True)
     user_agent = models.TextField(_("User-Agent"), blank=True, default="")
@@ -65,6 +66,12 @@ class AdminAccessLog(models.Model):
 
     class Meta:
         ordering = ("-created_at",)
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(username_snapshot=""),
+                name="ck_admin_access_log_username_snapshot_not_blank",
+            ),
+        ]
         verbose_name = _("后台访问日志")
         verbose_name_plural = verbose_name
 

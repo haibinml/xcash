@@ -133,6 +133,23 @@ class AdminOTPTests(TestCase):
             1,
         )
 
+    def test_failed_password_login_records_attempted_username(self):
+        client = Client()
+
+        response = client.post(
+            "/login",
+            {"username": "missing-admin", "password": "bad-secret"},
+            REMOTE_ADDR="10.0.0.12",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        log = AdminAccessLog.objects.get(
+            action=AdminAccessLog.Action.PASSWORD_LOGIN,
+            result=AdminAccessLog.Result.FAILED,
+        )
+        self.assertIsNone(log.user)
+        self.assertEqual(log.username_snapshot, "missing-admin")
+
     def test_otp_setup_confirms_device_and_allows_admin_access(self):
         user = User.objects.create_user(
             username="otp_bind_user", password="secret", is_staff=True
