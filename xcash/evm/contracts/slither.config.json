@@ -1,0 +1,6 @@
+{
+  "filter_paths": "(lib/|test/|scripts/)",
+  "exclude_dependencies": true,
+  "detectors_to_exclude": "reentrancy-balance,incorrect-equality,too-many-digits,low-level-calls,assembly,naming-convention,solc-version",
+  "fail_on": "medium"
+}

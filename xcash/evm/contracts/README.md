@@ -18,6 +18,40 @@ make all
 make test
 ```
 
+## 测试 / 静态扫描
+
+测试分两层：
+
+- **单元测试**（`test/XcashVaultSlotTest.t.sol`、`XcashVaultSlotFactoryTest.t.sol`）：
+  固定输入覆盖具体场景与 revert 分支，含 USDT 非标返回、false / 畸形返回等 token。
+- **Fuzz 属性测试**（`test/XcashVaultSlotFuzz.t.sol`）：对金额、vault 地址、salt
+  全空间随机取值，验证核心不变性——归集全额到位且 slot 清零、资金只流向编码的
+  immutable vault、CREATE2 预测地址恒等于实际部署地址、不同 salt 不碰撞。
+
+```bash
+make test     # 单元 + fuzz 全部测试
+make fuzz     # 只跑 fuzz，FOUNDRY_FUZZ_RUNS=10000 加大随机覆盖
+```
+
+### Slither 静态扫描
+
+```bash
+uv tool install slither-analyzer   # 一次性安装（或 pipx install slither-analyzer）
+make slither                       # 扫 src/，medium 及以上发现会让命令失败
+```
+
+配置见 `slither.config.json`：`fail_on=medium` 让中 / 高危阻断、低 / 信息级仅提示；
+`detectors_to_exclude` 定点关掉在本代码上**已复核为误报**的检测项，更强的
+`reentrancy-eth` / `reentrancy-no-eth` 等保持开启：
+
+| 排除项 | 原因 |
+|---|---|
+| `reentrancy-balance` | 归集后无状态写入，资金只能流向 immutable vault，重入偷不到币 |
+| `incorrect-equality` | `==0` / `==1` / length 判断是零值与布尔解码，非 timestamp/balance 精确匹配陷阱 |
+| `too-many-digits` | 误读 `keccak256(type(X).runtimeCode)` 为大数字面量 |
+| `low-level-calls`、`assembly` | 原生币转发与 immutable args 解码有意使用 |
+| `naming-convention`、`solc-version` | 风格与版本噪声（0.8.35 为有意锁定） |
+
 ## 地址预测公式
 
 ```text

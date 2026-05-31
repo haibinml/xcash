@@ -1,7 +1,7 @@
 FORGE ?= forge
 OPENZEPPELIN_CONTRACTS_VERSION := v5.6.1
 
-.PHONY: all deps build test clean fixtures
+.PHONY: all deps build test fuzz slither clean fixtures
 
 all: build fixtures
 
@@ -22,6 +22,16 @@ build: deps
 
 test: deps
 	$(FORGE) test --offline -vvv
+
+# 只跑 Fuzz 属性测试（testFuzz_ 前缀），调高 runs 加大随机覆盖。
+fuzz: deps
+	FOUNDRY_FUZZ_RUNS=10000 $(FORGE) test --offline --match-test testFuzz -vvv
+
+# Slither 静态安全扫描。需先安装：uv tool install slither-analyzer
+slither: deps
+	@command -v slither >/dev/null 2>&1 || \
+		{ echo "slither 未安装：uv tool install slither-analyzer（或 pipx install slither-analyzer）"; exit 1; }
+	slither . --config-file slither.config.json
 
 fixtures: deps
 	@mkdir -p ../tests/fixtures
