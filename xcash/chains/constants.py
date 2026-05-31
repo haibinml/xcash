@@ -13,7 +13,6 @@ class ChainCode(models.TextChoices):
     Optimism = "optimism", "Optimism"
     Base = "base", "Base"
     Avalanche = "avalanche", "Avalanche C-Chain"
-    ZkSyncEra = "zksync-era", "zkSync Era"
     Linea = "linea", "Linea"
     Scroll = "scroll", "Scroll"
     Tron = "tron", "Tron"
@@ -48,7 +47,6 @@ CHAIN_SPECS: dict[str, ChainSpec] = {
     ChainCode.Optimism: ChainSpec(ChainType.EVM, 10, False, 20, "ETH", 18, 4),
     ChainCode.Base: ChainSpec(ChainType.EVM, 8453, False, 20, "ETH", 18, 4),
     ChainCode.Avalanche: ChainSpec(ChainType.EVM, 43114, False, 8, "AVAX", 18, 6),
-    ChainCode.ZkSyncEra: ChainSpec(ChainType.EVM, 324, False, 20, "ETH", 18, 4),
     ChainCode.Linea: ChainSpec(ChainType.EVM, 59144, False, 20, "ETH", 18, 6),
     ChainCode.Scroll: ChainSpec(ChainType.EVM, 534352, False, 20, "ETH", 18, 6),
     ChainCode.Anvil: ChainSpec(ChainType.EVM, 31337, False, 8, "ETH", 18, 4),

@@ -375,7 +375,7 @@ class EvmTxTaskTests(TestCase):
     def test_broadcast_preflight_contract_call_passes_at_exact_task_gas_buffer(self):
         # CONTRACT_CALL 使用任务自定义 gas；余额刚好等于新公式阈值时应通过。
         chain = make_evm_chain(
-            code=ChainCode.ZkSyncEra,
+            code=ChainCode.Ethereum,
             rpc="http://localhost:8545",
         )
         addr = Address.objects.create(

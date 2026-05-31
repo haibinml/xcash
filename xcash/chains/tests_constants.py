@@ -34,7 +34,6 @@ def test_tron_spec_has_no_evm_fields():
         (ChainCode.Optimism, 10),
         (ChainCode.Base, 8453),
         (ChainCode.Avalanche, 43114),
-        (ChainCode.ZkSyncEra, 324),
         (ChainCode.Linea, 59144),
         (ChainCode.Scroll, 534352),
     ],

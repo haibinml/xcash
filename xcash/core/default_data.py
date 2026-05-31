@@ -46,7 +46,6 @@ PRODUCTION_MAINNET_CHAINS = (
     {"chain": ChainCode.Optimism, "native_symbol": "ETH"},
     {"chain": ChainCode.Base, "native_symbol": "ETH"},
     {"chain": ChainCode.Avalanche, "native_symbol": "AVAX"},
-    {"chain": ChainCode.ZkSyncEra, "native_symbol": "ETH"},
     {"chain": ChainCode.Linea, "native_symbol": "ETH"},
     {"chain": ChainCode.Scroll, "native_symbol": "ETH"},
     {"chain": ChainCode.Tron, "native_symbol": "TRX"},
@@ -77,9 +76,6 @@ PRODUCTION_MAINNET_TOKEN_MAPPINGS = (
     # ── Avalanche C-Chain ──
     {"chain_name": ChainCode.Avalanche, "crypto_symbol": "USDC", "address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", "decimals": 6},
     {"chain_name": ChainCode.Avalanche, "crypto_symbol": "USDT", "address": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", "decimals": 6},
-    # ── zkSync Era ──
-    {"chain_name": ChainCode.ZkSyncEra, "crypto_symbol": "USDC", "address": "0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4", "decimals": 6},
-    {"chain_name": ChainCode.ZkSyncEra, "crypto_symbol": "USDT", "address": "0x493257fD37EDB34451f62EDf8D2a0C418852bA4C", "decimals": 6},
     # ── Linea ──
     {"chain_name": ChainCode.Linea, "crypto_symbol": "USDC", "address": "0x176211869cA2b568f2A7D4EE941E073a821EE1ff", "decimals": 6},
     {"chain_name": ChainCode.Linea, "crypto_symbol": "USDT", "address": "0xA219439258ca9da29E9Cc4cE5596924745e12B93", "decimals": 6},
