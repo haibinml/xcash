@@ -23,7 +23,7 @@ dependencies = [
     "djangorestframework==3.17.1",
     "django-redis==6.0.0",
     "django-cors-headers==4.9.0",
-    "django-smart-ratelimit[redis]==2.2.1",
+    "django-smart-ratelimit[redis]==4.0.1",
     # Celery
     "celery==5.6.3",
     "django-celery-results==2.6.0",

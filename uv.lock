@@ -783,15 +783,15 @@ wheels = [
 
 [[package]]
 name = "django-smart-ratelimit"
-version = "2.2.1"
+version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asgiref" },
     { name = "django" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/76/96391289b7dfc0ca3ddf1abf5e1c50a6ea11e78d6b0838b8b47784238510/django_smart_ratelimit-2.2.1.tar.gz", hash = "sha256:80cc34b5b0803cbaa348c420fb53cd79ac72008a7f41118d02200df716585d6d", size = 278099, upload-time = "2026-04-08T13:24:59.055Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/e9/80ee7af1f910c92e61a495eb0d9c07a98748356b1242e4730e002f14a57f/django_smart_ratelimit-4.0.1.tar.gz", hash = "sha256:e556c0294a4b7a2b2d5f57ea3a8ad90a01d33c054cd1761991bec2cd071eebfc", size = 358064, upload-time = "2026-05-30T09:34:30.815Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/1a/7d8ce130c2b4646765a67318e283ea96a4ef3da7c3a3a6c7be9ce11d76fe/django_smart_ratelimit-2.2.1-py3-none-any.whl", hash = "sha256:3a4cc42c5a10e38d4069d3a730c1de7c7404f350a3c6753622a1274a87a20931", size = 133010, upload-time = "2026-04-08T13:24:57.656Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/8b/3dbd9bdf888c6d185fa012d5cc82d28954af70925926aee1b439e2d74f14/django_smart_ratelimit-4.0.1-py3-none-any.whl", hash = "sha256:b6b747a260d911771f64cf34a18c9aa09e4c28a12b88dcb379f2eb8a6950e53a", size = 173429, upload-time = "2026-05-30T09:34:29.41Z" },
 ]
 
 [package.optional-dependencies]
@@ -2757,7 +2757,7 @@ requires-dist = [
     { name = "django-migration-linter", specifier = "==6.0.0" },
     { name = "django-otp", specifier = ">=1.7.0" },
     { name = "django-redis", specifier = "==6.0.0" },
-    { name = "django-smart-ratelimit", extras = ["redis"], specifier = "==2.2.1" },
+    { name = "django-smart-ratelimit", extras = ["redis"], specifier = "==4.0.1" },
     { name = "django-unfold", specifier = "==0.94.0" },
     { name = "djangorestframework", specifier = "==3.17.1" },
     { name = "gunicorn", specifier = "==26.0.0" },
