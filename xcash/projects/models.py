@@ -74,7 +74,7 @@ class Project(models.Model):
         length=32,
     )
     vault = AddressField(
-        _("VaultSlot 多签归集地址"),
+        _("收款归集地址"),
         null=True,
         blank=True,
         help_text=_(
@@ -136,9 +136,7 @@ class Project(models.Model):
                 .first()
             )
             if old_vault and self.vault != old_vault:
-                raise ValidationError(
-                    {"vault": _("VaultSlot 多签归集地址一旦设置不可修改。")}
-                )
+                raise ValidationError({"vault": _("收款归集地址一旦设置不可修改。")})
         return super().save(*args, **kwargs)
 
     @classmethod
