@@ -117,9 +117,6 @@ class QuicknodeMistTrackClientTests(SimpleTestCase):
                 "result": {
                     "risk_level": "High",
                     "score": 88,
-                    "detail_list": ["Sanctioned entity"],
-                    "risk_detail": {"sanction": 1},
-                    "risk_report_url": "https://report.example",
                 },
             },
             request=httpx.Request("POST", "https://quicknode.example"),
@@ -143,10 +140,6 @@ class QuicknodeMistTrackClientTests(SimpleTestCase):
         )
         self.assertEqual(result.risk_level, RiskLevel.HIGH)
         self.assertEqual(result.risk_score, Decimal("88"))
-        self.assertEqual(result.detail_list, ["Sanctioned entity"])
-        # QuickNode 历史 dict → list[dict] 适配后单元素 list
-        self.assertEqual(result.risk_detail, [{"sanction": 1}])
-        self.assertEqual(result.risk_report_url, "https://report.example")
         # QuickNode add-on 不返回 address_label
         self.assertIsNone(result.address_label)
 
@@ -179,16 +172,7 @@ class MistTrackOpenApiClientTests(SimpleTestCase):
                 "data": {
                     "risk_level": "High",
                     "score": 75,
-                    "detail_list": ["Interact With High-risk Tag Address"],
-                    "risk_detail": [
-                        {
-                            "entity": "huionepay",
-                            "risk_type": "sanctioned_entity",
-                            "hop_dic": {"1": ["huionepay"]},
-                        }
-                    ],
                     "address_label": "Binance",
-                    "risk_report_url": "https://report.example/v3",
                 },
             },
             request=httpx.Request(
@@ -209,11 +193,8 @@ class MistTrackOpenApiClientTests(SimpleTestCase):
         )
         self.assertEqual(result.risk_level, RiskLevel.HIGH)
         self.assertEqual(result.risk_score, Decimal("75"))
-        self.assertEqual(result.detail_list, ["Interact With High-risk Tag Address"])
-        self.assertEqual(result.risk_detail[0]["hop_dic"], {"1": ["huionepay"]})
         self.assertEqual(result.address_label, "Binance")
         self.assertEqual(result.raw_response["address_label"], "Binance")
-        self.assertEqual(result.risk_report_url, "https://report.example/v3")
 
     @patch("aml.clients.time.sleep", return_value=None)
     @patch("aml.clients.httpx.request")
@@ -264,9 +245,6 @@ class MistTrackOpenApiClientTests(SimpleTestCase):
                 "data": {
                     "risk_level": "Low",
                     "score": 10,
-                    "detail_list": [],
-                    "risk_detail": [],
-                    "risk_report_url": "",
                 },
             },
             request=httpx.Request(
@@ -301,9 +279,6 @@ class MistTrackOpenApiClientTests(SimpleTestCase):
                 "data": {
                     "risk_level": "Low",
                     "score": 10,
-                    "detail_list": [],
-                    "risk_detail": [],
-                    "risk_report_url": "",
                 },
             },
             request=httpx.Request(
@@ -478,9 +453,6 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
         score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.SEVERE,
             risk_score=Decimal("95"),
-            detail_list=[],
-            risk_detail=[],
-            risk_report_url="",
             raw_response={},
         )
 
@@ -503,9 +475,6 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
         score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.SEVERE,
             risk_score=Decimal("95"),
-            detail_list=[],
-            risk_detail=[],
-            risk_report_url="",
             raw_response={},
         )
 
@@ -552,9 +521,6 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
         score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.SEVERE,
             risk_score=Decimal("95"),
-            detail_list=[],
-            risk_detail=[],
-            risk_report_url="",
             raw_response={},
         )
 
@@ -576,9 +542,6 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
         score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.SEVERE,
             risk_score=Decimal("95"),
-            detail_list=[],
-            risk_detail=[],
-            risk_report_url="",
             raw_response={},
         )
 
@@ -624,9 +587,6 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
         openapi_score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.HIGH,
             risk_score=Decimal("75"),
-            detail_list=[],
-            risk_detail=[],
-            risk_report_url="https://report.example/v3",
             raw_response={"risk_level": "High", "score": 75},
         )
 
@@ -720,9 +680,6 @@ class AmlBusinessDispatchTests(AmlTestMixin, TestCase):
         score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.SEVERE,
             risk_score=Decimal("95"),
-            detail_list=["Mixer"],
-            risk_detail=[{"mixer": 1}],
-            risk_report_url="https://report.example/1",
             raw_response={"risk_level": "Severe", "score": 95},
         )
 
@@ -748,9 +705,6 @@ class AmlBusinessDispatchTests(AmlTestMixin, TestCase):
             result={
                 "risk_level": RiskLevel.MODERATE,
                 "risk_score": "61",
-                "detail_list": ["Phishing"],
-                "risk_detail": [{"phishing": 1}],
-                "risk_report_url": "https://report.example/cached",
                 "raw_response": {"risk_level": "Moderate", "score": 61},
             },
             timeout=300,
@@ -773,9 +727,6 @@ class AmlBusinessDispatchTests(AmlTestMixin, TestCase):
         score.return_value = MistTrackAmlResult(
             risk_level=RiskLevel.LOW,
             risk_score=Decimal("10"),
-            detail_list=[],
-            risk_detail=[],
-            risk_report_url="",
             raw_response={"risk_level": "Low", "score": 10},
         )
         AmlScreeningService.write_cache(
@@ -784,9 +735,6 @@ class AmlBusinessDispatchTests(AmlTestMixin, TestCase):
             result={
                 "risk_level": RiskLevel.SEVERE,
                 "risk_score": "99",
-                "detail_list": [],
-                "risk_detail": [],
-                "risk_report_url": "",
                 "raw_response": {},
             },
             timeout=300,

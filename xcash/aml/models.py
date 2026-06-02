@@ -78,9 +78,6 @@ class RiskAssessment(models.Model):
         null=True,
         blank=True,
     )
-    detail_list = models.JSONField(_("风险原因列表"), default=list, blank=True)
-    risk_detail = models.JSONField(_("风险详情"), default=list, blank=True)
-    risk_report_url = models.URLField(_("风险报告链接"), blank=True, default="")
     raw_response = models.JSONField(_("原始响应摘要"), default=dict, blank=True)
     error_message = models.TextField(_("错误摘要"), blank=True, default="")
     checked_at = models.DateTimeField(_("查询完成时间"), null=True, blank=True)

@@ -15,9 +15,6 @@ from aml.models import RiskLevel
 class MistTrackAmlResult:
     risk_level: str
     risk_score: Decimal | None
-    detail_list: list[Any]
-    risk_detail: list[dict[str, Any]]
-    risk_report_url: str
     raw_response: dict[str, Any]
     address_label: str | None = None
 
@@ -92,19 +89,6 @@ def _request_with_retry(
     raise RuntimeError(msg)
 
 
-def _coerce_risk_detail(value: Any) -> list[dict[str, Any]]:
-    """统一 risk_detail 为 list[dict]。
-    - V3 官方返回 list[dict]
-    - QuickNode add-on 历史返回 dict（如 {"sanction": 1}），适配为单元素 list 以保持类型不变
-    - 其他情况返回空 list
-    """
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    if isinstance(value, dict) and value:
-        return [value]
-    return []
-
-
 class QuicknodeMistTrackClient:
     def __init__(self, *, endpoint_url: str):
         self.endpoint_url = endpoint_url
@@ -148,13 +132,6 @@ class QuicknodeMistTrackClient:
         return MistTrackAmlResult(
             risk_level=str(risk_level),
             risk_score=Decimal(str(score)) if score is not None else None,
-            detail_list=(
-                result.get("detail_list")
-                if isinstance(result.get("detail_list"), list)
-                else []
-            ),
-            risk_detail=_coerce_risk_detail(result.get("risk_detail")),
-            risk_report_url=str(result.get("risk_report_url") or ""),
             raw_response=result,
             address_label=None,  # QuickNode add-on 不返回该字段
         )
@@ -198,13 +175,6 @@ class MistTrackOpenApiClient:
         return MistTrackAmlResult(
             risk_level=str(risk_level),
             risk_score=Decimal(str(score)) if score is not None else None,
-            detail_list=(
-                result.get("detail_list")
-                if isinstance(result.get("detail_list"), list)
-                else []
-            ),
-            risk_detail=_coerce_risk_detail(result.get("risk_detail")),
-            risk_report_url=str(result.get("risk_report_url") or ""),
             raw_response=result,
             address_label=str(label) if label is not None else None,
         )
