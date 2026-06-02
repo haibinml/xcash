@@ -8,7 +8,7 @@ from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import ChainType
 from chains.models import Wallet
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
@@ -16,8 +16,8 @@ from evm.scanner.watchers import clear_evm_watch_set_cache
 from evm.scanner.watchers import load_matched_addresses_for_candidates
 from evm.scanner.watchers import load_watch_set
 from evm.tests._fixtures import make_evm_chain
-from projects.models import Customer
 from invoices.models import DifferRecipientAddress
+from projects.models import Customer
 from projects.models import Project
 
 WATCHER_TEST_CACHES = {
@@ -46,7 +46,7 @@ class EvmWatchSetCacheTests(TestCase):
             symbol="WTKN",
             coingecko_id="watcher-token",
         )
-        self.token_deployment = ChainToken.objects.create(
+        self.token_deployment = ChainCryptoDeployment.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -84,7 +84,7 @@ class EvmWatchSetCacheTests(TestCase):
         clear_evm_watch_set_cache()
         cache.clear()
 
-    def test_load_watch_set_only_loads_chain_tokens(self):
+    def test_load_watch_set_only_loads_chain_crypto_deployments(self):
         watch_set = load_watch_set(chain=self.chain, refresh=True)
 
         self.assertEqual(watch_set.matched_addresses, frozenset())
@@ -160,7 +160,7 @@ class EvmWatchSetCacheTests(TestCase):
 
         self.assertEqual(matched_addresses, frozenset({self.vault_slot.address}))
 
-    def test_chain_token_save_refreshes_cached_token_set_after_commit(self):
+    def test_chain_crypto_deployment_save_refreshes_cached_token_set_after_commit(self):
         load_watch_set(chain=self.chain, refresh=True)
         new_token = Crypto.objects.create(
             name="Watcher Token Two",
@@ -172,7 +172,7 @@ class EvmWatchSetCacheTests(TestCase):
         )
 
         with self.captureOnCommitCallbacks(execute=True):
-            ChainToken.objects.create(
+            ChainCryptoDeployment.objects.create(
                 crypto=new_token,
                 chain=self.chain,
                 address=token_address,
@@ -182,7 +182,7 @@ class EvmWatchSetCacheTests(TestCase):
         watch_set = load_watch_set(chain=self.chain)
         self.assertIn(token_address, watch_set.tokens_by_address)
 
-    def test_chain_token_delete_refreshes_cached_token_set_after_commit(self):
+    def test_chain_crypto_deployment_delete_refreshes_cached_token_set_after_commit(self):
         initial_watch_set = load_watch_set(chain=self.chain, refresh=True)
         self.assertIn(
             self.token_deployment.address, initial_watch_set.tokens_by_address

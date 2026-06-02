@@ -14,7 +14,7 @@ from web3 import Web3
 from chains.constants import ChainCode
 from chains.constants import ChainType
 from chains.models import Chain
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 from invoices.epay.serializers import EpaySubmitSerializer
@@ -365,7 +365,7 @@ class EpaySubmitServiceTests(TestCase):
             active=True,
         )
         self.native = self.chain.native_coin
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=self.crypto,
             chain=self.chain,
             address=Web3.to_checksum_address(

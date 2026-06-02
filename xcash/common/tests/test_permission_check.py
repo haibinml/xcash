@@ -275,7 +275,7 @@ class CheckSaasPermissionTest(TestCase):
             )
         self.assertEqual(ctx.exception.error_code, ErrorCode.FEATURE_NOT_ENABLED)
 
-    def test_missing_chain_token_args_keeps_feature_only_check(self):
+    def test_missing_chain_crypto_deployment_args_keeps_feature_only_check(self):
         """未传 chain/token 时保持旧行为，只校验功能开关。"""
 
         cache.set(

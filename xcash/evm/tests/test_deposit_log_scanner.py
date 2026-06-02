@@ -13,7 +13,7 @@ from chains.models import TxTask
 from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from evm.models import EvmScanCursor
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
@@ -39,7 +39,7 @@ class EvmLogScannerTests(TestCase):
             native_coin=self.native,
         )
         self.token = make_crypto(symbol="LOG-USDT", name="Log USDT")
-        self.token_deployment = ChainToken.objects.create(
+        self.token_deployment = ChainCryptoDeployment.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=Web3.to_checksum_address("0x" + "aa" * 20),

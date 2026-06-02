@@ -601,7 +601,7 @@ def _fund_evm_vault(project: Project) -> None:
     )
 
     # 2. 为 Vault 铸造 USDT
-    # 直接用本地 anvil 链：其 USDT ChainToken 指向本地部署的 mock 合约，mint 才能在本地 RPC 生效。
+    # 直接用本地 anvil 链：其 USDT ChainCryptoDeployment 指向本地部署的 mock 合约，mint 才能在本地 RPC 生效。
     evm_chain = Chain.objects.get(code="anvil")
     usdt = Crypto.objects.get(symbol="USDT")
     usdt_contract_address = usdt.address(evm_chain)

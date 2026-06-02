@@ -69,11 +69,11 @@ def make_erc20_token(
     address_suffix: str = "ee",
     decimals: int | None = 6,
 ) -> Crypto:
-    from currencies.models import ChainToken
+    from currencies.models import ChainCryptoDeployment
 
     crypto = crypto or make_crypto(symbol=f"TKN-{address_suffix}")
     address = Web3.to_checksum_address("0x" + address_suffix.rjust(40, "0"))
-    ChainToken.objects.create(
+    ChainCryptoDeployment.objects.create(
         crypto=crypto,
         chain=chain,
         address=address,

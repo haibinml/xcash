@@ -30,7 +30,7 @@ from chains.tasks import process_transfer
 from chains.transfer_matching import addresses_equal
 from chains.transfer_matching import raw_amount
 from chains.transfer_matching import transfer_matches
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 
 
@@ -58,8 +58,8 @@ class TransferMatchingTests(TestCase):
             rpc="",
             active=True,
         )
-        # 精度以 ChainToken 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
-        ChainToken.objects.create(
+        # 精度以 ChainCryptoDeployment 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
+        ChainCryptoDeployment.objects.create(
             crypto=native,
             chain=chain,
             address=Web3.to_checksum_address("0x" + "11" * 20),
@@ -118,8 +118,8 @@ class TransferMatchingTests(TestCase):
             rpc="",
             active=True,
         )
-        # 精度以 ChainToken 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
-        ChainToken.objects.create(
+        # 精度以 ChainCryptoDeployment 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
+        ChainCryptoDeployment.objects.create(
             crypto=crypto,
             chain=chain,
             address=Web3.to_checksum_address("0x" + "22" * 20),

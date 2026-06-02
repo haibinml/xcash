@@ -19,7 +19,7 @@ from chains.models import Chain
 from chains.models import ChainType
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 
 # 单轮扫描最多向前推进的块数；walletsolidity 返回的是 BFT 不可逆块，故无需 replay。
 # Tron 3 秒一块、beat tick 30 秒 ≈ 每轮净新增 ~10 块，32 块留够冗余且能消化短暂积压；
@@ -48,7 +48,7 @@ class TronUsdtPaymentScanner:
             raise ValueError(f"仅支持 Tron 链扫描，当前链为 {chain.code}")
 
         usdt_mapping = (
-            ChainToken.objects.select_related("crypto")
+            ChainCryptoDeployment.objects.select_related("crypto")
             .filter(
                 chain=chain,
                 crypto__symbol="USDT",
@@ -196,7 +196,7 @@ class TronUsdtPaymentScanner:
         chain: Chain,
         block_number: int,
         filter_addresses: set[str],
-        usdt_mapping: ChainToken,
+        usdt_mapping: ChainCryptoDeployment,
     ) -> list[ParsedTronTransferEvent]:
         page_fingerprint: str | None = None
         collected: list[ParsedTronTransferEvent] = []
@@ -263,7 +263,7 @@ class TronUsdtPaymentScanner:
         expected_block_number: int,
         block_hash: str,
         filter_addresses: set[str],
-        usdt_mapping: ChainToken,
+        usdt_mapping: ChainCryptoDeployment,
     ) -> ParsedTronTransferEvent | None:
         if not isinstance(row, dict):
             return None

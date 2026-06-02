@@ -16,7 +16,7 @@ from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import TransferType
 from chains.models import Wallet
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
@@ -311,7 +311,7 @@ def create_deposit_context(*, native: bool = False, confirmed: bool = True):
             symbol="DTT",
             coingecko_id="deposit-test-token",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=crypto,
             chain=chain,
             address=Web3.to_checksum_address(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import typing
 
 from chains.capabilities import ChainProductCapabilityService
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 
@@ -52,11 +52,11 @@ class CryptoService:
     def allowed_methods(*, chain_codes: set[str] | None = None) -> dict[str, set[str]]:
         """返回系统级 invoice 可用 (crypto_symbol → {chain_code}) 映射。
 
-        实现：通过 ChainToken 一次查询带出所有 active 的部署关系（币、链、部署三级开关
+        实现：通过 ChainCryptoDeployment 一次查询带出所有 active 的部署关系（币、链、部署三级开关
         均需启用），在内存中应用 capability 规则。chain_codes 可把查询收敛到项目已配置
         收币地址的链，避免无关链币关系进入后续计算。
         """
-        tokens = ChainToken.objects.select_related("crypto", "chain").filter(
+        tokens = ChainCryptoDeployment.objects.select_related("crypto", "chain").filter(
             crypto__active=True, chain__active=True, active=True
         )
         if chain_codes is not None:

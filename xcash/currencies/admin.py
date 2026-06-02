@@ -4,13 +4,13 @@ from unfold.decorators import display
 
 from common.admin import ModelAdmin
 from common.admin import TabularInline
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 
 
-class ChainTokenInline(TabularInline):
-    model = ChainToken
+class ChainCryptoDeploymentInline(TabularInline):
+    model = ChainCryptoDeployment
     extra = 0
     verbose_name = _("链上部署")
     verbose_name_plural = _("链上部署")
@@ -19,10 +19,14 @@ class ChainTokenInline(TabularInline):
 
 @admin.register(Crypto)
 class CryptoAdmin(ModelAdmin):
-    inlines = (ChainTokenInline,)
+    inlines = (ChainCryptoDeploymentInline,)
 
     def get_queryset(self, request):
-        return super().get_queryset(request).prefetch_related("chain_tokens__chain")
+        return (
+            super()
+            .get_queryset(request)
+            .prefetch_related("chain_crypto_deployments__chain")
+        )
 
     def get_readonly_fields(self, request, obj=None):
         if obj:

@@ -7,7 +7,7 @@ from web3 import Web3
 from chains.capabilities import ChainProductCapabilityService
 from chains.constants import ChainCode
 from chains.models import Chain
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import PriceUnavailableError
 
@@ -66,14 +66,14 @@ class ChainNativeCryptoMappingTests(TestCase):
         )
         native_coin = chain.native_coin
 
-        native_mapping = ChainToken.objects.get(crypto=native_coin, chain=chain)
+        native_mapping = ChainCryptoDeployment.objects.get(crypto=native_coin, chain=chain)
         self.assertEqual(native_mapping.address, "")
-        # 原生币精度以 ChainToken 为唯一真相，取自链的 ChainSpec（ETH=18）。
+        # 原生币精度以 ChainCryptoDeployment 为唯一真相，取自链的 ChainSpec（ETH=18）。
         self.assertEqual(native_mapping.decimals, chain.spec.native_coin_decimals)
 
 
-class ChainTokenImmutabilityTests(TestCase):
-    """ChainToken 的「地址↔币」身份定死：crypto/chain 创建后不可经 save() 变更。"""
+class ChainCryptoDeploymentImmutabilityTests(TestCase):
+    """ChainCryptoDeployment 的「地址↔币」身份定死：crypto/chain 创建后不可经 save() 变更。"""
 
     def setUp(self):
         self.chain = Chain.objects.create(
@@ -87,7 +87,7 @@ class ChainTokenImmutabilityTests(TestCase):
         self.usdc = Crypto.objects.create(
             name="USD Coin", symbol="USDC", coingecko_id="usd-coin"
         )
-        self.token = ChainToken.objects.create(
+        self.token = ChainCryptoDeployment.objects.create(
             crypto=self.usdt,
             chain=self.chain,
             address=Web3.to_checksum_address("0x" + "11" * 20),
@@ -113,7 +113,7 @@ class ChainTokenImmutabilityTests(TestCase):
     def test_merge_update_path_bypasses_guard(self):
         # QuerySet.update() 不触发 save()，故能绕过身份不可变守卫；本用例固定该旁路事实，
         # 以便后续若有受控的 crypto 改写入口可据此实现。
-        ChainToken.objects.filter(pk=self.token.pk).update(crypto=self.usdc)
+        ChainCryptoDeployment.objects.filter(pk=self.token.pk).update(crypto=self.usdc)
 
         self.token.refresh_from_db()
         self.assertEqual(self.token.crypto_id, self.usdc.id)

@@ -14,7 +14,7 @@ from chains.models import Chain
 from chains.models import Transfer
 from chains.models import TransferType
 from chains.models import TxTask
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from evm.internal_tx.facts import MatchedTransferFact
 from evm.internal_tx.log_utils import matches_transfer_log
@@ -53,18 +53,18 @@ def _decode_collect_token(data: str) -> str | None:
 
 
 def _crypto_for_collect_token(*, chain: Chain, token_address: str) -> Crypto | None:
-    """零地址映射为原生币，其余按 ChainToken 查 Crypto；未登记返回 None。"""
+    """零地址映射为原生币，其余按 ChainCryptoDeployment 查 Crypto；未登记返回 None。"""
     if Web3.to_checksum_address(token_address) == Web3.to_checksum_address(
         _ZERO_ADDRESS
     ):
         return chain.native_coin
 
-    chain_token = (
-        ChainToken.objects.select_related("crypto")
+    chain_crypto_deployment = (
+        ChainCryptoDeployment.objects.select_related("crypto")
         .filter(chain=chain, address__iexact=Web3.to_checksum_address(token_address))
         .first()
     )
-    return chain_token.crypto if chain_token is not None else None
+    return chain_crypto_deployment.crypto if chain_crypto_deployment is not None else None
 
 
 @dataclass(frozen=True)

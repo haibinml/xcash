@@ -21,7 +21,7 @@ from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from evm.choices import TxKind
 from evm.constants import DEFAULT_ERC20_TRANSFER_GAS
@@ -124,7 +124,7 @@ class EvmErc20ScannerTests(TestCase):
             symbol="USDT-SCANNER",
             coingecko_id="tether-scanner",
         )
-        self.token_deployment = ChainToken.objects.create(
+        self.token_deployment = ChainCryptoDeployment.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -695,7 +695,7 @@ class EvmErc20ScannerTests(TestCase):
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
-    def test_scan_chain_uses_chain_token_decimals_without_extra_lookup(
+    def test_scan_chain_uses_chain_crypto_deployment_decimals_without_extra_lookup(
         self,
         get_latest_block_number_mock,
         get_logs_mock,
@@ -705,7 +705,7 @@ class EvmErc20ScannerTests(TestCase):
         _mark_pending_confirm_mock,
         _crypto_get_decimals_mock,
     ):
-        # ERC20 扫描已持有 ChainToken 行数据，应直接复用链特定精度，避免逐条日志额外查库。
+        # ERC20 扫描已持有 ChainCryptoDeployment 行数据，应直接复用链特定精度，避免逐条日志额外查库。
         self.token_deployment.decimals = 6
         self.token_deployment.save(update_fields=["decimals"])
         get_latest_block_number_mock.return_value = 100

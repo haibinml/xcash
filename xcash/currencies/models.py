@@ -25,10 +25,10 @@ class PriceUnavailableError(Exception):
 class Crypto(models.Model):
     name = models.CharField(_("名称"), unique=True)
     symbol = models.CharField(_("代码"), help_text=_("例如:ETH、USDT"), unique=True)
-    # M2M 关联，通过 ChainToken 中间表，保存合约地址和链特定精度等部署信息
+    # M2M 关联，通过 ChainCryptoDeployment 中间表，保存合约地址和链特定精度等部署信息
     chains = models.ManyToManyField(
         Chain,
-        through="ChainToken",
+        through="ChainCryptoDeployment",
         related_name="cryptos",
         verbose_name=_("支持的链"),
         blank=True,
@@ -73,23 +73,27 @@ class Crypto(models.Model):
             )
 
     def get_decimals(self, chain: Chain) -> int:
-        """获取代币在指定链上的精度，以 ChainToken 部署记录为唯一来源。
+        """获取代币在指定链上的精度，以 ChainCryptoDeployment 部署记录为唯一来源。
 
         精度本质是「币×链」的部署属性（如 USDT 在 ETH/Tron 为 6、BSC 为 18），
-        统一存于 ChainToken.decimals；未在该链登记部署时视为不可用，抛出 DoesNotExist。
+        统一存于 ChainCryptoDeployment.decimals；未在该链登记部署时视为不可用，抛出 DoesNotExist。
         """
-        return ChainToken.objects.get(crypto=self, chain=chain).decimals
+        return ChainCryptoDeployment.objects.get(crypto=self, chain=chain).decimals
 
     def supported_chains(self) -> str:
-        chain_tokens = self.chain_tokens.select_related("chain").all()
-        return ", ".join(chain_token.chain.name for chain_token in chain_tokens)
+        chain_crypto_deployments = self.chain_crypto_deployments.select_related(
+            "chain"
+        ).all()
+        return ", ".join(
+            deployment.chain.name for deployment in chain_crypto_deployments
+        )
 
     @classmethod
     def all_methods(cls):
-        # 通过 ChainToken 统一处理原生币和合约币，不再区分两种路径
+        # 通过 ChainCryptoDeployment 统一处理原生币和合约币，不再区分两种路径
         methods = {}
-        for crypto in cls.objects.prefetch_related("chain_tokens__chain"):
-            chain_codes = [ct.chain.code for ct in crypto.chain_tokens.all()]
+        for crypto in cls.objects.prefetch_related("chain_crypto_deployments__chain"):
+            chain_codes = [ct.chain.code for ct in crypto.chain_crypto_deployments.all()]
             if chain_codes:
                 methods[crypto.symbol] = chain_codes
         return methods
@@ -148,14 +152,14 @@ class Crypto(models.Model):
         return round_decimal(amount * self.price(fiat.code), -4)
 
     def support_this_chain(self, chain: Chain) -> bool:
-        # 通过 M2M chains 字段统一判断，原生币和合约币均在 ChainToken 中有记录
+        # 通过 M2M chains 字段统一判断，原生币和合约币均在 ChainCryptoDeployment 中有记录
         return self.chains.filter(pk=chain.pk).exists()
 
     def address(self, chain: Chain) -> str:
         """获取代币在指定链上的合约地址；原生币的 address 为空字符串。"""
         try:
-            return ChainToken.objects.get(crypto=self, chain=chain).address
-        except ChainToken.DoesNotExist:
+            return ChainCryptoDeployment.objects.get(crypto=self, chain=chain).address
+        except ChainCryptoDeployment.DoesNotExist:
             return ""
 
     @property
@@ -170,7 +174,7 @@ class Crypto(models.Model):
         return icons.get(self.symbol, "")
 
 
-class ChainToken(models.Model):
+class ChainCryptoDeployment(models.Model):
     """记录代币与链的部署关系，包含链上合约地址及该币在本链的精度。
 
     原生币（ETH 等）也在此建立记录，address 为空字符串，
@@ -183,13 +187,13 @@ class ChainToken(models.Model):
     crypto = models.ForeignKey(
         Crypto,
         on_delete=models.CASCADE,
-        related_name="chain_tokens",
+        related_name="chain_crypto_deployments",
         verbose_name=_("加密货币"),
     )
     chain = models.ForeignKey(
         Chain,
         on_delete=models.CASCADE,
-        related_name="chain_tokens",
+        related_name="chain_crypto_deployments",
         verbose_name=_("链"),
     )
     # 合约地址；原生币为空字符串
@@ -204,16 +208,16 @@ class ChainToken(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=("crypto", "chain"),
-                name="uniq_chain_token_crypto_chain",
+                name="uniq_chain_crypto_deployment_crypto_chain",
             ),
             # 同一条链上的同一个合约地址只能映射到一个资产，防止 webhook 解析歧义。
             models.UniqueConstraint(
                 fields=("chain", "address"),
-                name="uniq_chain_token_chain_address",
+                name="uniq_chain_crypto_deployment_chain_address",
             ),
         ]
-        verbose_name = _("代币部署")
-        verbose_name_plural = _("代币部署")
+        verbose_name = _("链上币种部署")
+        verbose_name_plural = _("链上币种部署")
 
     def __str__(self):
         return f"{self.crypto.symbol} @ {self.chain.code}"
@@ -237,7 +241,7 @@ class ChainToken(models.Model):
         if self.pk is None:
             return
         old = (
-            ChainToken.objects.filter(pk=self.pk)
+            ChainCryptoDeployment.objects.filter(pk=self.pk)
             .values("crypto_id", "chain_id")
             .first()
         )
@@ -246,7 +250,7 @@ class ChainToken(models.Model):
         if old["crypto_id"] != self.crypto_id or old["chain_id"] != self.chain_id:
             raise ValidationError(
                 _(
-                    "代币部署的链与币种一经创建不可变更；确需纠正只能经 QuerySet.update() 受控旁路。"
+                    "链上币种部署的链与币种一经创建不可变更；确需纠正只能经 QuerySet.update() 受控旁路。"
                 )
             )
 

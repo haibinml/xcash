@@ -21,7 +21,7 @@ from chains.models import TxTaskType
 from chains.models import Wallet
 from core.models import SystemSettings
 from core.models import SystemWallet
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from deposits.models import Deposit
 from evm.choices import TxKind
@@ -158,7 +158,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.token_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000e20"
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=self.token_address,

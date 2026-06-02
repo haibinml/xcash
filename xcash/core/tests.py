@@ -26,7 +26,7 @@ from core.models import SystemWallet
 from core.runtime_settings import get_webhook_delivery_breaker_threshold
 from core.runtime_settings import get_webhook_delivery_max_backoff_seconds
 from core.runtime_settings import get_webhook_delivery_max_retries
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from evm.local_erc20 import LOCAL_EVM_ERC20_ABI
 from evm.local_erc20 import LOCAL_EVM_ERC20_BYTECODE
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
@@ -111,7 +111,7 @@ class LocalChainBootstrapCommandTests(TestCase):
         self.assertEqual(evm_chain.chain_id, 31337)
         self.assertEqual(evm_chain.confirm_block_count, 1)
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=evm_chain,
                 crypto__symbol="ETH",
                 address="",
@@ -129,13 +129,13 @@ class LocalChainBootstrapCommandTests(TestCase):
         },
         clear=False,
     )
-    def test_init_local_chains_deploys_local_usdt_and_creates_chain_token(self):
+    def test_init_local_chains_deploys_local_usdt_and_creates_chain_crypto_deployment(self):
         w3 = self._require_local_evm()
 
         call_command("init_local_chains")
 
         evm_chain = Chain.objects.get(code="ethereum-local")
-        usdt_mapping = ChainToken.objects.get(
+        usdt_mapping = ChainCryptoDeployment.objects.get(
             chain=evm_chain,
             crypto__symbol="USDT",
         )
@@ -160,7 +160,7 @@ class LocalChainBootstrapCommandTests(TestCase):
 
         call_command("init_local_chains")
 
-        usdt_mapping = ChainToken.objects.get(
+        usdt_mapping = ChainCryptoDeployment.objects.get(
             chain__code="ethereum-local",
             crypto__symbol="USDT",
         )
@@ -209,7 +209,7 @@ class LocalChainBootstrapCommandTests(TestCase):
 
         self.assertFalse(Chain.objects.filter(code="ethereum-local").exists())
         self.assertFalse(
-            ChainToken.objects.filter(chain__code="ethereum-local").exists()
+            ChainCryptoDeployment.objects.filter(chain__code="ethereum-local").exists()
         )
 
 

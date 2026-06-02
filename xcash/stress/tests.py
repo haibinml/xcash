@@ -43,7 +43,7 @@ from chains.constants import ChainCode
 from chains.models import AddressUsage
 from chains.models import Chain
 from chains.models import ChainType
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.models import VaultSlot
@@ -976,12 +976,12 @@ class StressRecipientSetupTests(TestCase):
                 "active": True,
             },
         )
-        ChainToken.objects.update_or_create(
+        ChainCryptoDeployment.objects.update_or_create(
             chain=self.ethereum_local,
             crypto=self.eth,
             defaults={"address": "", "decimals": 18},
         )
-        ChainToken.objects.update_or_create(
+        ChainCryptoDeployment.objects.update_or_create(
             chain=self.ethereum_local,
             crypto=self.usdt,
             defaults={
@@ -1492,7 +1492,7 @@ class StressContractProvisioningTests(TestCase):
     def setUp(self):
         # 本地链统一为 anvil（链代码收敛后）。rpc 留空：EVM 链的 full_clean 会对非空 rpc
         # 发起实时连通校验，本测试不依赖链上调用。新建 Chain 的 post_save 会自动补齐原生币
-        # ETH 及其 ChainToken（见 ensure_native_crypto_mapping_for_chain），故 ETH 只取不建；
+        # ETH 及其 ChainCryptoDeployment（见 ensure_native_crypto_mapping_for_chain），故 ETH 只取不建；
         # USDT 为账单压测固定使用的 ERC20，需显式登记。
         self.anvil = Chain.objects.create(
             code=ChainCode.Anvil,
@@ -1505,7 +1505,7 @@ class StressContractProvisioningTests(TestCase):
             symbol="USDT",
             coingecko_id="tether-stress-contract",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=self.usdt,
             chain=self.anvil,
             address="0x0000000000000000000000000000000000009902",

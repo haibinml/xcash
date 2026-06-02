@@ -144,7 +144,7 @@ class Chain(models.Model):
                 "name": symbol,
                 "coingecko_id": NATIVE_COIN_COINGECKO_IDS[symbol],
                 "active": True,
-                # 原生币精度落到 ChainToken（见 ensure_native_crypto_mapping_for_chain）；
+                # 原生币精度落到 ChainCryptoDeployment（见 ensure_native_crypto_mapping_for_chain）；
                 # 这里仅在 Crypto 上标记原生币身份。
                 "is_native": True,
             },
@@ -190,10 +190,10 @@ class Chain(models.Model):
 
         from tron.models import TronWatchCursor  # noqa: PLC0415
 
-        from currencies.models import ChainToken  # noqa: PLC0415
+        from currencies.models import ChainCryptoDeployment  # noqa: PLC0415
 
         usdt_mapping = (
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=self,
                 crypto__symbol="USDT",
                 crypto__active=True,

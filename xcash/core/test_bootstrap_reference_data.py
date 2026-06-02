@@ -9,7 +9,7 @@ from web3 import Web3
 from chains.constants import ChainType
 from chains.models import Chain
 from core.signals import bootstrap_reference_data_after_migrate
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 
@@ -56,35 +56,35 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         self.assertIsNone(tron_chain.is_poa)
         self.assertEqual(tron_chain.confirm_block_count, 0)
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=eth_chain,
                 crypto__symbol="ETH",
                 address="",
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=bsc_chain,
                 crypto__symbol="BNB",
                 address="",
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=polygon_chain,
                 crypto__symbol="POL",
                 address="",
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=tron_chain,
                 crypto__symbol="TRX",
                 address="",
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=eth_chain,
                 crypto__symbol="USDT",
                 address=Web3.to_checksum_address(
@@ -93,7 +93,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=eth_chain,
                 crypto__symbol="USDC",
                 address=Web3.to_checksum_address(
@@ -102,7 +102,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=eth_chain,
                 crypto__symbol="DAI",
                 address=Web3.to_checksum_address(
@@ -111,7 +111,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=bsc_chain,
                 crypto__symbol="USDT",
                 address=Web3.to_checksum_address(
@@ -120,7 +120,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=bsc_chain,
                 crypto__symbol="USDC",
                 address=Web3.to_checksum_address(
@@ -129,7 +129,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=bsc_chain,
                 crypto__symbol="DAI",
                 address=Web3.to_checksum_address(
@@ -138,7 +138,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=polygon_chain,
                 crypto__symbol="USDT",
                 address=Web3.to_checksum_address(
@@ -147,7 +147,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=polygon_chain,
                 crypto__symbol="USDC",
                 address=Web3.to_checksum_address(
@@ -156,7 +156,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=polygon_chain,
                 crypto__symbol="DAI",
                 address=Web3.to_checksum_address(
@@ -165,7 +165,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=tron_chain,
                 crypto__symbol="USDT",
                 address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
@@ -197,14 +197,14 @@ class ReferenceDataBootstrapSignalTests(TestCase):
         self.assertEqual(evm_chain.chain_id, 31337)
         self.assertEqual(evm_chain.confirm_block_count, 1)
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=evm_chain,
                 crypto__symbol="ETH",
                 address="",
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=evm_chain,
                 crypto__symbol="USDT",
                 address=Web3.to_checksum_address(
@@ -213,7 +213,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=evm_chain,
                 crypto__symbol="USDC",
                 address=Web3.to_checksum_address(
@@ -222,7 +222,7 @@ class ReferenceDataBootstrapSignalTests(TestCase):
             ).exists()
         )
         self.assertTrue(
-            ChainToken.objects.filter(
+            ChainCryptoDeployment.objects.filter(
                 chain=evm_chain,
                 crypto__symbol="DAI",
                 address=Web3.to_checksum_address(

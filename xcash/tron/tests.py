@@ -24,7 +24,7 @@ from chains.constants import ChainCode
 from chains.constants import ChainType
 from chains.models import Chain
 from chains.models import Transfer
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
@@ -371,7 +371,7 @@ class TronWatchCursorTests(TestCase):
             rpc="https://api.trongrid.io",
             active=False,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=chain,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
@@ -512,7 +512,7 @@ class TronUsdtPaymentScannerTests(TestCase):
             active=True,
         )
         self.trx = self.chain.native_coin
-        self.usdt_mapping = ChainToken.objects.create(
+        self.usdt_mapping = ChainCryptoDeployment.objects.create(
             chain=self.chain,
             crypto=self.usdt,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",

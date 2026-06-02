@@ -27,7 +27,7 @@ from chains.models import Transfer
 from chains.models import TransferType
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.models import VaultSlot
@@ -632,13 +632,13 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             rpc="http://tron.invalid",
             active=True,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=tron_usdt,
             chain=tron_chain,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
             decimals=6,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=tron_usdc,
             chain=tron_chain,
             address="TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
@@ -673,7 +673,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             rpc="",
             active=True,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000008802",
@@ -703,7 +703,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             symbol="USDTDIFFNN",
             coingecko_id="usdt-evm-differ-non-native",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000008841",
@@ -746,19 +746,19 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             symbol="USDCSAASAM",
             coingecko_id="usdc-saas-allowed-methods",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000009911",
             decimals=6,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=bsc_chain,
             address="0x0000000000000000000000000000000000009912",
             decimals=6,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdc,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000009913",
@@ -806,13 +806,13 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             symbol="USDTSAASEM",
             coingecko_id="usdt-saas-empty-methods",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000009921",
             decimals=6,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=bsc_chain,
             address="0x0000000000000000000000000000000000009922",
@@ -855,7 +855,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             symbol="USDTSAASCI",
             coingecko_id="usdt-saas-case-insensitive",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000009931",
@@ -901,7 +901,7 @@ class InvoiceDifferBillingValidationTests(TestCase):
             symbol="USDTEVMD",
             coingecko_id="usdt-evm-differ-billing",
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=self.usdt,
             chain=self.eth_chain,
             address="0x0000000000000000000000000000000000007701",
@@ -1020,13 +1020,13 @@ class InvoiceContractBillingValidationTests(TestCase):
         self.tron_chain = Chain.objects.create(
             code=ChainCode.Tron, rpc="http://tron.invalid", active=True
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=self.usdt,
             chain=self.eth_chain,
             address="0x0000000000000000000000000000000000007802",
             decimals=6,
         )
-        ChainToken.objects.create(
+        ChainCryptoDeployment.objects.create(
             crypto=self.usdt,
             chain=self.tron_chain,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",

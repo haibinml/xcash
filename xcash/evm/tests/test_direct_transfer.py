@@ -5,7 +5,7 @@ import pytest
 from web3 import Web3
 
 from chains.models import TxTaskType
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from evm.choices import TxKind
 from evm.internal_tx.direct_transfer import decode_direct_transfer_fields
 from evm.models import EvmTxTask
@@ -62,7 +62,7 @@ def test_decode_standard_erc20_transfer_fields_uses_case_insensitive_token_looku
     token_address = Web3.to_checksum_address(
         "0x0000000000000000000000000000000000000abc"
     )
-    ChainToken.objects.create(
+    ChainCryptoDeployment.objects.create(
         crypto=crypto,
         chain=chain,
         address=token_address.lower(),

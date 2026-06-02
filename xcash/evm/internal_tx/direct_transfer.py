@@ -10,7 +10,7 @@ import eth_abi
 from eth_abi.exceptions import DecodingError
 from web3 import Web3
 
-from currencies.models import ChainToken
+from currencies.models import ChainCryptoDeployment
 from evm.choices import TxKind
 from evm.internal_tx.facts import MatchedTransferFact
 from evm.internal_tx.log_utils import matches_transfer_log
@@ -102,12 +102,12 @@ def _native_tx_matches_expected(
 def _crypto_for_token(*, chain: Chain, token_address: str) -> Crypto | None:
     """按 ERC20 合约地址查到对应 Crypto；未登记返回 None。"""
     token_checksum = Web3.to_checksum_address(token_address)
-    chain_token = (
-        ChainToken.objects.select_related("crypto")
+    chain_crypto_deployment = (
+        ChainCryptoDeployment.objects.select_related("crypto")
         .filter(chain=chain, address__iexact=token_checksum)
         .first()
     )
-    return chain_token.crypto if chain_token else None
+    return chain_crypto_deployment.crypto if chain_crypto_deployment else None
 
 
 def decode_direct_transfer_fields(
