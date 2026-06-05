@@ -39,6 +39,7 @@ class ProjectForm(forms.ModelForm):
             "hmac_key",
             "vault",
             "active",
+            "is_test",
         )
 
     def __init__(self, *args, **kwargs):
@@ -156,6 +157,7 @@ class ProjectAdmin(ModelAdmin):
         "name",
         "appid",
         "display_ready_status",
+        "is_test",
         "webhook",
         "failed_count",
         "webhook_open",
@@ -165,6 +167,7 @@ class ProjectAdmin(ModelAdmin):
     list_filter = (
         "active",
         "webhook_open",
+        "is_test",
     )
     search_fields = ("name", "appid", "webhook")
 
@@ -212,6 +215,7 @@ class ProjectAdmin(ModelAdmin):
             {
                 "fields": (
                     "name",
+                    "is_test",
                     "webhook",
                 ),
             },
@@ -232,6 +236,7 @@ class ProjectAdmin(ModelAdmin):
                 "fields": (
                     "name",
                     "appid",
+                    "is_test",
                     "fast_confirm_threshold",
                 ),
             },

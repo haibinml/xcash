@@ -12,7 +12,7 @@ from django.utils import timezone
 from web3 import Web3
 
 from chains.constants import ChainCode
-from chains.models import Chain
+from chains.tests_fixtures import make_evm_chain
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -357,11 +357,7 @@ class EpaySubmitServiceTests(TestCase):
             prices={"USD": "1"},
             coingecko_id="epay-submit-usdt",
         )
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.native = self.chain.native_coin
         ChainCryptoDeployment.objects.create(
             crypto=self.crypto,

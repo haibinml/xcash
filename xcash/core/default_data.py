@@ -87,6 +87,18 @@ PRODUCTION_MAINNET_TOKEN_MAPPINGS = (
     {"chain_name": ChainCode.Tron, "crypto_symbol": "USDT", "address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "decimals": 6},
 )
 
+# 测试网：Sepolia(EVM) / Nile(Tron)。无论 dev 还是生产都建成 inactive 骨架 + USDT 部署，
+# 运维在 admin 填 rpc / tron_api_key 后再激活。USDT 为各测试网上的官方/通用测试代币。
+TESTNET_CHAINS = (
+    {"chain": ChainCode.Sepolia, "native_symbol": "ETH"},
+    {"chain": ChainCode.Nile, "native_symbol": "TRX"},
+)
+
+TESTNET_TOKEN_MAPPINGS = (
+    {"chain_name": ChainCode.Sepolia, "crypto_symbol": "USDT", "address": "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06", "decimals": 6},
+    {"chain_name": ChainCode.Nile, "crypto_symbol": "USDT", "address": "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf", "decimals": 6},
+)
+
 
 def ensure_base_currencies(*, using: str = "default", stdout=None) -> None:
     """初始化系统级法币与基础加密货币。"""
@@ -346,6 +358,38 @@ def ensure_public_chains(*, using: str = "default", stdout=None) -> None:
         stdout.write("✅ 生产主网初始化完成")
 
 
+def ensure_testnet_chains(*, using: str = "default", stdout=None) -> None:
+    """初始化测试网（Sepolia / Nile）inactive 骨架与 USDT 部署。
+
+    与主网骨架同构：建成 active=False、rpc 空的占位链，运维在 admin 填运行时配置
+    （EVM 的 rpc / Tron 的 tron_api_key）后再激活；生产环境同样保留这些骨架，
+    便于测试网联调，且因 inactive 不参与扫描与签名，无运行时副作用。
+    """
+    chain_manager = Chain.objects.using(using)
+
+    for chain_config in TESTNET_CHAINS:
+        chain_manager.get_or_create(
+            code=chain_config["chain"],
+            defaults={
+                "rpc": "",
+                "active": False,
+            },
+        )
+        # 访问 chain.native_coin 触发 Crypto get_or_create，确保原生币记录落库
+        chain_obj = chain_manager.get(code=chain_config["chain"])
+        _ = chain_obj.native_coin
+        ensure_chain_native_mapping(
+            using=using,
+            chain_name=chain_config["chain"],
+            crypto_symbol=chain_config["native_symbol"],
+        )
+    for token_mapping in TESTNET_TOKEN_MAPPINGS:
+        ensure_chain_crypto_deployment_mapping(using=using, **token_mapping)
+
+    if stdout is not None:
+        stdout.write("✅ 测试网骨架初始化完成")
+
+
 def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
     """初始化本地联调链配置，供本地 Ethereum 端到端验证使用。"""
     chain_manager = Chain.objects.using(using)
@@ -414,6 +458,9 @@ def ensure_default_reference_data(*, using: str = "default", stdout=None) -> Non
         return
     if profile == "local":
         ensure_local_chains(using=using, stdout=stdout)
+        ensure_testnet_chains(using=using, stdout=stdout)
         return
     ensure_production_currencies(using=using, stdout=stdout)
     ensure_public_chains(using=using, stdout=stdout)
+    # 测试网骨架在生产也建（inactive），方便测试网验证；详见 ensure_testnet_chains。
+    ensure_testnet_chains(using=using, stdout=stdout)

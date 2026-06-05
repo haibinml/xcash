@@ -7,11 +7,13 @@ from django.test.client import RequestFactory
 
 from chains.constants import ChainCode
 from chains.models import Chain
+from chains.tests_fixtures import make_evm_chain
 from common.admin import ModelAdmin
 from currencies.models import Crypto
 from projects.admin import ProjectAdmin
 from projects.admin import ProjectForm
 from projects.models import Project
+from projects.service import ProjectService
 from users.models import User
 
 _PROJECT_TEST_PATCHERS = []
@@ -117,3 +119,32 @@ class ProjectAdminTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("vault", form.errors)
+
+
+class ProjectTestnetGateTests(TestCase):
+    """主网/测试网门控：is_test 隔离两类链，防止主网与测试网代币混淆。"""
+
+    def test_contract_receivable_chain_codes_isolate_by_is_test(self):
+        make_evm_chain(code=ChainCode.Ethereum)  # 主网
+        make_evm_chain(code=ChainCode.Sepolia)  # 测试网
+
+        prod = Project.objects.create(
+            name="Prod Gate Project",
+            vault="0x0000000000000000000000000000000000009901",
+            is_test=False,
+        )
+        test = Project.objects.create(
+            name="Test Gate Project",
+            vault="0x0000000000000000000000000000000000009902",
+            is_test=True,
+        )
+
+        prod_codes = ProjectService.contract_receivable_chain_codes(prod)
+        test_codes = ProjectService.contract_receivable_chain_codes(test)
+
+        # 普通项目只见主网链
+        self.assertIn(ChainCode.Ethereum, prod_codes)
+        self.assertNotIn(ChainCode.Sepolia, prod_codes)
+        # 测试项目只见测试网链
+        self.assertIn(ChainCode.Sepolia, test_codes)
+        self.assertNotIn(ChainCode.Ethereum, test_codes)

@@ -15,10 +15,9 @@ class TronWatchCursorAdmin(SyncScanCursorToLatestActionMixin, ReadOnlyModelAdmin
         "disable_selected_scanners",
         "sync_selected_to_latest",
     )
-    ordering = ("chain__code", "contract_address")
+    ordering = ("chain__code",)
     list_display = (
         "display_chain",
-        "contract_address",
         "display_enabled",
         "display_lag_state",
         "display_chain_latest_block",
@@ -29,11 +28,10 @@ class TronWatchCursorAdmin(SyncScanCursorToLatestActionMixin, ReadOnlyModelAdmin
         "updated_at",
     )
     list_filter = ("enabled", "chain")
-    search_fields = ("chain__code", "contract_address", "last_error")
+    search_fields = ("chain__code", "last_error")
     list_select_related = ("chain",)
     readonly_fields = (
         "chain",
-        "contract_address",
         "display_enabled",
         "last_scanned_block",
         "display_chain_latest_block",

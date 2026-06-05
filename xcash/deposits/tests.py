@@ -18,6 +18,7 @@ from chains.models import TransferType
 from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
 from chains.models import Wallet
+from chains.tests_fixtures import make_evm_chain
 from common.internal_callback import CallbackEvent
 from common.internal_callback import InternalCallback
 from currencies.models import ChainCryptoDeployment
@@ -455,3 +456,38 @@ def create_tron_deposit_context():
         crypto=crypto,
         transfer=transfer,
     )
+
+
+class DepositAddressTestnetGateTests(TestCase):
+    """充币地址门控：项目 is_test 与链 is_testnet 必须一致，否则拒绝。"""
+
+    def test_address_rejects_chain_mismatching_project_is_test(self):
+        from rest_framework.permissions import AllowAny
+        from rest_framework.test import APIRequestFactory
+
+        from common.consts import APPID_HEADER
+        from common.error_codes import ErrorCode
+        from deposits.viewsets import DepositViewSet
+
+        # 测试项目 + 主网链（is_testnet=False）→ 不匹配，应被拒。
+        project = Project.objects.create(name="Gate Deposit Project", is_test=True)
+        make_evm_chain(code=ChainCode.Ethereum)
+
+        factory = APIRequestFactory()
+        header_key = "HTTP_" + APPID_HEADER.upper().replace("-", "_")
+        request = factory.get(
+            "/deposit/address",
+            {"uid": "u1", "chain": ChainCode.Ethereum, "crypto": "USDT"},
+            **{header_key: project.appid},
+        )
+
+        # address action 在生产即 AllowAny；as_view() 直调不会套用 action 级权限，
+        # 故在类级别对齐为 AllowAny，避免被默认 IsAuthenticated 在到达门控前拦下。
+        with (
+            patch.object(DepositViewSet, "permission_classes", [AllowAny]),
+            patch("deposits.viewsets.check_saas_permission", return_value=None),
+        ):
+            response = DepositViewSet.as_view({"get": "address"})(request)
+
+        self.assertEqual(response.status_code, ErrorCode.INVALID_CHAIN.status)
+        self.assertEqual(response.data["code"], ErrorCode.INVALID_CHAIN.code)

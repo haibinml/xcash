@@ -16,6 +16,8 @@ class ChainCode(models.TextChoices):
     Linea = "linea", "Linea"
     Scroll = "scroll", "Scroll"
     Tron = "tron", "Tron"
+    Sepolia = "sepolia", "Sepolia"
+    Nile = "nile", "Nile"
     Anvil = "anvil", "Anvil Local"
 
 
@@ -37,6 +39,9 @@ class ChainSpec:
     # 以此为不同出块速度的链设置各自的扫描节奏。取值通常贴近出块时间，
     # 低于调度粒度（2 秒）也只会按每轮巡检触发，不会更快。
     scan_interval_seconds: int
+    # 是否为测试网（非主网）。链固有属性，仅用于区分/展示，不参与扫描与签名逻辑。
+    # 作为带默认值的尾部字段，主网无需逐条改写既有定义。
+    is_testnet: bool = False
 
 
 CHAIN_SPECS: dict[str, ChainSpec] = {
@@ -49,8 +54,16 @@ CHAIN_SPECS: dict[str, ChainSpec] = {
     ChainCode.Avalanche: ChainSpec(ChainType.EVM, 43114, False, 8, "AVAX", 18, 6),
     ChainCode.Linea: ChainSpec(ChainType.EVM, 59144, False, 20, "ETH", 18, 6),
     ChainCode.Scroll: ChainSpec(ChainType.EVM, 534352, False, 20, "ETH", 18, 6),
+    # Anvil 是本地联调链：作为本地"主网替身"供普通项目端到端测试，故保持
+    # is_testnet=False，避免被 Project.is_test 门控挡在普通项目之外。
     ChainCode.Anvil: ChainSpec(ChainType.EVM, 31337, False, 8, "ETH", 18, 4),
     ChainCode.Tron: ChainSpec(ChainType.TRON, None, None, 16, "TRX", 6, 6),
+    ChainCode.Sepolia: ChainSpec(
+        ChainType.EVM, 11155111, False, 12, "ETH", 18, 12, is_testnet=True
+    ),
+    ChainCode.Nile: ChainSpec(
+        ChainType.TRON, None, None, 16, "TRX", 6, 6, is_testnet=True
+    ),
 }
 
 
@@ -90,3 +103,8 @@ EVM_CHAIN_CODES: tuple[str, ...] = tuple(
 TRON_CHAIN_CODES: tuple[str, ...] = tuple(
     code for code, spec in CHAIN_SPECS.items() if spec.type == ChainType.TRON
 )
+
+# Tron HTTP 网关地址固定两套：主网与测试网（Nile）。按 Chain.is_testnet 二选一，
+# 不落库成字段，避免运维填错或与 code 漂移。
+TRON_MAINNET_BASE_URL = "https://api.trongrid.io"
+TRON_TESTNET_BASE_URL = "https://nile.trongrid.io"

@@ -39,28 +39,22 @@ class ParsedTronTransferEvent:
     observed: ObservedTransferPayload
 
 
-class TronUsdtPaymentScanner:
-    _debug_bootstrapped_cursors: set[tuple[int, str]] = set()
+class TronTrc20Scanner:
+    """按链扫描本链全部 TRC20（ChainCryptoDeployment）的 Transfer 入账事件。
+
+    与 EVM 扫描器对齐：代币集合来自 ChainCryptoDeployment（不写死 USDT/地址），
+    每条 Tron 链一个游标，逐块对每个代币合约拉取 Transfer 事件后统一匹配观察地址。
+    """
+
+    _debug_bootstrapped_cursors: set[int] = set()
 
     @classmethod
     def scan_chain(cls, *, chain: Chain) -> TronScanSummary:
         if chain.type != ChainType.TRON:
             raise ValueError(f"仅支持 Tron 链扫描，当前链为 {chain.code}")
 
-        usdt_mapping = (
-            ChainCryptoDeployment.objects.select_related("crypto")
-            .filter(
-                chain=chain,
-                crypto__symbol="USDT",
-                crypto__active=True,
-                active=True,
-            )
-            .get()
-        )
-        cursor = cls._get_or_create_cursor(
-            chain=chain,
-            contract_address=usdt_mapping.address,
-        )
+        tokens_by_address = cls._load_chain_crypto_deployments(chain=chain)
+        cursor = cls._get_or_create_cursor(chain=chain)
         client = TronHttpClient(chain=chain)
         previous_latest_block = chain.latest_block_number
         events_seen = 0
@@ -94,7 +88,7 @@ class TronUsdtPaymentScanner:
                         client=client,
                         chain=chain,
                         block_number=block_number,
-                        usdt_mapping=usdt_mapping,
+                        tokens_by_address=tokens_by_address,
                     )
                     matched_addresses_seen.update(
                         event.observed.to_address for event in parsed_events
@@ -139,17 +133,32 @@ class TronUsdtPaymentScanner:
             events_seen=events_seen,
         )
 
-    @classmethod
-    def _get_or_create_cursor(
-        cls,
+    @staticmethod
+    def _load_chain_crypto_deployments(
         *,
         chain: Chain,
-        contract_address: str,
-    ) -> TronWatchCursor:
+    ) -> dict[str, ChainCryptoDeployment]:
+        """加载本链已激活的 TRC20 合约集合，按合约地址索引（对齐 EVM 扫描器）。
+
+        只会配置一个 USDT 也照常走全量查询，避免把 symbol/地址写死，后续接入
+        其它 TRC20 无需改扫描器。
+        """
+        token_rows = (
+            ChainCryptoDeployment.objects.select_related("crypto")
+            .filter(
+                chain=chain,
+                crypto__active=True,
+                active=True,
+            )
+            .exclude(address="")
+        )
+        return {token.address: token for token in token_rows}
+
+    @classmethod
+    def _get_or_create_cursor(cls, *, chain: Chain) -> TronWatchCursor:
         with transaction.atomic():
             cursor, _ = TronWatchCursor.objects.select_for_update().get_or_create(
                 chain=chain,
-                contract_address=contract_address,
                 defaults={
                     "last_scanned_block": 0,
                     "enabled": True,
@@ -164,7 +173,7 @@ class TronUsdtPaymentScanner:
         cursor: TronWatchCursor,
         latest_block: int,
     ) -> TronWatchCursor:
-        debug_key = (cursor.chain_id, cursor.contract_address)
+        debug_key = cursor.chain_id
         should_reset = False
 
         if settings.DEBUG:
@@ -195,16 +204,52 @@ class TronUsdtPaymentScanner:
         client: TronHttpClient,
         chain: Chain,
         block_number: int,
-        usdt_mapping: ChainCryptoDeployment,
+        tokens_by_address: dict[str, ChainCryptoDeployment],
     ) -> list[ParsedTronTransferEvent]:
-        page_fingerprint: str | None = None
         candidates: list[ParsedTronTransferEvent] = []
-        seen_fingerprints: set[str] = set()
+        # block_hash 整块只取一次、跨代币复用；仅在本块确有事件时才发起这次 RPC，
+        # 空块不额外打点。
         block_hash: str | None = None
+
+        for token in tokens_by_address.values():
+            rows = cls._fetch_token_block_event_rows(
+                client=client,
+                chain=chain,
+                block_number=block_number,
+                token=token,
+            )
+            if rows and block_hash is None:
+                block_hash = client.get_solid_block_id(block_number=block_number)
+            for row in rows:
+                event = cls._parse_contract_event(
+                    chain=chain,
+                    row=row,
+                    expected_block_number=block_number,
+                    block_hash=block_hash,
+                    token=token,
+                )
+                if event is not None:
+                    candidates.append(event)
+
+        return cls.filter_matched_events(chain=chain, candidates=candidates)
+
+    @classmethod
+    def _fetch_token_block_event_rows(
+        cls,
+        *,
+        client: TronHttpClient,
+        chain: Chain,
+        block_number: int,
+        token: ChainCryptoDeployment,
+    ) -> list[dict]:
+        """分页拉取单个 TRC20 合约在指定块的 Transfer 事件原始行。"""
+        page_fingerprint: str | None = None
+        seen_fingerprints: set[str] = set()
+        rows: list[dict] = []
 
         while True:
             payload = client.list_confirmed_contract_events(
-                contract_address=usdt_mapping.address,
+                contract_address=token.address,
                 event_name="Transfer",
                 block_number=block_number,
                 fingerprint=page_fingerprint,
@@ -224,18 +269,7 @@ class TronUsdtPaymentScanner:
             if not data:
                 break
 
-            for row in data:
-                if block_hash is None:
-                    block_hash = client.get_solid_block_id(block_number=block_number)
-                event = cls._parse_contract_event(
-                    chain=chain,
-                    row=row,
-                    expected_block_number=block_number,
-                    block_hash=block_hash,
-                    usdt_mapping=usdt_mapping,
-                )
-                if event is not None:
-                    candidates.append(event)
+            rows.extend(data)
 
             page_fingerprint = meta.get("fingerprint")
             if not page_fingerprint:
@@ -250,7 +284,7 @@ class TronUsdtPaymentScanner:
                 )
             seen_fingerprints.add(page_fingerprint)
 
-        return cls.filter_matched_events(chain=chain, candidates=candidates)
+        return rows
 
     @staticmethod
     def filter_matched_events(
@@ -281,7 +315,7 @@ class TronUsdtPaymentScanner:
         row: dict,
         expected_block_number: int,
         block_hash: str,
-        usdt_mapping: ChainCryptoDeployment,
+        token: ChainCryptoDeployment,
     ) -> ParsedTronTransferEvent | None:
         if not isinstance(row, dict):
             return None
@@ -310,7 +344,7 @@ class TronUsdtPaymentScanner:
             normalized_contract_address = cls._event_address_to_base58(contract_address)
         except ValueError:
             return None
-        if normalized_contract_address != usdt_mapping.address:
+        if normalized_contract_address != token.address:
             return None
 
         result = row.get("result") or {}
@@ -334,7 +368,7 @@ class TronUsdtPaymentScanner:
             timestamp_ms / 1000,
             tz=timezone.get_current_timezone(),
         )
-        decimals = usdt_mapping.decimals
+        decimals = token.decimals
         return ParsedTronTransferEvent(
             observed=ObservedTransferPayload(
                 chain=chain,
@@ -342,7 +376,7 @@ class TronUsdtPaymentScanner:
                 tx_hash=tx_id,
                 from_address=from_address,
                 to_address=to_address,
-                crypto=usdt_mapping.crypto,
+                crypto=token.crypto,
                 value=value,
                 amount=value.scaleb(-decimals),
                 timestamp=timestamp_ms // 1000,

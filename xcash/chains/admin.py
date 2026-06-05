@@ -35,6 +35,7 @@ class ChainAdmin(ModelAdmin):
         "name_display",
         "code_display",
         "type",
+        "is_testnet",
         "native_coin_display",
         "sort_order",
         "active",
@@ -47,7 +48,7 @@ class ChainAdmin(ModelAdmin):
         "active",
         "evm_log_max_block_range",
     )
-    list_filter = ("active",)
+    list_filter = ("active", "is_testnet")
     search_fields = ("code",)
 
     @display(ordering="code", description=_("名称"))

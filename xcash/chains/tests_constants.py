@@ -63,6 +63,6 @@ def test_chain_code_groups():
     assert len(EVM_CHAIN_CODES) == sum(
         1 for spec in CHAIN_SPECS.values() if spec.type == ChainType.EVM
     )
-    assert (ChainCode.Tron,) == TRON_CHAIN_CODES
+    assert set(TRON_CHAIN_CODES) == {ChainCode.Tron, ChainCode.Nile}
     assert ChainCode.Ethereum in EVM_CHAIN_CODES
     assert ChainCode.Tron not in EVM_CHAIN_CODES

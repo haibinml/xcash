@@ -17,6 +17,8 @@ from web3.middleware import ExtraDataToPOAMiddleware
 
 from chains.constants import CHAIN_SPECS
 from chains.constants import NATIVE_COIN_COINGECKO_IDS
+from chains.constants import TRON_MAINNET_BASE_URL
+from chains.constants import TRON_TESTNET_BASE_URL
 from chains.constants import ChainCode
 from chains.constants import ChainSpec
 from chains.constants import ChainType  # noqa: F401  re-export 给下游模块过渡使用
@@ -44,6 +46,12 @@ class Chain(models.Model):
         _("类型"),
         choices=ChainType,
         max_length=16,
+        editable=False,
+        help_text=_("由 code 常量自动决定，不可手动修改。"),
+    )
+    is_testnet = models.BooleanField(
+        _("测试网"),
+        default=False,
         editable=False,
         help_text=_("由 code 常量自动决定，不可手动修改。"),
     )
@@ -88,14 +96,16 @@ class Chain(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
-        # type 是链固有属性的反规范化冗余，由 code 常量自动推导，
+        # type / is_testnet 是链固有属性的反规范化冗余，由 code 常量自动推导，
         # 不让业务层手动设置，避免脏数据。
         if self.code and self.code in CHAIN_SPECS:
-            self.type = CHAIN_SPECS[self.code].type
+            spec = CHAIN_SPECS[self.code]
+            self.type = spec.type
+            self.is_testnet = spec.is_testnet
         self.full_clean()
         with db_transaction.atomic():
             result = super().save(*args, **kwargs)
-            self._sync_tron_usdt_watch_cursor()
+            self._sync_tron_scan_cursor()
         return result
 
     @property
@@ -113,6 +123,14 @@ class Chain(models.Model):
     @property
     def is_poa(self) -> bool | None:
         return self.spec.is_poa
+
+    @property
+    def tron_base_url(self) -> str:
+        """Tron HTTP 网关地址：测试网走 Nile、否则主网。仅 Tron 链有意义。
+
+        按 is_testnet 动态选址，不落库成字段——全网就这两套端点，无需运维逐链配置。
+        """
+        return TRON_TESTNET_BASE_URL if self.is_testnet else TRON_MAINNET_BASE_URL
 
     @property
     def confirm_block_count(self) -> int:
@@ -196,31 +214,20 @@ class Chain(models.Model):
                 }
             )
 
-    def _sync_tron_usdt_watch_cursor(self) -> None:
-        """活跃 Tron 链应在配置层持有 USDT 扫描游标，避免依赖首次 beat 扫描显式创建。"""
+    def _sync_tron_scan_cursor(self) -> None:
+        """活跃 Tron 链在配置层即持有按链唯一的扫描游标，避免依赖首次 beat 扫描显式创建。
+
+        游标只锚定区块进度、与具体 TRC20 合约解耦：扫描器每轮按本链全量
+        ChainCryptoDeployment 逐块拉取，新增/下架代币不影响游标，故这里无需
+        再依赖 USDT 是否已配置。
+        """
         if self.type != ChainType.TRON or not self.active:
             return
 
         from tron.models import TronWatchCursor  # noqa: PLC0415
 
-        from currencies.models import ChainCryptoDeployment  # noqa: PLC0415
-
-        usdt_mapping = (
-            ChainCryptoDeployment.objects.filter(
-                chain=self,
-                crypto__symbol="USDT",
-                crypto__active=True,
-            )
-            .exclude(address="")
-            .only("address")
-            .first()
-        )
-        if usdt_mapping is None:
-            return
-
         TronWatchCursor.objects.get_or_create(
             chain=self,
-            contract_address=usdt_mapping.address,
             defaults={"last_scanned_block": 0, "enabled": True},
         )
 

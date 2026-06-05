@@ -10,7 +10,6 @@ from web3.exceptions import TransactionNotFound
 from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
-from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxHash
 from chains.models import TxTask
@@ -774,11 +773,7 @@ class EvmTxTaskTests(TestCase):
 
     def test_queued_task_with_existing_hash_recovers_from_confirmed_receipt(self):
         """首播已被节点接受但阶段仍是 QUEUED 时，应先查 receipt 自愈而不是重发。"""
-        chain = Chain.objects.create(
-            code=ChainCode.Anvil,
-            rpc="",
-            active=True,
-        )
+        chain = make_evm_chain(code=ChainCode.Anvil)
         addr = Address.objects.create(
             wallet=Wallet.objects.create(),
             chain_type=ChainType.EVM,
@@ -842,11 +837,7 @@ class EvmTxTaskTests(TestCase):
 
     def test_nonce_too_low_checks_existing_hash_before_reraising(self):
         """nonce too low 时若历史 hash 已有 receipt，应自动恢复而不是继续卡 QUEUED。"""
-        chain = Chain.objects.create(
-            code=ChainCode.Anvil,
-            rpc="",
-            active=True,
-        )
+        chain = make_evm_chain(code=ChainCode.Anvil)
         addr = Address.objects.create(
             wallet=Wallet.objects.create(),
             chain_type=ChainType.EVM,

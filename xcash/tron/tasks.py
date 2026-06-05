@@ -8,7 +8,7 @@ from tron.client import TronClientError
 from tron.models import TronTxTask
 from tron.saas_gas_billing import notify_vault_slot_collect_gas_fee
 from tron.saas_gas_billing import notify_vault_slot_deploy_gas_fee
-from tron.scanner import TronUsdtPaymentScanner
+from tron.scanner import TronTrc20Scanner
 
 from chains.adapters import AdapterFactory
 from chains.adapters import TxCheckResult
@@ -144,18 +144,18 @@ def scan_tron_chain(chain_pk: int) -> None:
     if not chain.active:
         return
     if chain.type == ChainType.TRON and not chain.tron_api_key:
-        logger.warning("Tron USDT 扫描跳过，缺少 API Key", chain=chain.code)
+        logger.warning("Tron TRC20 扫描跳过，缺少 API Key", chain=chain.code)
         return
 
     try:
         try:
-            summary = TronUsdtPaymentScanner.scan_chain(chain=chain)
+            summary = TronTrc20Scanner.scan_chain(chain=chain)
         except TronClientError:
-            logger.warning("Tron USDT 扫描 RPC 失败", chain=chain.code)
+            logger.warning("Tron TRC20 扫描 RPC 失败", chain=chain.code)
             return
 
         logger.info(
-            "Tron USDT 扫描完成",
+            "Tron TRC20 扫描完成",
             chain=chain.code,
             filter_addresses=summary.filter_addresses,
             blocks_scanned=summary.blocks_scanned,

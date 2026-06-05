@@ -27,6 +27,7 @@ from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from chains.tasks import process_transfer
+from chains.tests_fixtures import make_evm_chain
 from chains.transfer_matching import addresses_equal
 from chains.transfer_matching import raw_amount
 from chains.transfer_matching import transfer_matches
@@ -36,11 +37,7 @@ from currencies.models import Crypto
 
 class TransferMatchingTests(TestCase):
     def test_addresses_equal_normalizes_evm_addresses(self):
-        chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        chain = make_evm_chain(code=ChainCode.Ethereum)
         checksum = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000abc"
         )
@@ -53,11 +50,7 @@ class TransferMatchingTests(TestCase):
             symbol="TMC",
             coingecko_id="transfer-match-coin",
         )
-        chain = Chain.objects.create(
-            code=ChainCode.BSC,
-            rpc="",
-            active=True,
-        )
+        chain = make_evm_chain(code=ChainCode.BSC)
         # 精度以 ChainCryptoDeployment 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
         ChainCryptoDeployment.objects.create(
             crypto=native,
@@ -113,11 +106,7 @@ class TransferMatchingTests(TestCase):
             symbol="RAT",
             coingecko_id="raw-amount-trunc",
         )
-        chain = Chain.objects.create(
-            code=ChainCode.Polygon,
-            rpc="",
-            active=True,
-        )
+        chain = make_evm_chain(code=ChainCode.Polygon)
         # 精度以 ChainCryptoDeployment 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
         ChainCryptoDeployment.objects.create(
             crypto=crypto,
@@ -174,11 +163,7 @@ class TransferMatchingTests(TestCase):
 class TxTaskValidationTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.addr = Address.objects.create(
             wallet=self.wallet,
             chain_type=ChainType.EVM,
@@ -201,11 +186,7 @@ class WalletBip44AccountMapTests(TestCase):
 class TxHashModelTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.addr = Address.objects.create(
             wallet=self.wallet,
             chain_type=ChainType.EVM,
@@ -255,11 +236,7 @@ class TxHashModelTests(TestCase):
             )
 
     def test_tx_hash_chain_must_match_tx_task_chain(self):
-        other_chain = Chain.objects.create(
-            code=ChainCode.BSC,
-            rpc="",
-            active=True,
-        )
+        other_chain = make_evm_chain(code=ChainCode.BSC)
 
         tx_hash = TxHash(
             tx_task=self.task,
@@ -275,11 +252,7 @@ class TxHashModelTests(TestCase):
 class TxTaskTxHashHistoryTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.addr = Address.objects.create(
             wallet=self.wallet,
             chain_type=ChainType.EVM,
@@ -464,11 +437,7 @@ class AddressIdentityTests(TestCase):
 
 class AddressChainStateAcquireTests(TestCase):
     def setUp(self):
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.wallet = Wallet.objects.create()
         self.address = Address.objects.create(
             wallet=self.wallet,
@@ -616,11 +585,7 @@ class TransferServiceCreateObservedTests(TestCase):
             symbol="ETH-OT",
             coingecko_id="ether-ot",
         )
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.payload = ObservedTransferPayload(
             chain=self.chain,
             block=100,
@@ -834,11 +799,7 @@ class TxTaskTransitionTests(TestCase):
 
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.addr = Address.objects.create(
             wallet=self.wallet,
             chain_type=ChainType.EVM,
@@ -1004,11 +965,8 @@ class BlockNumberUpdatedCompensationTests(TestCase):
             symbol="ETH-BN",
             coingecko_id="ether-bn",
         )
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-            latest_block_number=200,
+        self.chain = make_evm_chain(
+            code=ChainCode.Ethereum, latest_block_number=200
         )
         self.wallet = Wallet.objects.create()
         self.addr = Address.objects.create(

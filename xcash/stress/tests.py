@@ -39,10 +39,10 @@ from stress.views import _handle_webhook
 
 from chains.constants import ChainCode
 from chains.models import AddressUsage
-from chains.models import Chain
 from chains.models import ChainType
 from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
+from chains.tests_fixtures import make_evm_chain
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -891,13 +891,7 @@ class StressRecipientSetupTests(TestCase):
                 "prices": {"USD": "1"},
             },
         )
-        self.ethereum_local, _ = Chain.objects.update_or_create(
-            code=ChainCode.Anvil,
-            defaults={
-                "rpc": "",
-                "active": True,
-            },
-        )
+        self.ethereum_local = make_evm_chain(code=ChainCode.Anvil)
         ChainCryptoDeployment.objects.update_or_create(
             chain=self.ethereum_local,
             crypto=self.eth,
@@ -1072,7 +1066,7 @@ class VerifyDepositCollectionTests(TestCase):
             status=StressRunStatus.RUNNING,
             project=self.project,
         )
-        self.chain = Chain.objects.create(code=ChainCode.Anvil, rpc="", active=True)
+        self.chain = make_evm_chain(code=ChainCode.Anvil)
         self.crypto = Crypto.objects.create(
             name="Tether Verify",
             symbol="USDTV",
@@ -1374,11 +1368,7 @@ class StressContractProvisioningTests(TestCase):
         # 发起实时连通校验，本测试不依赖链上调用。新建 Chain 的 post_save 会自动补齐原生币
         # ETH 及其 ChainCryptoDeployment（见 ensure_native_crypto_mapping_for_chain），故 ETH 只取不建；
         # USDT 为账单压测固定使用的 ERC20，需显式登记。
-        self.anvil = Chain.objects.create(
-            code=ChainCode.Anvil,
-            rpc="",
-            active=True,
-        )
+        self.anvil = make_evm_chain(code=ChainCode.Anvil)
         self.eth = Crypto.objects.get(symbol="ETH")
         self.usdt = Crypto.objects.create(
             name="Tether USD",

@@ -76,6 +76,11 @@ class DepositViewSet(viewsets.GenericViewSet):
         except Chain.DoesNotExist as exc:
             raise APIError(ErrorCode.INVALID_CHAIN) from exc
 
+        # 主网/测试网门控：测试项目只能在测试网建充币地址，非测试项目只能用主网，
+        # 隔离两类代币防止资金/记账混淆。
+        if chain.is_testnet != project.is_test:
+            raise APIError(ErrorCode.INVALID_CHAIN)
+
         try:
             crypto = CryptoService.get_by_symbol(crypto_symbol)
         except ObjectDoesNotExist as exc:

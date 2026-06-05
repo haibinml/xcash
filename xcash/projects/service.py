@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tron.config import tron_vault_slot_runtime_ready
 
+from chains.constants import CHAIN_SPECS
 from chains.models import ChainType
 from chains.service import ChainService
 from currencies.models import ChainCryptoDeployment
@@ -29,18 +30,22 @@ class ProjectService:
         if not project.vault:
             return set()
         chain_codes = ChainService.codes_of_types({ChainType.EVM})
-        if not tron_vault_slot_runtime_ready():
-            return chain_codes
-
-        tron_codes = set(
-            ChainCryptoDeployment.objects.filter(
-                chain__type=ChainType.TRON,
-                chain__active=True,
-                crypto__symbol="USDT",
-                crypto__active=True,
-                active=True,
+        if tron_vault_slot_runtime_ready():
+            chain_codes |= set(
+                ChainCryptoDeployment.objects.filter(
+                    chain__type=ChainType.TRON,
+                    chain__active=True,
+                    crypto__symbol="USDT",
+                    crypto__active=True,
+                    active=True,
+                )
+                .exclude(address="")
+                .values_list("chain__code", flat=True)
             )
-            .exclude(address="")
-            .values_list("chain__code", flat=True)
-        )
-        return chain_codes | tron_codes
+
+        # 主网/测试网门控：测试项目只收测试网链，非测试项目只收主网，隔离两类代币防混淆。
+        return {
+            code
+            for code in chain_codes
+            if CHAIN_SPECS[code].is_testnet == project.is_test
+        }

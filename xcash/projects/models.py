@@ -75,6 +75,14 @@ class Project(models.Model):
     )
 
     active = models.BooleanField(verbose_name=_("启用"), default=True)
+    is_test = models.BooleanField(
+        verbose_name=_("测试项目"),
+        default=False,
+        help_text=_(
+            "测试项目只能使用测试网链（创建充币地址、账单仅限测试网）；"
+            "非测试项目只能使用主网。用于隔离主网与测试网代币，防止混淆。"
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("创建时间"))
 
     class Meta:

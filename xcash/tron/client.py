@@ -7,6 +7,8 @@ import httpx
 import structlog
 from django.conf import settings
 
+from chains.constants import TRON_MAINNET_BASE_URL
+
 logger = structlog.get_logger()
 
 # HTTP 失败时的退避时长（秒），数组长度即"最多重试次数"。
@@ -19,7 +21,8 @@ class TronClientError(RuntimeError):
 
 
 class TronHttpClient:
-    BASE_URL = "https://api.trongrid.io"
+    # 主网地址作为兜底；真实 Chain 走 chain.tron_base_url（按 is_testnet 选 Nile/主网）。
+    BASE_URL = TRON_MAINNET_BASE_URL
 
     def __init__(self, *, chain):
         self.chain = chain

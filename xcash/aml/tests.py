@@ -25,6 +25,7 @@ from chains.models import Chain
 from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferType
+from chains.tests_fixtures import make_evm_chain
 from core.models import SystemSettings
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -46,11 +47,7 @@ class AmlTestMixin:
             prices={"USD": "2000"},
             coingecko_id="aml-eth",
         )
-        self.chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
         self.project = Project.objects.create(name="AML Project")
         self.customer = Customer.objects.create(project=self.project, uid="u-1")
         self.transfer = Transfer.objects.create(
@@ -603,8 +600,9 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
     @patch("aml.service.QuicknodeMistTrackClient.address_risk_score")
     def test_quicknode_unsupported_chain_does_not_create_assessment(self, score):
         invoice = self.make_invoice(worth=Decimal("500"))
-        self.chain.code = ChainCode.Polygon
-        self.chain.save(update_fields=["code"])
+        # 占位 rpc 的 active 链不能走 save()（会触发 clean 的远端校验），用 update 直接改 code。
+        Chain.objects.filter(pk=self.chain.pk).update(code=ChainCode.Polygon)
+        self.chain.refresh_from_db()
 
         AmlScreeningService.screen_invoice(invoice.pk)
 
@@ -616,8 +614,9 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
         invoice = self.make_invoice(worth=Decimal("500"))
         self.system_settings.misttrack_openapi_api_key = "openapi-secret"
         self.system_settings.save(update_fields=["misttrack_openapi_api_key"])
-        self.chain.code = ChainCode.Scroll
-        self.chain.save(update_fields=["code"])
+        # 占位 rpc 的 active 链不能走 save()（会触发 clean 的远端校验），用 update 直接改 code。
+        Chain.objects.filter(pk=self.chain.pk).update(code=ChainCode.Scroll)
+        self.chain.refresh_from_db()
 
         AmlScreeningService.screen_invoice(invoice.pk)
 
