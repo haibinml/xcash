@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
 from django.db import IntegrityError
 from django.db import models
 from django.db import transaction as db_transaction
@@ -19,7 +20,6 @@ from chains.models import ChainType
 from chains.models import TxHash
 from chains.models import TxTask
 from chains.models import TxTaskStatus
-from chains.models import TxTaskType
 from chains.types import AddressStr
 from common.fields import AddressField
 from common.fields import EvmAddressField
@@ -36,6 +36,8 @@ from projects.models import Customer
 
 if TYPE_CHECKING:
     from evm.intents import EvmTxIntent
+
+logger = structlog.get_logger()
 
 
 class VaultSlotUsage(models.TextChoices):
@@ -486,20 +488,8 @@ class VaultSlot(models.Model):
             vault_slot_address=slot.address,
             token_address=token_address,
         )
-        existing_task = (
-            EvmTxTask.objects.filter(
-                sender=sender,
-                chain=chain,
-                to=intent.to,
-                data=intent.data,
-                base_task__tx_type=TxTaskType.VaultSlotCollect,
-            )
-            .exclude(base_task__status__in=TERMINAL_TX_TASK_STATUSES)
-            .first()
-        )
-        if existing_task is not None:
-            return existing_task
-
+        # 不复用在途归集任务:归集计划 tx_task 是 OneToOne,复用同一任务会让第二个
+        # 窗口撞唯一约束;collect(token) 是全额清扫,独立任务最多产生余额为 0 的空扫。
         return EvmTxTask.schedule(intent)
 
 
@@ -602,14 +592,24 @@ class VaultSlotCollectSchedule(models.Model):
                 .select_related(
                     "chain",
                     "crypto",
+                    "vault_slot",
                 )
                 .filter(tx_task__isnull=True, due_at__lte=now)
                 .order_by("due_at", "pk")[:limit]
             )
             for schedule in schedules:
-                tx_task = schedule.create_tx_task()
-                schedule.tx_task = tx_task
-                schedule.save(update_fields=["tx_task", "updated_at"])
+                # 单条用 savepoint 隔离:个别计划建/绑任务失败不回滚整批归集调度。
+                try:
+                    with db_transaction.atomic():
+                        tx_task = schedule.create_tx_task()
+                        schedule.tx_task = tx_task
+                        schedule.save(update_fields=["tx_task", "updated_at"])
+                except IntegrityError:
+                    logger.warning(
+                        "EVM 归集计划绑定任务失败,跳过",
+                        schedule_id=schedule.pk,
+                    )
+                    continue
                 created_count += 1
         return created_count
 

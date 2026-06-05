@@ -834,6 +834,35 @@ class VaultSlotAddressSchedulingTests(TestCase):
             2,
         )
 
+    def test_two_due_collect_schedules_same_slot_get_independent_tasks(self):
+        slot = self._create_vault_slot()
+        first_deposit = self._create_deposit(slot=slot, tx_hash_suffix="1")
+        second_deposit = self._create_deposit(slot=slot, tx_hash_suffix="2")
+        address_patch = self.patch_address_derivation()
+
+        with address_patch:
+            first = VaultSlot.schedule_collect_for_deposit(first_deposit.pk)
+        first.due_at = timezone.now() - timedelta(seconds=1)
+        first.save(update_fields=["due_at", "updated_at"])
+
+        with address_patch:
+            VaultSlotCollectSchedule.execute_due()
+            first.refresh_from_db()
+            self.assertIsNotNone(first.tx_task_id)
+            self.assertEqual(first.tx_task.base_task.status, TxTaskStatus.QUEUED)
+
+            second = VaultSlot.schedule_collect_for_deposit(second_deposit.pk)
+        second.due_at = timezone.now() - timedelta(seconds=1)
+        second.save(update_fields=["due_at", "updated_at"])
+
+        with address_patch:
+            created_count = VaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created_count, 1)
+        second.refresh_from_db()
+        self.assertIsNotNone(second.tx_task_id)
+        self.assertNotEqual(first.tx_task_id, second.tx_task_id)
+
     def test_schedule_collect_for_deposit_skips_native_deposit(self):
         slot = self._create_vault_slot()
         deposit = self._create_deposit(slot=slot, crypto=self.chain.native_coin)
