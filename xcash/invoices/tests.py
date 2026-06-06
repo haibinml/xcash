@@ -33,6 +33,7 @@ from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
 from invoices.exceptions import InvoiceStatusError
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
 from invoices.models import InvoiceProtocol
 from invoices.models import InvoiceStatus
@@ -41,6 +42,7 @@ from invoices.service import InvoiceService
 from invoices.tasks import check_expired
 from invoices.tasks import fallback_invoice_expired
 from invoices.viewsets import InvoiceViewSet
+from projects.models import InvoiceReceivingMode
 from projects.models import Project
 from users.models import User
 
@@ -84,6 +86,14 @@ class InvoiceTestMixin:
         )
         self.chain = create_active_evm_test_chain(code=chain_name)
         Fiat.objects.get_or_create(code="USD")
+        self.chain_crypto_deployment = ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x0000000000000000000000000000000000000010"
+            ),
+            decimals=6,
+        )
 
     def create_test_invoice(self, *, out_no: str = "test-order", **kwargs) -> Invoice:
         defaults = {
@@ -130,18 +140,36 @@ class InvoicePaymentSelectionTests(TestCase):
         )
         self.chain_a = create_active_evm_test_chain(code=ChainCode.Ethereum)
         self.chain_b = create_active_evm_test_chain(code=ChainCode.BSC)
+        ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain_a,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000C1"
+            ),
+            decimals=6,
+        )
+        ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain_b,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000C2"
+            ),
+            decimals=6,
+        )
         Fiat.objects.get_or_create(code="USD")
 
-    def create_invoice(self, *, out_no: str = "payment-order") -> Invoice:
-        return Invoice.objects.create(
-            project=self.project,
-            out_no=out_no,
-            title="Slot invoice",
-            currency="USDT",
-            amount=Decimal("10"),
-            methods={"USDT": [ChainCode.Ethereum, ChainCode.BSC]},
-            expires_at=timezone.now() + timedelta(minutes=10),
-        )
+    def create_invoice(self, *, out_no: str = "payment-order", **kwargs) -> Invoice:
+        defaults = {
+            "project": self.project,
+            "out_no": out_no,
+            "title": "Slot invoice",
+            "currency": "USDT",
+            "amount": Decimal("10"),
+            "methods": {"USDT": [ChainCode.Ethereum, ChainCode.BSC]},
+            "expires_at": timezone.now() + timedelta(minutes=10),
+        }
+        defaults.update(kwargs)
+        return Invoice.objects.create(**defaults)
 
     def create_transfer(
         self, *, chain: Chain, pay_amount: Decimal, pay_address: str
@@ -160,6 +188,17 @@ class InvoicePaymentSelectionTests(TestCase):
             timestamp=int(now.timestamp()),
             datetime=now,
         )
+
+    def enable_evm_differ_mode(self, *, address_suffix: str = "d01") -> str:
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(update_fields=["evm_invoice_receiving_mode"])
+        address = Web3.to_checksum_address(f"0x{int(address_suffix, 16):040x}")
+        DifferRecipientAddress.objects.create(
+            project=self.project,
+            chain_type=ChainType.EVM,
+            address=address,
+        )
+        return address
 
     def test_select_method_replaces_current_payment(self):
         # 账单切换支付方式后，只保留当前支付指引，旧指引不再参与自动匹配。
@@ -395,6 +434,61 @@ class InvoicePaymentSelectionTests(TestCase):
         self.assertEqual(invoice.transfer_id, transfer.pk)
         self.assertEqual(transfer.type, TransferType.Invoice)
 
+    def test_select_method_allocates_evm_differ_payment(self):
+        differ_address = self.enable_evm_differ_mode()
+        invoice = self.create_invoice(
+            out_no="payment-differ",
+            amount=Decimal("10.001"),
+        )
+
+        invoice.select_method(self.crypto, self.chain_a)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.pay_address, differ_address)
+        self.assertEqual(invoice.pay_amount, Decimal("10.01"))
+        self.assertFalse(VaultSlot.objects.filter(address=differ_address).exists())
+
+    def test_differ_payment_increments_by_cent_when_combo_is_occupied(self):
+        differ_address = self.enable_evm_differ_mode()
+        first = self.create_invoice(out_no="payment-differ-first")
+        second = self.create_invoice(out_no="payment-differ-second")
+
+        first.select_method(self.crypto, self.chain_a)
+        second.select_method(self.crypto, self.chain_a)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.pay_address, differ_address)
+        self.assertEqual(second.pay_address, differ_address)
+        self.assertEqual(first.pay_amount, Decimal("10.00"))
+        self.assertEqual(second.pay_amount, Decimal("10.01"))
+
+    @patch("invoices.service.send_internal_callback")
+    @patch("invoices.service.WebhookService.create_event")
+    @patch("invoices.service.VaultSlot.schedule_collect_for_invoice")
+    def test_confirm_differ_invoice_does_not_schedule_collect(
+        self,
+        schedule_collect_mock,
+        _create_event_mock,
+        _send_internal_callback_mock,
+    ):
+        self.enable_evm_differ_mode()
+        invoice = self.create_invoice(out_no="payment-differ-confirm")
+        invoice.select_method(self.crypto, self.chain_a)
+        transfer = self.create_transfer(
+            chain=self.chain_a,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
+        )
+        self.assertTrue(InvoiceService.try_match_invoice(transfer))
+        invoice.refresh_from_db()
+
+        InvoiceService.confirm_invoice(invoice)
+
+        schedule_collect_mock.assert_not_called()
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, InvoiceStatus.COMPLETED)
+
 
 class InvoiceFinalizeMethodsOrderingTests(TestCase):
     def test_requested_chain_codes_are_sorted_by_chain_sort_order(self):
@@ -458,6 +552,14 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
             coingecko_id="tether-invoice-concurrency",
         )
         self.chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
+        ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x0000000000000000000000000000000000000C11"
+            ),
+            decimals=6,
+        )
         Fiat.objects.get_or_create(code="USD")
         self.project.vault = "0x00000000000000000000000000000000000000A1"
         self.project.save(update_fields=["vault"])
@@ -589,6 +691,59 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         methods = Invoice.available_methods(project)
 
         self.assertEqual(methods[usdt.symbol], [eth_chain.code])
+
+    def test_differ_available_methods_exposes_evm_without_vault(self):
+        project = Project.objects.create(
+            name="Invoice Differ EVM Project",
+            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+        )
+        usdt = Crypto.objects.create(
+            name="Tether USD EVM Differ",
+            symbol="USDTEVMDIFF",
+            coingecko_id="tether-evm-differ",
+        )
+        eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
+        ChainCryptoDeployment.objects.create(
+            crypto=usdt,
+            chain=eth_chain,
+            address="0x0000000000000000000000000000000000008812",
+            decimals=6,
+        )
+        DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.EVM,
+            address="0x0000000000000000000000000000000000008813",
+        )
+
+        methods = Invoice.available_methods(project)
+
+        self.assertEqual(methods[usdt.symbol], [eth_chain.code])
+
+    def test_differ_available_methods_excludes_native_coin(self):
+        project = Project.objects.create(
+            name="Invoice Differ Native Project",
+            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+        )
+        eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
+        eth = eth_chain.native_coin
+        ChainCryptoDeployment.objects.update_or_create(
+            crypto=eth,
+            chain=eth_chain,
+            defaults={
+                "address": "",
+                "decimals": 18,
+                "active": True,
+            },
+        )
+        DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.EVM,
+            address="0x0000000000000000000000000000000000008823",
+        )
+
+        methods = Invoice.available_methods(project)
+
+        self.assertNotIn(eth.symbol, methods)
 
     @override_settings(IS_SAAS=True, INTERNAL_API_TOKEN="xcash-saas-token")
     def test_available_methods_filters_by_cached_saas_chain_crypto_whitelist(self):
@@ -773,7 +928,7 @@ class InvoiceContractBillingValidationTests(TestCase):
         return InvoiceCreateSerializer(data=data, context={"request": request})
 
     def test_default_methods_filters_out_tron(self):
-        # 不传 methods：系统应自动生成 EVM-only 的最终 methods，Tron 被过滤掉而不是抛错。
+        # 不传 methods：未配置差额地址时，默认 Tron 差额模式不暴露 Tron。
         serializer = self.build_serializer(methods={})
 
         self.assertTrue(serializer.is_valid(raise_exception=True))
@@ -783,7 +938,7 @@ class InvoiceContractBillingValidationTests(TestCase):
         )
 
     def test_explicit_tron_rejected(self):
-        # 显式要求 Tron → 当前 VaultSlot 收款不支持 Tron，拒绝。
+        # 显式要求 Tron，但项目没有 Tron 差额地址，拒绝。
         serializer = self.build_serializer(
             methods={self.usdt.symbol: [self.tron_chain.code]},
         )
@@ -791,6 +946,52 @@ class InvoiceContractBillingValidationTests(TestCase):
         with self.assertRaises(APIError) as ctx:
             serializer.is_valid(raise_exception=True)
         self.assertEqual(ctx.exception.error_code, ErrorCode.NO_RECIPIENT_ADDRESS)
+
+    def test_tron_differ_methods_exposed_without_vault_slot_runtime_gate(self):
+        DifferRecipientAddress.objects.create(
+            project=self.project,
+            chain_type=ChainType.TRON,
+            address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        )
+
+        methods = Invoice.available_methods(self.project)
+
+        self.assertEqual(
+            set(methods[self.usdt.symbol]),
+            {self.eth_chain.code, self.tron_chain.code},
+        )
+
+    def test_select_method_allocates_tron_differ_address(self):
+        differ_address = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
+        DifferRecipientAddress.objects.create(
+            project=self.project,
+            chain_type=ChainType.TRON,
+            address=differ_address,
+        )
+        invoice = Invoice.objects.create(
+            project=self.project,
+            out_no="tron-differ-select-method",
+            title="tron",
+            currency=self.usdt.symbol,
+            amount=Decimal("10"),
+            methods={self.usdt.symbol: [self.tron_chain.code]},
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+
+        selected = invoice.select_method(self.usdt, self.tron_chain)
+
+        self.assertTrue(selected)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.chain, self.tron_chain)
+        self.assertEqual(invoice.pay_address, differ_address)
+        self.assertEqual(invoice.pay_amount, Decimal("10.00"))
+        self.assertFalse(
+            VaultSlot.objects.filter(
+                chain=self.tron_chain,
+                project=self.project,
+                address=invoice.pay_address,
+            ).exists()
+        )
 
     @override_settings(
         TRON_VAULT_SLOT_NILE_VERIFIED=True,
@@ -800,6 +1001,9 @@ class InvoiceContractBillingValidationTests(TestCase):
         TRON_VAULT_SLOT_DEPLOY_FEE_LIMIT=300_000_000,
     )
     def test_tron_methods_exposed_only_after_runtime_gate(self):
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(update_fields=["tron_invoice_receiving_mode"])
+
         methods = Invoice.available_methods(self.project)
 
         self.assertEqual(
@@ -817,6 +1021,8 @@ class InvoiceContractBillingValidationTests(TestCase):
     def test_select_method_allocates_tron_vault_slot(self):
         from chains.models import VaultSlot
 
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(update_fields=["tron_invoice_receiving_mode"])
         invoice = Invoice.objects.create(
             project=self.project,
             out_no="tron-select-method",
@@ -973,6 +1179,14 @@ class InvoiceExpiredMatchTests(TestCase):
         )
         self.project.vault = self.recipient_address
         self.project.save(update_fields=["vault"])
+        ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000e2"
+            ),
+            decimals=6,
+        )
 
     def test_expired_invoice_can_still_match_current_payment_by_transfer_time(self):
         # scanner 可能晚于过期任务看到链上交易；只要交易发生在账单窗口内，
@@ -1046,6 +1260,14 @@ class FallbackInvoiceExpiredTests(TestCase):
             "0x00000000000000000000000000000000000000F1"
         )
         self.project.save(update_fields=["vault"])
+        ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000f2"
+            ),
+            decimals=6,
+        )
 
     def test_fallback_expires_waiting_invoices(self):
         # fallback 任务应批量将过期的 WAITING 账单标记为 EXPIRED。
@@ -1107,6 +1329,14 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             "0x00000000000000000000000000000000000000A7"
         )
         self.project.save(update_fields=["vault"])
+        ChainCryptoDeployment.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000a8"
+            ),
+            decimals=6,
+        )
 
     def test_check_expired_skips_already_matched_invoice(self):
         # 并发场景：check_expired 执行时如果账单已被 try_match 推进到 CONFIRMING，
@@ -1862,6 +2092,14 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
             pay_amount=Decimal("100"),
         )
         self.invoice.refresh_from_db()
+        VaultSlot.objects.create(
+            project=self.project,
+            chain=self.chain,
+            usage=VaultSlotUsage.INVOICE,
+            invoice_index=0,
+            address=self.slot_address,
+            salt=b"\x11" * 32,
+        )
 
     def _make_transfer(self, amount: Decimal) -> Transfer:
         now = timezone.now()

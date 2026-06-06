@@ -10,6 +10,8 @@ from unfold.widgets import UnfoldAdminURLInputWidget
 from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
 from common.admin import StackedInline
+from common.admin import TabularInline
+from invoices.models import DifferRecipientAddress
 from invoices.models import EpayMerchant
 from projects.models import Customer
 from projects.models import Project
@@ -38,6 +40,8 @@ class ProjectForm(forms.ModelForm):
             "fast_confirm_threshold",
             "hmac_key",
             "vault",
+            "evm_invoice_receiving_mode",
+            "tron_invoice_receiving_mode",
             "active",
             "is_test",
         )
@@ -147,10 +151,24 @@ class EpayMerchantInline(StackedInline):
         return super().formfield_for_dbfield(db_field, request, **kwargs)
 
 
+class DifferRecipientAddressInline(TabularInline):
+    model = DifferRecipientAddress
+    extra = 0
+    fields = (
+        "chain_type",
+        "address",
+        "active",
+        "sort_order",
+        "created_at",
+    )
+    readonly_fields = ("created_at",)
+
+
 @admin.register(Project)
 class ProjectAdmin(ModelAdmin):
     form = ProjectForm
     inlines = (
+        DifferRecipientAddressInline,
         EpayMerchantInline,
     )
     list_display = (
@@ -249,6 +267,8 @@ class ProjectAdmin(ModelAdmin):
                 "fields": (
                     "vault",
                     "auto_collect_enabled",
+                    "evm_invoice_receiving_mode",
+                    "tron_invoice_receiving_mode",
                 ),
             },
         ),

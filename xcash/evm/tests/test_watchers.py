@@ -16,6 +16,7 @@ from evm.scanner.watchers import clear_evm_watch_set_cache
 from evm.scanner.watchers import load_matched_addresses_for_candidates
 from evm.scanner.watchers import load_watch_set
 from evm.tests._fixtures import make_evm_chain
+from invoices.models import DifferRecipientAddress
 from projects.models import Customer
 from projects.models import Project
 
@@ -106,6 +107,23 @@ class EvmWatchSetCacheTests(TestCase):
             matched_addresses,
             frozenset({self.vault_slot.address}),
         )
+
+    def test_candidate_lookup_matches_differ_recipient_addresses(self):
+        differ_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000d04"
+        )
+        DifferRecipientAddress.objects.create(
+            project=self.project,
+            chain_type=ChainType.EVM,
+            address=differ_address,
+        )
+
+        matched_addresses = load_matched_addresses_for_candidates(
+            chain=self.chain,
+            addresses={differ_address},
+        )
+
+        self.assertEqual(matched_addresses, frozenset({differ_address}))
 
     def test_candidate_lookup_excludes_non_candidate_addresses(self):
         matched_addresses = load_matched_addresses_for_candidates(

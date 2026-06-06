@@ -299,6 +299,12 @@ class TronTrc20Scanner:
             chain=chain,
             candidates=candidate_addresses,
         )
+        from invoices.models import DifferRecipientAddress
+
+        matched_addresses |= DifferRecipientAddress.matched_addresses_for_candidates(
+            chain=chain,
+            candidates=candidate_addresses,
+        )
         if not matched_addresses:
             return []
         return [

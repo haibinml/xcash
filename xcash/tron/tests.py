@@ -40,6 +40,7 @@ from chains.models import Wallet
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
+from invoices.models import DifferRecipientAddress
 from projects.models import Customer
 from projects.models import Project
 
@@ -810,6 +811,52 @@ class TronTrc20ScannerTests(TestCase):
         self.assertEqual(summary.events_seen, 1)
         self.assertEqual(summary.filter_addresses, 1)
         transfer = Transfer.objects.get(hash="d" * 64)
+        self.assertEqual(transfer.to_address, self.watch_address)
+        self.assertEqual(transfer.amount, Decimal("1.234567"))
+        enqueue_processing_mock.assert_called_once()
+
+    @patch("chains.service.TransferService.enqueue_processing")
+    @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_matches_differ_recipient_candidates(
+        self,
+        client_cls,
+        enqueue_processing_mock,
+    ):
+        from tron.scanner import TronTrc20Scanner
+
+        DifferRecipientAddress.objects.create(
+            project=self.project,
+            chain_type=ChainType.TRON,
+            address=self.watch_address,
+        )
+        self._set_cursor_block(last_scanned_block=123455)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
+        client.list_confirmed_contract_events.return_value = {
+            "data": [
+                {
+                    "transaction_id": "e" * 64,
+                    "event_index": "0",
+                    "block_number": 123456,
+                    "block_timestamp": 1_700_000_000_000,
+                    "event_name": "Transfer",
+                    "contract_address": self.usdt_mapping.address,
+                    "result": {
+                        "from": self.sender_address,
+                        "to": self.watch_address,
+                        "value": "1234567",
+                    },
+                }
+            ],
+            "meta": {},
+        }
+
+        summary = TronTrc20Scanner.scan_chain(chain=self.chain)
+
+        self.assertEqual(summary.events_seen, 1)
+        self.assertEqual(summary.filter_addresses, 1)
+        transfer = Transfer.objects.get(hash="e" * 64)
         self.assertEqual(transfer.to_address, self.watch_address)
         self.assertEqual(transfer.amount, Decimal("1.234567"))
         enqueue_processing_mock.assert_called_once()

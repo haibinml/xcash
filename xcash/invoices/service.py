@@ -13,6 +13,7 @@ from chains.models import Chain
 from chains.models import ConfirmMode
 from chains.models import TransferType
 from chains.models import VaultSlot
+from chains.models import VaultSlotUsage
 from chains.service import ChainService
 from chains.service import TransferService
 from common.error_codes import ErrorCode
@@ -26,6 +27,7 @@ from currencies.service import FiatService
 from webhooks.service import WebhookService
 
 from .exceptions import InvoiceStatusError
+from .models import DifferRecipientAddress
 from .models import Invoice
 from .models import InvoiceProtocol
 from .models import InvoiceStatus
@@ -342,7 +344,7 @@ class InvoiceService:
         # of=("self",) 把锁限定在 invoices_invoice，避免连带锁 projects_project 引发死锁。
         invoice = (
             Invoice.objects.select_for_update(of=("self",))
-            .select_related("project")
+            .select_related("project", "chain")
             .get(pk=invoice.pk)
         )
         if invoice.status != InvoiceStatus.CONFIRMING:
@@ -355,10 +357,7 @@ class InvoiceService:
         )
         invoice.refresh_from_db()
 
-        try:
-            VaultSlot.schedule_collect_for_invoice(invoice.pk)
-        except Exception:
-            logger.exception("调度 Invoice VaultSlot 归集任务失败", invoice_id=invoice.pk)
+        cls.schedule_collection_if_needed(invoice)
 
         if invoice.protocol == InvoiceProtocol.EPAY_V1:
             from .epay.service import EpaySubmitService
@@ -381,6 +380,41 @@ class InvoiceService:
                 worth=str(invoice.worth),
                 currency=invoice.crypto.symbol,
             )
+        )
+
+    @staticmethod
+    def schedule_collection_if_needed(invoice: Invoice) -> None:
+        """按账单实际收款地址身份决定是否需要 VaultSlot 归集。"""
+        if invoice.chain_id is None or not invoice.pay_address:
+            return
+
+        if VaultSlot.objects.filter(
+            chain=invoice.chain,
+            project=invoice.project,
+            usage=VaultSlotUsage.INVOICE,
+            address=invoice.pay_address,
+        ).exists():
+            try:
+                VaultSlot.schedule_collect_for_invoice(invoice.pk)
+            except Exception:
+                logger.exception(
+                    "调度 Invoice VaultSlot 归集任务失败",
+                    invoice_id=invoice.pk,
+                )
+            return
+
+        if DifferRecipientAddress.objects.filter(
+            project=invoice.project,
+            chain_type=invoice.chain.type,
+            address=invoice.pay_address,
+        ).exists():
+            return
+
+        logger.warning(
+            "账单确认后无法识别收款地址类型，跳过归集调度",
+            invoice_id=invoice.pk,
+            chain=invoice.chain.code,
+            pay_address=invoice.pay_address,
         )
 
     @classmethod

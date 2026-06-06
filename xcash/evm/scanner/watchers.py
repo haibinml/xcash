@@ -91,7 +91,13 @@ def load_matched_addresses_for_candidates(
         chain=chain,
         address__in=addresses,
     ).values_list("address", flat=True)
-    return frozenset(vault_slot_addresses)
+    from invoices.models import DifferRecipientAddress
+
+    differ_addresses = DifferRecipientAddress.matched_addresses_for_candidates(
+        chain=chain,
+        candidates=set(addresses),
+    )
+    return frozenset(set(vault_slot_addresses) | differ_addresses)
 
 
 def _chain_crypto_deployments_cache_key(*, chain: Chain) -> str:

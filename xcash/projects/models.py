@@ -10,6 +10,11 @@ from common.consts import UPPER_ALPHABET
 from common.fields import AddressField
 
 
+class InvoiceReceivingMode(models.TextChoices):
+    VaultSlot = "vault_slot", _("VaultSlot")
+    Differ = "differ", _("差额账单")
+
+
 class Project(models.Model):
     appid = ShortUUIDField(
         verbose_name=_("Appid"),
@@ -77,6 +82,18 @@ class Project(models.Model):
         _("自动归集"),
         default=True,
         help_text=_("开启后，VaultSlot 收到代币并确认后自动调度 collect 归集。"),
+    )
+    evm_invoice_receiving_mode = models.CharField(
+        _("EVM 账单收款模式"),
+        choices=InvoiceReceivingMode,
+        default=InvoiceReceivingMode.VaultSlot,
+        help_text=_("仅影响 EVM 账单生成支付地址时使用 VaultSlot 还是差额收款地址。"),
+    )
+    tron_invoice_receiving_mode = models.CharField(
+        _("Tron 账单收款模式"),
+        choices=InvoiceReceivingMode,
+        default=InvoiceReceivingMode.Differ,
+        help_text=_("仅影响 Tron 账单生成支付地址时使用 VaultSlot 还是差额收款地址。"),
     )
 
     active = models.BooleanField(verbose_name=_("启用"), default=True)
