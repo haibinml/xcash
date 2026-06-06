@@ -54,11 +54,9 @@ class ProjectService:
 
     @staticmethod
     def invoice_receiving_mode_for_chain(*, project: Project, chain) -> str:
-        """返回项目在指定链类型上的账单收款模式。"""
-        if chain.type == ChainType.EVM:
-            return project.evm_invoice_receiving_mode
-        if chain.type == ChainType.TRON:
-            return project.tron_invoice_receiving_mode
+        """返回项目统一账单收款模式，并校验链类型属于账单支持范围。"""
+        if chain.type in {ChainType.EVM, ChainType.TRON}:
+            return project.invoice_receiving_mode
         raise ValueError(f"unsupported invoice chain_type={chain.type}")
 
     @staticmethod

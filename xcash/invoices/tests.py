@@ -189,9 +189,9 @@ class InvoicePaymentSelectionTests(TestCase):
             datetime=now,
         )
 
-    def enable_evm_differ_mode(self, *, address_suffix: str = "d01") -> str:
-        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.Differ
-        self.project.save(update_fields=["evm_invoice_receiving_mode"])
+    def enable_differ_mode(self, *, address_suffix: str = "d01") -> str:
+        self.project.invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(update_fields=["invoice_receiving_mode"])
         address = Web3.to_checksum_address(f"0x{int(address_suffix, 16):040x}")
         DifferRecipientAddress.objects.create(
             project=self.project,
@@ -435,7 +435,7 @@ class InvoicePaymentSelectionTests(TestCase):
         self.assertEqual(transfer.type, TransferType.Invoice)
 
     def test_select_method_allocates_evm_differ_payment(self):
-        differ_address = self.enable_evm_differ_mode()
+        differ_address = self.enable_differ_mode()
         invoice = self.create_invoice(
             out_no="payment-differ",
             amount=Decimal("10.001"),
@@ -449,7 +449,7 @@ class InvoicePaymentSelectionTests(TestCase):
         self.assertFalse(VaultSlot.objects.filter(address=differ_address).exists())
 
     def test_differ_payment_increments_by_cent_when_combo_is_occupied(self):
-        differ_address = self.enable_evm_differ_mode()
+        differ_address = self.enable_differ_mode()
         first = self.create_invoice(out_no="payment-differ-first")
         second = self.create_invoice(out_no="payment-differ-second")
 
@@ -472,7 +472,7 @@ class InvoicePaymentSelectionTests(TestCase):
         _create_event_mock,
         _send_internal_callback_mock,
     ):
-        self.enable_evm_differ_mode()
+        self.enable_differ_mode()
         invoice = self.create_invoice(out_no="payment-differ-confirm")
         invoice.select_method(self.crypto, self.chain_a)
         transfer = self.create_transfer(
@@ -695,7 +695,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_differ_available_methods_exposes_evm_without_vault(self):
         project = Project.objects.create(
             name="Invoice Differ EVM Project",
-            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            invoice_receiving_mode=InvoiceReceivingMode.Differ,
         )
         usdt = Crypto.objects.create(
             name="Tether USD EVM Differ",
@@ -722,7 +722,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_differ_available_methods_excludes_native_coin(self):
         project = Project.objects.create(
             name="Invoice Differ Native Project",
-            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            invoice_receiving_mode=InvoiceReceivingMode.Differ,
         )
         eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
         eth = eth_chain.native_coin
@@ -854,7 +854,7 @@ class InvoiceContractBillingValidationTests(TestCase):
         return InvoiceCreateSerializer(data=data, context={"request": request})
 
     def test_default_methods_filters_out_tron(self):
-        # 不传 methods：未配置差额地址时，默认 Tron 差额模式不暴露 Tron。
+        # 不传 methods：全局 VaultSlot 模式下，Tron 未通过运行时门控时不暴露 Tron。
         serializer = self.build_serializer(methods={})
 
         self.assertTrue(serializer.is_valid(raise_exception=True))
@@ -864,7 +864,7 @@ class InvoiceContractBillingValidationTests(TestCase):
         )
 
     def test_explicit_tron_rejected(self):
-        # 显式要求 Tron，但项目没有 Tron 差额地址，拒绝。
+        # 显式要求 Tron，但全局 VaultSlot 模式下 Tron 运行时未就绪，拒绝。
         serializer = self.build_serializer(
             methods={self.usdt.symbol: [self.tron_chain.code]},
         )
@@ -873,7 +873,14 @@ class InvoiceContractBillingValidationTests(TestCase):
             serializer.is_valid(raise_exception=True)
         self.assertEqual(ctx.exception.error_code, ErrorCode.NO_RECIPIENT_ADDRESS)
 
-    def test_tron_differ_methods_exposed_without_vault_slot_runtime_gate(self):
+    def test_differ_methods_exposed_without_tron_vault_slot_runtime_gate(self):
+        self.project.invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(update_fields=["invoice_receiving_mode"])
+        DifferRecipientAddress.objects.create(
+            project=self.project,
+            chain_type=ChainType.EVM,
+            address="0x0000000000000000000000000000000000007803",
+        )
         DifferRecipientAddress.objects.create(
             project=self.project,
             chain_type=ChainType.TRON,
@@ -888,6 +895,8 @@ class InvoiceContractBillingValidationTests(TestCase):
         )
 
     def test_select_method_allocates_tron_differ_address(self):
+        self.project.invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(update_fields=["invoice_receiving_mode"])
         differ_address = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
         DifferRecipientAddress.objects.create(
             project=self.project,
@@ -927,8 +936,8 @@ class InvoiceContractBillingValidationTests(TestCase):
         TRON_VAULT_SLOT_DEPLOY_FEE_LIMIT=300_000_000,
     )
     def test_tron_methods_exposed_only_after_runtime_gate(self):
-        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
-        self.project.save(update_fields=["tron_invoice_receiving_mode"])
+        self.project.invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(update_fields=["invoice_receiving_mode"])
 
         methods = Invoice.available_methods(self.project)
 
@@ -947,8 +956,8 @@ class InvoiceContractBillingValidationTests(TestCase):
     def test_select_method_allocates_tron_vault_slot(self):
         from chains.models import VaultSlot
 
-        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
-        self.project.save(update_fields=["tron_invoice_receiving_mode"])
+        self.project.invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(update_fields=["invoice_receiving_mode"])
         invoice = Invoice.objects.create(
             project=self.project,
             out_no="tron-select-method",

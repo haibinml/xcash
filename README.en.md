@@ -83,7 +83,7 @@ The fund path, shown in green, is fixed by smart contracts and only flows from "
 
 Xcash provides two ways to receive funds. Distinguish them before integration:
 
-- **Payments**: invoice-based collection. Each transaction creates a fixed-amount, time-limited invoice, and the invoice completes after the buyer pays. This is suitable for one-off collection scenarios such as e-commerce checkout and subscription billing. Payments now use VaultSlot contract collection: the system assigns an independent collection address to each invoice, avoiding address collisions and amount offsets.
+- **Payments**: invoice-based collection. Each transaction creates a fixed-amount, time-limited invoice, and the invoice completes after the buyer pays. This is suitable for one-off collection scenarios such as e-commerce checkout and subscription billing. Payments use VaultSlot contract collection by default: the system assigns an independent collection address to each invoice, avoiding address collisions and amount offsets.
 - **Deposits**: exchange-style top-ups. Each user gets a dedicated deposit address shared across chains, monitored in real time. Users can transfer in anytime and be credited after block confirmation without creating an order. This is suitable for wallets, trading platforms, and other businesses that maintain user balances.
 
 ## Chain Support

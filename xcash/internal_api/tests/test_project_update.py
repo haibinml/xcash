@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import pytest
 
+from projects.models import InvoiceReceivingMode
 from projects.models import Project
 
 AUTH_HEADER = "Bearer test-internal-token"
@@ -77,10 +78,11 @@ class TestMethodRestrictions:
 @pytest.mark.django_db
 class TestPatchFieldWhitelist:
     def test_non_whitelisted_fields_are_ignored(self, client, project):
-        """非白名单字段（name/active/appid）不会被写入，ModelSerializer 默认忽略额外字段。"""
+        """非白名单字段不会被写入，ModelSerializer 默认忽略额外字段。"""
         original_name = project.name
         original_active = project.active
         original_appid = project.appid
+        original_invoice_receiving_mode = project.invoice_receiving_mode
 
         response = client.patch(
             _url(project),
@@ -88,6 +90,7 @@ class TestPatchFieldWhitelist:
                 "name": "malicious-rename",
                 "active": False,
                 "appid": "XC-HACKED0",
+                "invoice_receiving_mode": InvoiceReceivingMode.Differ,
             },
             content_type="application/json",
             HTTP_AUTHORIZATION=AUTH_HEADER,
@@ -98,6 +101,7 @@ class TestPatchFieldWhitelist:
         assert project.name == original_name
         assert project.active == original_active
         assert project.appid == original_appid
+        assert project.invoice_receiving_mode == original_invoice_receiving_mode
 
     def test_happy_path_multiple_fields(self, client, project):
         """合法 PATCH：同时修改多个白名单字段，均正确入库。"""
@@ -261,4 +265,3 @@ class TestFastConfirmThresholdValidation:
             HTTP_AUTHORIZATION=AUTH_HEADER,
         )
         assert response.status_code == 200
-

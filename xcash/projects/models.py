@@ -83,17 +83,11 @@ class Project(models.Model):
         default=True,
         help_text=_("开启后，VaultSlot 收到代币并确认后自动调度 collect 归集。"),
     )
-    evm_invoice_receiving_mode = models.CharField(
-        _("EVM 账单收款模式"),
+    invoice_receiving_mode = models.CharField(
+        _("账单收款模式"),
         choices=InvoiceReceivingMode,
         default=InvoiceReceivingMode.VaultSlot,
-        help_text=_("仅影响 EVM 账单生成支付地址时使用 VaultSlot 还是差额收款地址。"),
-    )
-    tron_invoice_receiving_mode = models.CharField(
-        _("Tron 账单收款模式"),
-        choices=InvoiceReceivingMode,
-        default=InvoiceReceivingMode.Differ,
-        help_text=_("仅影响 Tron 账单生成支付地址时使用 VaultSlot 还是差额收款地址。"),
+        help_text=_("全局控制账单生成支付地址时使用 VaultSlot 还是差额收款地址。"),
     )
 
     active = models.BooleanField(verbose_name=_("启用"), default=True)

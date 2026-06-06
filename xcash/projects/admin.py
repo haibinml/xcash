@@ -40,8 +40,7 @@ class ProjectForm(forms.ModelForm):
             "fast_confirm_threshold",
             "hmac_key",
             "vault",
-            "evm_invoice_receiving_mode",
-            "tron_invoice_receiving_mode",
+            "invoice_receiving_mode",
             "active",
             "is_test",
         )
@@ -267,8 +266,7 @@ class ProjectAdmin(ModelAdmin):
                 "fields": (
                     "vault",
                     "auto_collect_enabled",
-                    "evm_invoice_receiving_mode",
-                    "tron_invoice_receiving_mode",
+                    "invoice_receiving_mode",
                 ),
             },
         ),

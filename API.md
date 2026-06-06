@@ -496,7 +496,7 @@ EPay 入口不使用 Xcash HMAC 头，使用 EPay 自有 MD5 签名。
 | `sign` | string | 是 | MD5 签名 |
 | `sign_type` | string | 是 | 固定 `MD5` |
 
-EPay 订单固定创建为 VaultSlot 账单，有效期 15 分钟。
+EPay 订单按项目账单收款模式创建，有效期 15 分钟。
 
 ### EPay 签名
 
