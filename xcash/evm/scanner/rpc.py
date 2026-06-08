@@ -119,18 +119,6 @@ class EvmScannerRpcClient:
         )
         return int(block["timestamp"])
 
-    def get_block_hash(self, *, block_number: int) -> str:
-        block = self._call_with_retry(
-            fn=lambda: self._get_block_with_poa_retry(
-                block_number=block_number,
-                full_transactions=False,
-            ),
-            summary="获取区块哈希失败",
-            method="eth_getBlockByNumber",
-            context=f"block={block_number}",
-        )
-        return self._normalize_receipt_hash(block["hash"])
-
     def get_full_block(self, *, block_number: int) -> dict[str, Any]:
         raw_block: dict[str, Any] = self._call_with_retry(
             fn=lambda: self._get_block_with_poa_retry(
@@ -142,41 +130,6 @@ class EvmScannerRpcClient:
             context=f"block={block_number}",
         )
         return dict(raw_block)
-
-    def get_block_receipts_status(
-        self,
-        *,
-        block_number: int,
-    ) -> dict[str, int] | None:
-        """整块拉所有 tx 的 receipt status，返回 {tx_hash: status}。
-
-        当节点不支持 eth_getBlockReceipts 时返回 None，调用方需 fallback 到
-        逐笔 eth_getTransactionReceipt。支持探测结果缓存在 self._block_receipts_supported，
-        同一扫描 tick 内不会反复触发"方法不存在"探测；method-unavailable 视为不可重试，
-        立即短路返回，避免在已知不支持的节点上空耗 1s 的退避等待。
-        """
-        if self._block_receipts_supported is False:
-            return None
-        try:
-            receipts = self._call_with_retry(
-                fn=lambda: self.chain.w3.eth.get_block_receipts(
-                    block_number
-                ),  # noqa: SLF001
-                summary="获取整块 receipt 失败",
-                method="eth_getBlockReceipts",
-                context=f"block={block_number}",
-                non_retriable_predicate=self._is_method_unavailable_error,
-            )
-        except EvmScannerRpcError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            if self._is_method_unavailable_error(exc):
-                self._block_receipts_supported = False
-                return None
-            raise
-
-        self._block_receipts_supported = True
-        return self._extract_receipt_status_map(receipts)
 
     def get_block_receipts(self, *, block_number: int) -> dict[str, dict] | None:
         """整块拉取所有交易 receipt，返回 hash -> receipt 映射。"""
@@ -221,30 +174,6 @@ class EvmScannerRpcClient:
         )
 
     @staticmethod
-    def _extract_receipt_status_map(receipts) -> dict[str, int]:
-        status_map: dict[str, int] = {}
-        for receipt in receipts or []:
-            tx_hash = EvmScannerRpcClient._normalize_receipt_hash(
-                receipt.get("transactionHash")
-            )
-            if not tx_hash:
-                continue
-            raw_status = receipt.get("status")
-            if isinstance(raw_status, str):
-                normalized = raw_status.lower().removeprefix("0x") or "0"
-                try:
-                    status = int(normalized, 16)
-                except ValueError:
-                    continue
-            elif isinstance(raw_status, int):
-                status = int(raw_status)
-            else:
-                continue
-            if status in (0, 1):
-                status_map[tx_hash] = status
-        return status_map
-
-    @staticmethod
     def _normalize_receipt_hash(value: Any) -> str:
         if value is None:
             return ""
@@ -257,20 +186,6 @@ class EvmScannerRpcClient:
         if not hex_value.startswith("0x"):
             hex_value = f"0x{hex_value}"
         return hex_value.lower()
-
-    def get_transaction_receipt_status(self, *, tx_hash: str) -> int | None:
-        receipt = self._call_with_retry(
-            fn=lambda: self.chain.w3.eth.get_transaction_receipt(
-                tx_hash
-            ),  # noqa: SLF001
-            summary="获取交易回执失败",
-            method="eth_getTransactionReceipt",
-            context=f"tx_hash={tx_hash}",
-        )
-        if receipt is None:
-            return None
-        status = receipt.get("status")
-        return int(status) if status in (0, 1) else None
 
     def get_transaction(self, *, tx_hash: str) -> dict[str, Any] | None:
         tx: dict[str, Any] | None = self._call_with_retry(

@@ -7,10 +7,7 @@ import structlog
 from django.db import IntegrityError
 from django.db import transaction
 
-from chains.models import Address
-from chains.models import AddressUsage
 from chains.models import Chain
-from chains.models import ChainType
 from chains.models import ConfirmMode
 from chains.models import Transfer
 from chains.models import TransferStatus
@@ -42,24 +39,6 @@ class ChainService:
                 "code", flat=True
             )
         )
-
-
-class AddressService:
-    """Query and mutation helpers for chain addresses."""
-
-    @staticmethod
-    def find_by_address(
-        *,
-        address: str,
-        chain_type: ChainType | str | None = None,
-        usage: AddressUsage | str | None = None,
-    ) -> Address | None:
-        qs = Address.objects.filter(address=address)
-        if chain_type:
-            qs = qs.filter(chain_type=chain_type)
-        if usage:
-            qs = qs.filter(usage=usage)
-        return qs.first()
 
 
 @dataclass(frozen=True)
@@ -274,12 +253,4 @@ class TransferService:
         transfer.type = transfer_type
         transfer.confirm_mode = confirm_mode
         transfer.save(update_fields=["type", "confirm_mode"])
-        return transfer
-
-    @staticmethod
-    def mark_confirmed(transfer: Transfer) -> Transfer:
-        if transfer.status == TransferStatus.CONFIRMED:
-            return transfer
-        transfer.status = TransferStatus.CONFIRMED
-        transfer.save(update_fields=["status"])
         return transfer

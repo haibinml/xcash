@@ -29,14 +29,6 @@ class TronTxIntent:
     verify_fn: Callable[[], None] | None = None
 
 
-def function_selector(signature: str) -> str:
-    return f"{signature.split('(', maxsplit=1)[0]}({signature.split('(', 1)[1]}"
-
-
-def encoded_tron_address(address: str) -> str:
-    return tron_base58_to_evm_address(address)
-
-
 def build_contract_call_intent(
     *,
     sender: Address,

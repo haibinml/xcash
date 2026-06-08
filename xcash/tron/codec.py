@@ -37,17 +37,6 @@ class TronAddressCodec:
         return cls._encode_base58(bytes.fromhex(normalized_hex))
 
     @classmethod
-    def topic_to_base58(cls, topic: str) -> str:
-        normalized_topic = cls._normalize_hex(topic)
-        if len(normalized_topic) == cls.TOPIC_HEX_LENGTH:
-            return cls.hex41_to_base58(
-                f"{cls.ADDRESS_HEX_PREFIX}{normalized_topic[-40:]}"
-            )
-        if len(normalized_topic) == cls.ADDRESS_HEX_LENGTH:
-            return cls.hex41_to_base58(normalized_topic)
-        raise ValueError(f"invalid tron topic: {topic}")
-
-    @classmethod
     def _decode_base58(cls, value: str) -> bytes:
         try:
             decoded = b58decode_check(value.strip())
