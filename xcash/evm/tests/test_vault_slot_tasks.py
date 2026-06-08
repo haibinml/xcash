@@ -30,6 +30,7 @@ from chains.models import VaultSlot
 from chains.models import VaultSlotCollectSchedule
 from chains.models import VaultSlotUsage
 from chains.models import Wallet
+from chains.vault_slots import create_collect_tx_task_for_slot
 from core.models import SystemSettings
 from core.models import SystemWallet
 from currencies.models import Crypto
@@ -568,7 +569,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self._mark_vault_slot_deployed(slot)
 
         with self.patch_address_derivation():
-            task = VaultSlot.create_collect_tx_task_for_slot(
+            task = create_collect_tx_task_for_slot(
                 chain=self.chain,
                 crypto=self.token,
                 slot=slot,
@@ -1339,7 +1340,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         tx_hash = "0x" + "cd" * 32
         self._mark_vault_slot_deployed(slot)
         with self.patch_address_derivation():
-            task = VaultSlot.create_collect_tx_task_for_slot(
+            task = create_collect_tx_task_for_slot(
                 chain=self.chain,
                 crypto=self.token,
                 slot=slot,

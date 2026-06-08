@@ -951,12 +951,6 @@ class VaultSlot(models.Model):
         return schedule_collect_for_slot(chain=chain, crypto=crypto, slot=slot)
 
     @staticmethod
-    def create_collect_tx_task_for_slot(*, chain: Chain, crypto, slot) -> TxTask:
-        from chains.vault_slots import create_collect_tx_task_for_slot
-
-        return create_collect_tx_task_for_slot(chain=chain, crypto=crypto, slot=slot)
-
-    @staticmethod
     def matched_addresses_for_candidates(
         *, chain: Chain, candidates: set[str]
     ) -> set[str]:
@@ -1117,7 +1111,9 @@ class VaultSlotCollectSchedule(models.Model):
             )
 
     def create_tx_task(self) -> TxTask:
-        return VaultSlot.create_collect_tx_task_for_slot(
+        from chains.vault_slots import create_collect_tx_task_for_slot
+
+        return create_collect_tx_task_for_slot(
             chain=self.chain,
             crypto=self.crypto,
             slot=self.vault_slot,
