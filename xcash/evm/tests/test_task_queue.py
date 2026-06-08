@@ -128,16 +128,16 @@ class EvmTaskQueueTests(TestCase):
         broadcast_mock.assert_not_called()
 
     @patch("evm.tasks.EvmTxTask.broadcast")
-    def test_tx_task_skips_pending_chain_to_avoid_immediate_rebroadcast(
+    def test_tx_task_skips_submitted_to_avoid_immediate_rebroadcast(
         self, broadcast_mock
     ):
-        # 普通 Celery 广播入口只负责 QUEUED 首次发送；PENDING_CHAIN 重播必须走
+        # 普通 Celery 广播入口只负责 QUEUED 首次发送；SUBMITTED 重播必须走
         # poller 的超时收口路径，避免重复消息绕过重播间隔。
         from evm.tasks import _broadcast_evm_task
 
         tx_task = self._create_evm_task(
             tx_hash="0x" + "aa" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
 
         _broadcast_evm_task.run(tx_task.pk)
@@ -148,7 +148,7 @@ class EvmTaskQueueTests(TestCase):
     def test_dispatch_due_evm_tx_tasks_dispatches_only_queued_unknown_tasks(
         self, delay_mock
     ):
-        # dispatch 只放行 QUEUED 任务；PENDING_CHAIN / recent / finalized 不应被选中。
+        # dispatch 只放行 QUEUED 任务；SUBMITTED / recent / finalized 不应被选中。
         from evm.tasks import dispatch_evm_tx_tasks
 
         other_addr = Address.objects.create(
@@ -166,10 +166,10 @@ class EvmTaskQueueTests(TestCase):
             tx_hash="0x" + "b" * 64,
             status=TxTaskStatus.QUEUED,
         )
-        # PENDING_CHAIN 任务不应被 dispatch 重新选中（已在 mempool 中等待确认）。
+        # SUBMITTED 任务不应被 dispatch 重新选中（已在 mempool 中等待确认）。
         self._create_evm_task(
             tx_hash="0x" + "c" * 64,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
             address=other_addr,
         )
         recent_task = self._create_evm_task(
@@ -227,16 +227,16 @@ class EvmTaskQueueTests(TestCase):
         broadcast_mock.assert_not_called()
 
     @patch("evm.tasks.EvmTxTask.broadcast")
-    def test_tx_task_allows_higher_nonce_after_lower_task_enters_pending_chain(
+    def test_tx_task_allows_higher_nonce_after_lower_task_enters_submitted(
         self,
         broadcast_mock,
     ):
-        # 更低 nonce 已提交到节点后进入 PENDING_CHAIN，不再作为 queued 缺口阻断高 nonce。
+        # 更低 nonce 已提交到节点后进入 SUBMITTED，不再作为 queued 缺口阻断高 nonce。
         from evm.tasks import _broadcast_evm_task
 
         self._create_evm_task(
             tx_hash="0x" + "11" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
             nonce=1,
         )
         higher_task = self._create_evm_task(
@@ -300,16 +300,16 @@ class EvmTaskQueueTests(TestCase):
         )
 
     @patch("evm.tasks._broadcast_evm_task.delay")
-    def test_dispatch_due_evm_tx_tasks_treats_pending_chain_as_nonce_consumed(
+    def test_dispatch_due_evm_tx_tasks_treats_submitted_as_nonce_consumed(
         self,
         delay_mock,
     ):
-        # SQL 选取最小阻塞 nonce 时，不应把已进入 PENDING_CHAIN 的前序任务继续当作 queued 缺口。
+        # SQL 选取最小阻塞 nonce 时，不应把已进入 SUBMITTED 的前序任务继续当作 queued 缺口。
         from evm.tasks import dispatch_evm_tx_tasks
 
-        lower_pending_task = self._create_evm_task(
+        lower_submitted_task = self._create_evm_task(
             tx_hash="0x" + "13" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
             nonce=1,
         )
         higher_task = self._create_evm_task(
@@ -320,7 +320,7 @@ class EvmTaskQueueTests(TestCase):
 
         stale_created_at = timezone.now() - timedelta(seconds=8)
         stale_attempt_at = timezone.now() - timedelta(minutes=5)
-        EvmTxTask.objects.filter(pk=lower_pending_task.pk).update(
+        EvmTxTask.objects.filter(pk=lower_submitted_task.pk).update(
             created_at=stale_created_at,
             last_attempt_at=stale_attempt_at,
         )
@@ -427,16 +427,16 @@ class EvmTaskQueueTests(TestCase):
     # ── Nonce 流水线测试 ──────────────────────────────────────────────
 
     @patch("evm.tasks.EvmTxTask.broadcast")
-    def test_broadcast_allows_when_lower_nonce_is_pending_chain(
+    def test_broadcast_allows_when_lower_nonce_is_submitted(
         self,
         broadcast_mock,
     ):
-        # 低 nonce 已提交到 mempool (PENDING_CHAIN) 时，高 nonce 允许广播。
+        # 低 nonce 已提交到 mempool (SUBMITTED) 时，高 nonce 允许广播。
         from evm.tasks import _broadcast_evm_task
 
         self._create_evm_task(
             tx_hash="0x" + "a1" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
             nonce=1,
         )
         higher_task = self._create_evm_task(
@@ -454,14 +454,14 @@ class EvmTaskQueueTests(TestCase):
         self,
         broadcast_mock,
     ):
-        # 同地址同链 PENDING_CHAIN 达到 EVM_PIPELINE_DEPTH 时阻断新广播。
+        # 同地址同链 SUBMITTED 达到 EVM_PIPELINE_DEPTH 时阻断新广播。
         from evm.constants import EVM_PIPELINE_DEPTH
         from evm.tasks import _broadcast_evm_task
 
         for i in range(EVM_PIPELINE_DEPTH):
             self._create_evm_task(
                 tx_hash=f"0x{i:064x}",
-                status=TxTaskStatus.PENDING_CHAIN,
+                status=TxTaskStatus.SUBMITTED,
                 nonce=i,
             )
         next_task = self._create_evm_task(
@@ -483,10 +483,10 @@ class EvmTaskQueueTests(TestCase):
         from evm.constants import EVM_PIPELINE_DEPTH
         from evm.tasks import _broadcast_evm_task
 
-        pending_tasks = [
+        submitted_tasks = [
             self._create_evm_task(
                 tx_hash=f"0x{i:064x}",
-                status=TxTaskStatus.PENDING_CHAIN,
+                status=TxTaskStatus.SUBMITTED,
                 nonce=i,
             )
             for i in range(EVM_PIPELINE_DEPTH)
@@ -498,7 +498,7 @@ class EvmTaskQueueTests(TestCase):
         )
 
         # 模拟一笔完成，腾出 pipeline 空位
-        first = pending_tasks[0]
+        first = submitted_tasks[0]
         TxTask.objects.filter(pk=first.base_task_id).update(
             status=TxTaskStatus.CONFIRMED,
         )
@@ -509,12 +509,12 @@ class EvmTaskQueueTests(TestCase):
 
     @patch("evm.tasks._broadcast_evm_task.delay")
     def test_dispatch_allows_queued_when_pipeline_has_room(self, delay_mock):
-        # 同地址已有 PENDING_CHAIN 但未满时，dispatch 仍放行最低 QUEUED nonce。
+        # 同地址已有 SUBMITTED 但未满时，dispatch 仍放行最低 QUEUED nonce。
         from evm.tasks import dispatch_evm_tx_tasks
 
         self._create_evm_task(
             tx_hash="0x" + "d1" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
             nonce=0,
         )
         queued_task = self._create_evm_task(
@@ -546,7 +546,7 @@ class EvmTaskQueueTests(TestCase):
         for i in range(EVM_PIPELINE_DEPTH):
             self._create_evm_task(
                 tx_hash=f"0x{0xE0 + i:064x}",
-                status=TxTaskStatus.PENDING_CHAIN,
+                status=TxTaskStatus.SUBMITTED,
                 nonce=i,
             )
         blocked_task = self._create_evm_task(
@@ -587,12 +587,12 @@ class EvmTaskQueueTests(TestCase):
             nonce=1,
         )
 
-        def mark_pending(*args, **kwargs):
+        def mark_submitted(*args, **kwargs):
             TxTask.objects.filter(pk=current_task.base_task_id).update(
-                status=TxTaskStatus.PENDING_CHAIN,
+                status=TxTaskStatus.SUBMITTED,
             )
 
-        broadcast_mock.side_effect = mark_pending
+        broadcast_mock.side_effect = mark_submitted
 
         _broadcast_evm_task.run(current_task.pk)
 
@@ -641,7 +641,7 @@ class EvmTaskQueueTests(TestCase):
         for i in range(EVM_PIPELINE_DEPTH - 1):
             self._create_evm_task(
                 tx_hash=f"0x{0xF0 + i:064x}",
-                status=TxTaskStatus.PENDING_CHAIN,
+                status=TxTaskStatus.SUBMITTED,
                 nonce=i,
             )
         # 当前任务广播后 pipeline 刚好满
@@ -657,12 +657,12 @@ class EvmTaskQueueTests(TestCase):
             nonce=EVM_PIPELINE_DEPTH,
         )
 
-        def mark_pending(*args, **kwargs):
+        def mark_submitted(*args, **kwargs):
             TxTask.objects.filter(pk=current_task.base_task_id).update(
-                status=TxTaskStatus.PENDING_CHAIN,
+                status=TxTaskStatus.SUBMITTED,
             )
 
-        broadcast_mock.side_effect = mark_pending
+        broadcast_mock.side_effect = mark_submitted
 
         _broadcast_evm_task.run(current_task.pk)
 

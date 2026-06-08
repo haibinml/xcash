@@ -722,8 +722,48 @@ class TxTaskTransitionTests(TestCase):
             sender=self.addr,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash="0x" + "dd" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
+
+    def test_mark_submitted_transitions_from_queued(self):
+        self.task.status = TxTaskStatus.QUEUED
+        self.task.save(update_fields=["status"])
+
+        updated = TxTask.mark_submitted(task_id=self.task.pk)
+
+        self.assertTrue(updated)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, TxTaskStatus.SUBMITTED)
+
+    def test_mark_submitted_does_not_resubmit_by_default(self):
+        updated = TxTask.mark_submitted(task_id=self.task.pk)
+
+        self.assertFalse(updated)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, TxTaskStatus.SUBMITTED)
+
+    def test_mark_submitted_allows_explicit_resubmission(self):
+        updated = TxTask.mark_submitted(
+            task_id=self.task.pk,
+            allow_resubmitted=True,
+        )
+
+        self.assertTrue(updated)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, TxTaskStatus.SUBMITTED)
+
+    def test_mark_submitted_does_not_override_terminal_state(self):
+        self.task.status = TxTaskStatus.CONFIRMED
+        self.task.save(update_fields=["status"])
+
+        updated = TxTask.mark_submitted(
+            task_id=self.task.pk,
+            allow_resubmitted=True,
+        )
+
+        self.assertFalse(updated)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
     def test_mark_finalized_success_transitions_correctly(self):
         updated = TxTask.mark_finalized_success(
@@ -764,7 +804,7 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertFalse(updated)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(self.task.status, TxTaskStatus.SUBMITTED)
 
     def test_mark_finalized_success_does_not_override_failed_final_state(self):
         TxTask.mark_finalized_failed(

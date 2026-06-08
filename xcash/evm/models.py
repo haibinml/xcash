@@ -11,7 +11,6 @@ from eth_typing import HexStr  # noqa
 from eth_utils import keccak  # noqa
 from web3 import Web3
 
-from chains.models import TERMINAL_TX_TASK_STATUSES
 from chains.models import Address
 from chains.models import TxHash
 from chains.models import TxTask
@@ -113,18 +112,23 @@ class EvmTxTask(UndeletableModel):
     def __str__(self) -> str:
         return self.base_task.tx_hash or f"{self.sender_id}:{self.nonce}"
 
-    def broadcast(self, *, allow_pending_chain_rebroadcast: bool = False) -> None:
-        if not self._can_broadcast_for_current_status(
-            allow_pending_chain_rebroadcast=allow_pending_chain_rebroadcast
-        ):
+    def broadcast(self) -> None:
+        if not self._can_broadcast_queued():
             return
         if self._recover_queued_receipt_if_any():
             return
-        if self._is_broadcast_order_blocked(
-            allow_pending_chain_rebroadcast=allow_pending_chain_rebroadcast
-        ):
+        if self._is_broadcast_order_blocked(ignore_pipeline_full=False):
             return
+        self._execute_broadcast()
 
+    def rebroadcast_submitted(self) -> None:
+        if not self._can_rebroadcast_submitted():
+            return
+        if self._is_broadcast_order_blocked(ignore_pipeline_full=True):
+            return
+        self._execute_broadcast()
+
+    def _execute_broadcast(self) -> None:
         self._record_broadcast_attempt()
         self._ensure_signed_with_latest_gas_price()
 
@@ -133,12 +137,10 @@ class EvmTxTask(UndeletableModel):
 
         self._send_signed_payload()
 
-    def _is_broadcast_order_blocked(
-        self, *, allow_pending_chain_rebroadcast: bool
-    ) -> bool:
+    def _is_broadcast_order_blocked(self, *, ignore_pipeline_full: bool) -> bool:
         if self.has_lower_queued_nonce():
             return True
-        return not allow_pending_chain_rebroadcast and self.is_pipeline_full()
+        return not ignore_pipeline_full and self.is_pipeline_full()
 
     def _passes_balance_preflight(self) -> bool:
         # pre-flight 第 1 步：主动阈值检查。
@@ -169,10 +171,10 @@ class EvmTxTask(UndeletableModel):
                     return
                 raise
             if self._is_already_known_error(exc):
-                self._mark_pending_chain()
+                self._mark_submitted()
                 return
             raise
-        self._mark_pending_chain()
+        self._mark_submitted()
 
     def known_tx_hashes(self) -> list[str]:
         """返回当前任务所有已知 tx_hash，按新版本优先查询。"""
@@ -214,7 +216,7 @@ class EvmTxTask(UndeletableModel):
     def _recover_queued_receipt_if_any(self) -> bool:
         """QUEUED 任务若已有 tx_hash，先按链上 receipt 恢复状态。
 
-        send_raw_transaction 可能已被节点接受，但 worker 在 _mark_pending_chain 前
+        send_raw_transaction 可能已被节点接受，但 worker 在 _mark_submitted 前
         中断。再次执行时不能盲目重发或让 nonce too low 卡住队列，应先用历史
         hash 观察链上事实，再回到统一 poller/业务管线。
         """
@@ -230,7 +232,7 @@ class EvmTxTask(UndeletableModel):
 
         status = receipt.get("status")
         if status == 1:
-            self._mark_pending_chain()
+            self._mark_submitted()
             EvmTaskPoller.process_succeeded_receipt(
                 evm_task=self,
                 tx_hash=tx_hash,
@@ -238,21 +240,20 @@ class EvmTxTask(UndeletableModel):
             )
             return True
         if status == 0:
-            self._mark_pending_chain()
+            self._mark_submitted()
             EvmTaskPoller.finalize_failed_task(evm_task=self)
             return True
         raise RuntimeError("EVM receipt status missing or invalid")
 
-    def _can_broadcast_for_current_status(
-        self, *, allow_pending_chain_rebroadcast: bool
-    ) -> bool:
-        """校验当前父任务状态是否允许进入真实广播副作用。"""
+    def _can_broadcast_queued(self) -> bool:
+        """普通广播入口只允许 QUEUED 任务进入真实广播副作用。"""
         base_task = TxTask.objects.only("status").get(pk=self.base_task_id)
-        if base_task.status in TERMINAL_TX_TASK_STATUSES:
-            return False
-        if base_task.status == TxTaskStatus.PENDING_CHAIN:
-            return allow_pending_chain_rebroadcast
         return base_task.status == TxTaskStatus.QUEUED
+
+    def _can_rebroadcast_submitted(self) -> bool:
+        """重播入口只允许 SUBMITTED 任务由 poller 补偿提交。"""
+        base_task = TxTask.objects.only("status").get(pk=self.base_task_id)
+        return base_task.status == TxTaskStatus.SUBMITTED
 
     @staticmethod
     def _replacement_gas_price(*, old_gas_price: int, current_gas_price: int) -> int:
@@ -301,15 +302,9 @@ class EvmTxTask(UndeletableModel):
             "gasPrice": gas_price,
         }
 
-    def _mark_pending_chain(self) -> None:
-        # 首次成功提交到节点后，统一父任务从"待广播"进入"待上链"。
-        TxTask.objects.filter(
-            pk=self.base_task_id,
-            status=TxTaskStatus.QUEUED,
-        ).update(
-            status=TxTaskStatus.PENDING_CHAIN,
-            updated_at=timezone.now(),
-        )
+    def _mark_submitted(self) -> None:
+        # 首次成功提交到节点后，统一父任务从"待提交"进入"已提交，待链上结果"。
+        TxTask.mark_submitted(task_id=self.base_task_id)
 
     @property
     def status(self) -> str:
@@ -330,7 +325,7 @@ class EvmTxTask(UndeletableModel):
             EvmTxTask.objects.filter(
                 sender=self.sender,
                 chain=self.chain,
-                base_task__status=TxTaskStatus.PENDING_CHAIN,
+                base_task__status=TxTaskStatus.SUBMITTED,
             ).count()
             >= EVM_PIPELINE_DEPTH
         )

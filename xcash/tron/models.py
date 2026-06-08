@@ -110,13 +110,14 @@ class TronTxTask(UndeletableModel):
         return self.base_task.display_status
 
     @property
-    def can_rebroadcast(self) -> bool:
+    def can_broadcast_queued(self) -> bool:
         base_task = TxTask.objects.only("status").get(pk=self.base_task_id)
-        if base_task.status == TxTaskStatus.QUEUED:
-            return True
-        if base_task.status != TxTaskStatus.PENDING_CHAIN:
-            return False
-        return self.is_expired()
+        return base_task.status == TxTaskStatus.QUEUED
+
+    @property
+    def can_rebroadcast_expired_submitted(self) -> bool:
+        base_task = TxTask.objects.only("status").get(pk=self.base_task_id)
+        return base_task.status == TxTaskStatus.SUBMITTED and self.is_expired()
 
     def is_expired(self) -> bool:
         if self.expiration is None:
@@ -124,8 +125,16 @@ class TronTxTask(UndeletableModel):
         return int(time.time() * 1000) >= int(self.expiration)
 
     def broadcast(self) -> None:
-        if not self.can_rebroadcast:
+        if not self.can_broadcast_queued:
             return
+        self.execute_broadcast()
+
+    def rebroadcast_expired_submitted(self) -> None:
+        if not self.can_rebroadcast_expired_submitted:
+            return
+        self.execute_broadcast()
+
+    def execute_broadcast(self) -> None:
         self.record_broadcast_attempt()
         self.validate_fee_limit()
         client = TronHttpClient(chain=self.chain)
@@ -158,10 +167,10 @@ class TronTxTask(UndeletableModel):
 
         response = client.broadcast_transaction(transaction=signed.raw_transaction)
         if response.get("result") is True:
-            self.mark_pending_chain()
+            self.mark_submitted()
             return
         if self.is_duplicate_broadcast_response(response):
-            self.mark_pending_chain()
+            self.mark_submitted()
             return
         message = response.get("message") or response.get("code") or response
         raise TronClientError(f"tron broadcast failed: {message}")
@@ -194,13 +203,10 @@ class TronTxTask(UndeletableModel):
         )
         self.base_task.append_tx_hash(tx_id)
 
-    def mark_pending_chain(self) -> None:
-        TxTask.objects.filter(
-            pk=self.base_task_id,
-            status__in=(TxTaskStatus.QUEUED, TxTaskStatus.PENDING_CHAIN),
-        ).update(
-            status=TxTaskStatus.PENDING_CHAIN,
-            updated_at=timezone.now(),
+    def mark_submitted(self) -> None:
+        TxTask.mark_submitted(
+            task_id=self.base_task_id,
+            allow_resubmitted=True,
         )
 
     @staticmethod

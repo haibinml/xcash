@@ -20,6 +20,7 @@ from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.models import TronTxTask
 from tron.models import TronWatchCursor
+from tron.tasks import broadcast_tron_task
 from tron.tasks import confirm_tron_receipt_tx_tasks
 
 from chains.adapters import TxCheckResult
@@ -555,8 +556,69 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
 
         client.broadcast_transaction.assert_called_once()
         task.base_task.refresh_from_db()
-        self.assertEqual(task.base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(task.base_task.status, TxTaskStatus.SUBMITTED)
         self.assertEqual(task.base_task.tx_hash, "a" * 64)
+
+    @patch("tron.models.TronHttpClient")
+    def test_broadcast_skips_submitted_task(self, client_class):
+        task = self.make_task()
+        TxTask.objects.filter(pk=task.base_task_id).update(
+            status=TxTaskStatus.SUBMITTED,
+        )
+
+        task.broadcast()
+
+        client_class.assert_not_called()
+        task.refresh_from_db()
+        self.assertIsNone(task.last_attempt_at)
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.SUBMITTED)
+
+    @patch("tron.models.TronTxTask.execute_broadcast")
+    def test_rebroadcast_expired_submitted_requires_expiration(self, execute_broadcast):
+        task = self.make_task()
+        TxTask.objects.filter(pk=task.base_task_id).update(
+            status=TxTaskStatus.SUBMITTED,
+        )
+        task.expiration = int((timezone.now() + timedelta(minutes=1)).timestamp() * 1000)
+        task.save(update_fields=["expiration"])
+
+        task.rebroadcast_expired_submitted()
+
+        execute_broadcast.assert_not_called()
+
+    @patch("tron.models.TronTxTask.execute_broadcast")
+    def test_rebroadcast_expired_submitted_executes_after_expiration(
+        self,
+        execute_broadcast,
+    ):
+        task = self.make_task()
+        TxTask.objects.filter(pk=task.base_task_id).update(
+            status=TxTaskStatus.SUBMITTED,
+        )
+        task.expiration = int((timezone.now() - timedelta(minutes=1)).timestamp() * 1000)
+        task.save(update_fields=["expiration"])
+
+        task.rebroadcast_expired_submitted()
+
+        execute_broadcast.assert_called_once()
+
+    @patch("tron.models.TronTxTask.rebroadcast_expired_submitted")
+    @patch("tron.models.TronTxTask.broadcast")
+    def test_broadcast_task_routes_submitted_to_rebroadcast(
+        self,
+        broadcast,
+        rebroadcast_expired_submitted,
+    ):
+        task = self.make_task()
+        TxTask.objects.filter(pk=task.base_task_id).update(
+            status=TxTaskStatus.SUBMITTED,
+        )
+
+        broadcast_tron_task.run(task.pk)
+
+        broadcast.assert_not_called()
+        rebroadcast_expired_submitted.assert_called_once()
 
 
 class TronWatchCursorTests(TestCase):
@@ -1188,7 +1250,7 @@ class TronReceiptConfirmTaskTests(TestCase):
             chain=self.chain,
             sender=self.sender,
             tx_type=TxTaskType.VaultSlotCollect,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         base_task.append_tx_hash(tx_hash)
         TronTxTask.objects.create(
@@ -1214,7 +1276,7 @@ class TronReceiptConfirmTaskTests(TestCase):
             chain=self.chain,
             sender=self.sender,
             tx_type=TxTaskType.VaultSlotDeploy,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         base_task.append_tx_hash(tx_hash)
         TronTxTask.objects.create(

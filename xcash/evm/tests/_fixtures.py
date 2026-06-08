@@ -83,7 +83,7 @@ def make_tx_task(
     amount: Decimal = Decimal("1.0"),
     recipient_suffix: str = "ff",
     tx_hash_suffix: str = "01",
-    status: TxTaskStatus = TxTaskStatus.PENDING_CHAIN,
+    status: TxTaskStatus = TxTaskStatus.SUBMITTED,
 ) -> TxTask:
     return TxTask.objects.create(
         chain=chain,

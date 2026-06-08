@@ -214,10 +214,10 @@ class EvmTxTaskTests(TestCase):
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_called_once()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
     def test_broadcast_preflight_success_proceeds_to_send(self):
-        # pre-flight 通过时继续进入 send_raw_transaction 流程，base_task 进入 PENDING_CHAIN。
+        # pre-flight 通过时继续进入 send_raw_transaction 流程，base_task 进入 SUBMITTED。
         chain = make_evm_chain(
             code=ChainCode.Base,
             rpc="http://localhost:8545",
@@ -269,7 +269,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_called_once()
         self.assertIsNotNone(tx_task.last_attempt_at)
@@ -433,9 +433,50 @@ class EvmTxTaskTests(TestCase):
         base_task.refresh_from_db()
         assert base_task.status == TxTaskStatus.QUEUED
 
+    def test_broadcast_skips_submitted_task(self):
+        chain = make_evm_chain(
+            code=ChainCode.Scroll,
+            rpc="http://localhost:8545",
+        )
+        addr = Address.objects.create(
+            wallet=Wallet.objects.create(),
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.HotWallet,
+            bip44_account=1,
+            address_index=0,
+            address=Web3.to_checksum_address(
+                "0x0000000000000000000000000000000000000403"
+            ),
+        )
+        base_task = TxTask.objects.create(
+            chain=chain,
+            sender=addr,
+            tx_type=TxTaskType.VaultSlotCollect,
+            status=TxTaskStatus.SUBMITTED,
+        )
+        tx_task = EvmTxTask.objects.create(
+            base_task=base_task,
+            sender=addr,
+            chain=chain,
+            nonce=0,
+            to=Web3.to_checksum_address("0x" + "a2" * 20),
+            value=0,
+            gas=21_000,
+            data="0xdeadbeef",
+            gas_price=1,
+            signed_payload="0x7261772d6279746573",
+        )
+
+        tx_task.broadcast()
+
+        tx_task.refresh_from_db()
+        self.assertIsNone(tx_task.last_attempt_at)
+        base_task.refresh_from_db()
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
+
     @patch.object(EvmTxTask, "is_pipeline_full", return_value=True)
-    def test_pending_chain_rebroadcast_ignores_pipeline_full(self, _pipeline_full_mock):
-        # 低 nonce 的 PENDING_CHAIN 任务超时重播是为了释放同地址 pipeline；
+    def test_submitted_rebroadcast_ignores_pipeline_full(self, _pipeline_full_mock):
+        # 低 nonce 的 SUBMITTED 任务超时重播是为了释放同地址 pipeline；
         # 如果它也被 pipeline_full 阻断，满 pipeline 会无法自愈。
         chain = make_evm_chain(
             code=ChainCode.Scroll,
@@ -467,7 +508,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             sender=addr,
             tx_type=TxTaskType.VaultSlotCollect,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -482,7 +523,7 @@ class EvmTxTaskTests(TestCase):
             signed_payload="0x7261772d6279746573",
         )
 
-        tx_task.broadcast(allow_pending_chain_rebroadcast=True)
+        tx_task.rebroadcast_submitted()
 
         send_raw_mock.assert_called_once()
 
@@ -516,7 +557,7 @@ class EvmTxTaskTests(TestCase):
             sender=addr,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash="0x" + "a5" * 32,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -531,7 +572,7 @@ class EvmTxTaskTests(TestCase):
             signed_payload="0x01",
         )
 
-        task.broadcast(allow_pending_chain_rebroadcast=True)
+        task.rebroadcast_submitted()
 
         tx_dict = sign_mock.call_args.kwargs["tx_dict"]
         assert tx_dict["gasPrice"] == 113
@@ -569,7 +610,7 @@ class EvmTxTaskTests(TestCase):
             sender=addr,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash="0x" + "2" * 64,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -588,13 +629,13 @@ class EvmTxTaskTests(TestCase):
             RuntimeError,
             "replacement transaction underpriced",
         ):
-            tx_task.broadcast(allow_pending_chain_rebroadcast=True)
+            tx_task.rebroadcast_submitted()
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
-    def test_broadcast_reraises_nonce_too_low_without_marking_pending(self):
+    def test_broadcast_reraises_nonce_too_low_without_marking_submitted(self):
         chain = make_evm_chain(
             code=ChainCode.BSC,
             rpc="http://localhost:8545",
@@ -625,7 +666,7 @@ class EvmTxTaskTests(TestCase):
             sender=addr,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash="0x" + "3" * 64,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -641,11 +682,11 @@ class EvmTxTaskTests(TestCase):
         )
 
         with self.assertRaisesMessage(RuntimeError, "nonce too low"):
-            tx_task.broadcast(allow_pending_chain_rebroadcast=True)
+            tx_task.rebroadcast_submitted()
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
     def test_broadcast_blocks_higher_nonce_until_lower_nonce_settles(self):
         chain = make_evm_chain(
@@ -769,7 +810,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
     def test_queued_task_with_existing_hash_recovers_from_confirmed_receipt(self):
         """首播已被节点接受但阶段仍是 QUEUED 时，应先查 receipt 自愈而不是重发。"""
@@ -833,7 +874,7 @@ class EvmTxTaskTests(TestCase):
         send_raw_mock.assert_not_called()
         process_mock.assert_called_once()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
     def test_nonce_too_low_checks_existing_hash_before_reraising(self):
         """nonce too low 时若历史 hash 已有 receipt，应自动恢复而不是继续卡 QUEUED。"""
@@ -900,4 +941,4 @@ class EvmTxTaskTests(TestCase):
         send_raw_mock.assert_called_once()
         process_mock.assert_called_once()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)

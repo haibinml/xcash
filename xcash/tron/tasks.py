@@ -42,10 +42,11 @@ def has_required_confirmations(*, chain: Chain, result: TxCheckResult | None) ->
 @singleton_task(timeout=30, use_params=True)
 def broadcast_tron_task(pk: int) -> None:
     tx_task = TronTxTask.objects.select_related("base_task", "chain", "sender").get(pk=pk)
-    if not tx_task.can_rebroadcast:
-        return
     try:
-        tx_task.broadcast()
+        if tx_task.base_task.status == TxTaskStatus.QUEUED:
+            tx_task.broadcast()
+        elif tx_task.base_task.status == TxTaskStatus.SUBMITTED:
+            tx_task.rebroadcast_expired_submitted()
     except TronClientError as exc:
         logger.warning(
             "Tron 任务广播失败",
@@ -66,7 +67,7 @@ def dispatch_tron_tx_tasks() -> None:
         .filter(
             Q(base_task__status=TxTaskStatus.QUEUED)
             | Q(
-                base_task__status=TxTaskStatus.PENDING_CHAIN,
+                base_task__status=TxTaskStatus.SUBMITTED,
                 expiration__lte=now_ms,
             ),
             Q(last_attempt_at__isnull=True) | Q(last_attempt_at__lt=ago(minutes=2)),
@@ -100,7 +101,7 @@ def confirm_tron_receipt_tx_tasks() -> None:
         .filter(
             chain__type=ChainType.TRON,
             tx_type__in=(TxTaskType.VaultSlotDeploy, TxTaskType.VaultSlotCollect),
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
             tx_hash__isnull=False,
         )
         .exclude(tx_hash="")
@@ -139,7 +140,7 @@ def confirm_tron_receipt_tx_tasks() -> None:
         elif status == TxCheckStatus.FAILED:
             updated = TxTask.mark_finalized_failed(
                 task_id=task.pk,
-                expected_status=TxTaskStatus.PENDING_CHAIN,
+                expected_status=TxTaskStatus.SUBMITTED,
             )
             if updated and task.tx_type == TxTaskType.VaultSlotDeploy:
                 mark_deployed_if_on_chain_for_task(task)

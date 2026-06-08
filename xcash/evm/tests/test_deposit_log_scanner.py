@@ -258,7 +258,7 @@ class EvmLogScannerTests(TestCase):
             sender=self.vault,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash=tx_hash,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         TxHash.objects.create(
             tx_task=base_task,

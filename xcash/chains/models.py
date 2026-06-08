@@ -498,8 +498,8 @@ class TransferType(models.TextChoices):
 
 
 class TxTaskStatus(models.TextChoices):
-    QUEUED = "queued", _("待广播")
-    PENDING_CHAIN = "pending_chain", _("待上链")
+    QUEUED = "queued", _("待提交")
+    SUBMITTED = "submitted", _("已提交，待链上结果")
     CONFIRMED = "confirmed", _("已确认")
     FAILED = "failed", _("失败")
 
@@ -557,7 +557,7 @@ class TxTask(UndeletableModel):
     """跨链统一的链上任务锚点。
 
     设计原则：
-    - status 用单枚举描述上链生命周期：待广播 → 待上链 →（已确认 | 失败）。
+    - status 用单枚举描述上链生命周期：待提交 → 已提交，待链上结果 →（已确认 | 失败）。
       上链周期是固定的线性流程加末端成功/失败分叉，故无需把"阶段"与"结果"
       拆成两个字段再用跨字段约束维持一致；终局态由 TERMINAL_TX_TASK_STATUSES 判定。
     - 广播重试等实现细节继续留在各链子表，避免把"是否广播"污染到统一领域模型。
@@ -665,6 +665,23 @@ class TxTask(UndeletableModel):
             return history.tx_task
         # 回退到当前 tx_hash
         return TxTask.objects.filter(chain=chain, tx_hash=tx_hash).first()
+
+    @staticmethod
+    def mark_submitted(*, task_id: int, allow_resubmitted: bool = False) -> bool:
+        """将任务标记为已提交，返回是否真正写入。
+
+        QUEUED -> SUBMITTED 是正常首提交流程；Tron 交易过期重签会在
+        SUBMITTED 阶段再次提交，此时允许调用方显式传入 allow_resubmitted。
+        """
+        allowed_statuses = [TxTaskStatus.QUEUED]
+        if allow_resubmitted:
+            allowed_statuses.append(TxTaskStatus.SUBMITTED)
+        return bool(
+            TxTask.objects.filter(pk=task_id, status__in=allowed_statuses).update(
+                status=TxTaskStatus.SUBMITTED,
+                updated_at=timezone.now(),
+            )
+        )
 
     @staticmethod
     def mark_finalized_success(*, chain: Chain, tx_hash: str) -> bool:

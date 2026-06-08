@@ -22,7 +22,7 @@ logger = structlog.get_logger()
 def _broadcast_evm_task(pk: int) -> None:
     # 任务入口统一使用 TxTask 命名，避免继续暴露旧的广播载荷概念。
     tx_task = EvmTxTask.objects.select_related("base_task").get(pk=pk)
-    # 普通 Celery 入口只负责 QUEUED 首次广播；PENDING_CHAIN 重播统一由
+    # 普通 Celery 入口只负责 QUEUED 首次广播；SUBMITTED 重播统一由
     # poller 在超时与查 receipt 后触发，避免重复消息绕过重播间隔。
     if tx_task.base_task.status != TxTaskStatus.QUEUED:
         return
@@ -43,7 +43,7 @@ def _broadcast_evm_task(pk: int) -> None:
     tx_task.broadcast()
     # 广播成功后，链式调度同地址下一个 QUEUED nonce，快速填充 pipeline。
     tx_task.base_task.refresh_from_db(fields=["status"])
-    if tx_task.base_task.status != TxTaskStatus.PENDING_CHAIN:
+    if tx_task.base_task.status != TxTaskStatus.SUBMITTED:
         return
     _chain_dispatch_next(tx_task)
 
@@ -74,7 +74,7 @@ def dispatch_evm_tx_tasks() -> None:
 
     调度规则：
     - 每个 (sender, chain) 只放行最低 nonce 的任务，保证 nonce 按顺序进入 mempool
-    - pipeline 未满（同发送地址 PENDING_CHAIN < EVM_PIPELINE_DEPTH）才放行
+    - pipeline 未满（同发送地址 SUBMITTED < EVM_PIPELINE_DEPTH）才放行
     - 4 分钟内已尝试过的不重复投递
     - 每轮最多投递 8 笔
     """

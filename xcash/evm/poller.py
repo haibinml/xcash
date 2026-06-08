@@ -21,7 +21,7 @@ logger = structlog.get_logger()
 class EvmTaskPoller:
     """轮询内部 EVM 任务的链上终局状态。
 
-    对 PENDING_CHAIN 超过短轮询延迟仍未终局的任务，遍历所有历史 tx_hash 查询 receipt：
+    对 SUBMITTED 超过短轮询延迟仍未终局的任务，遍历所有历史 tx_hash 查询 receipt：
     - 查到 receipt (status=1) 且确认数达标 -> 交给内部交易处理器按 TxTask 收口
     - 查到 receipt (status=0) -> 标记失败终局
     - 所有 hash 均无 receipt 且超过重播阈值 -> 交易可能已被 mempool 丢弃，重新广播
@@ -33,7 +33,7 @@ class EvmTaskPoller:
             EvmTxTask.objects.select_related("base_task", "sender")
             .filter(
                 chain=chain,
-                base_task__status=TxTaskStatus.PENDING_CHAIN,
+                base_task__status=TxTaskStatus.SUBMITTED,
                 last_attempt_at__lt=ago(seconds=EVM_PENDING_RECEIPT_POLL_DELAY),
             )
             .order_by("sender_id", "nonce", "created_at")
@@ -95,17 +95,17 @@ class EvmTaskPoller:
                     continue
                 # 长时间所有历史 hash 都找不到 receipt，按 mempool 丢弃路径重新广播。
                 try:
-                    evm_task.broadcast(allow_pending_chain_rebroadcast=True)
+                    evm_task.rebroadcast_submitted()
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        "PENDING_CHAIN 超时重新执行失败",
+                        "SUBMITTED 超时重新执行失败",
                         chain=chain.code,
                         sender=evm_task.sender.address,
                         nonce=evm_task.nonce,
                     )
                 else:
                     logger.info(
-                        "PENDING_CHAIN 超时且无链上记录，已重新广播",
+                        "SUBMITTED 超时且无链上记录，已重新广播",
                         chain=chain.code,
                         sender=evm_task.sender.address,
                         nonce=evm_task.nonce,
@@ -176,12 +176,12 @@ class EvmTaskPoller:
         locked_task = EvmTxTask.objects.select_for_update().get(pk=evm_task.pk)
 
         base_task = locked_task.base_task
-        if base_task.status != TxTaskStatus.PENDING_CHAIN:
+        if base_task.status != TxTaskStatus.SUBMITTED:
             return False
 
         updated = TxTask.mark_finalized_failed(
             task_id=base_task.pk,
-            expected_status=TxTaskStatus.PENDING_CHAIN,
+            expected_status=TxTaskStatus.SUBMITTED,
         )
         if not updated:
             return False

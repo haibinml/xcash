@@ -530,7 +530,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         with address_patch:
             task = VaultSlot.schedule_deploy(slot.pk)
         task.append_tx_hash(tx_hash)
-        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.PENDING_CHAIN)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
 
         evm_task = task.evm_task
         with patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock:
@@ -581,7 +581,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
             tx_task=task,
         )
         task.append_tx_hash(tx_hash)
-        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.PENDING_CHAIN)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
 
         def address_topic(address: str) -> str:
             return "0x" + "0" * 24 + Web3.to_checksum_address(address)[2:].lower()
@@ -650,7 +650,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         with address_patch:
             task = VaultSlot.schedule_deploy(slot.pk)
         task.append_tx_hash(tx_hash)
-        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.PENDING_CHAIN)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
 
         with patch("evm.vault_slots.is_deployed_on_chain", return_value=True):
             EvmTaskPoller.finalize_failed_task(evm_task=task.evm_task)

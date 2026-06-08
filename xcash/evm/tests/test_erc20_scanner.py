@@ -213,7 +213,7 @@ class EvmErc20ScannerTests(TestCase):
             sender=self.addr,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash=tx_hash,
-            status=TxTaskStatus.PENDING_CHAIN,
+            status=TxTaskStatus.SUBMITTED,
         )
         EvmTxTask.objects.create(
             base_task=base_task,
@@ -480,7 +480,7 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction_receipt.assert_not_called()
         self.assertIsNone(created)
         self.assertFalse(Transfer.objects.filter(hash=tx_hash).exists())
-        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
     def test_erc20_scanner_skips_known_internal_hash_even_when_receipt_would_match(
         self,
