@@ -44,7 +44,7 @@ export function usePaymentMethod(invoice, sysNo, onInvoiceUpdate) {
       setIsEditing(false)
       return data
     } catch (err) {
-      setError("选择支付方式失败: " + err.message)
+      setError("选择账单收款方式失败: " + err.message)
       return null
     } finally {
       setIsSelecting(false)

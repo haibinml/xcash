@@ -44,12 +44,12 @@ function StepInvoice({ invoice, onConfirm, isExpired, isSingleMethod }) {
         <>
           <Button onClick={onConfirm} className="w-full">
             {isSingleMethod
-              ? (t("payment.confirmAndPay") || "确认并支付账单 →")
-              : (t("payment.confirmAndSelectMethod") || "确认并选择支付方式 →")
+              ? (t("payment.confirmAndPay") || "确认账单收款 →")
+              : (t("payment.confirmAndSelectMethod") || "确认并选择账单收款方式 →")
             }
           </Button>
           <p className="text-xs text-muted-foreground text-center px-4">
-            {t("invoice.paymentIrreversible") || "请仔细核对金额与订单信息，支付后无法撤销"}
+            {t("invoice.paymentIrreversible") || "请仔细核对金额与订单信息，账单收款完成后无法撤销"}
           </p>
         </>
       )}

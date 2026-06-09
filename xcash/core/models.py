@@ -79,7 +79,7 @@ class SystemSettings(models.Model):
     aml_screening_enabled = models.BooleanField(
         _("开启 AML 筛查"),
         default=False,
-        help_text=_("开启后对高于 AML 查询阈值的账单和充币查询外部地址风险。"),
+        help_text=_("开启后对高于 AML 查询阈值的账单收款和充值收款查询外部地址风险。"),
     )
     aml_screening_threshold_usd = models.DecimalField(
         _("AML 查询阈值(USD)"),
@@ -87,7 +87,7 @@ class SystemSettings(models.Model):
         decimal_places=6,
         default=Decimal("0"),
         validators=[MinValueValidator(Decimal("0"))],
-        help_text=_("账单或充币价值大于该阈值时执行 AML 查询。"),
+        help_text=_("账单收款或充值收款价值大于该阈值时执行 AML 查询。"),
     )
     aml_screening_cache_seconds = models.PositiveIntegerField(
         _("AML 查询缓存秒数"),

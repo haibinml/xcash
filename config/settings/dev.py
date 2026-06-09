@@ -126,7 +126,7 @@ STRESS_SIDEBAR_ITEMS = [
         "link": reverse_lazy("admin:stress_invoicestresscase_changelist"),
     },
     {
-        "title": _("账户充值测试"),
+        "title": _("充值收款测试"),
         "icon": "download",
         "link": reverse_lazy("admin:stress_depositstresscase_changelist"),
     },

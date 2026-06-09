@@ -100,7 +100,7 @@ class InvoiceAdmin(ReadOnlyModelAdmin):
             },
         ),
         (
-            _("支付信息"),
+            _("账单收款信息"),
             {
                 "fields": (
                     "display_crypto",  # noqa
@@ -134,7 +134,7 @@ class InvoiceAdmin(ReadOnlyModelAdmin):
     @display(
         description=_("状态"),  # noqa
         label={  # noqa
-            "待支付": "warning",
+            "待账单收款": "warning",
             "确认中": "info",
             "已完成": "success",
             "已超时": "",
@@ -185,7 +185,7 @@ class InvoiceAdmin(ReadOnlyModelAdmin):
             format_decimal_stripped(instance.pay_amount) if instance.pay_amount else "-"
         )
 
-    @display(description=_("支付链接"))  # noqa
+    @display(description=_("账单收款链接"))  # noqa
     def display_pay_url(self, instance: Invoice):
         return reverse("payment-invoice", kwargs={"sys_no": instance.sys_no})
 

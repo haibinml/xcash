@@ -494,7 +494,7 @@ class TransferType(models.TextChoices):
 
     Unmatched = "unmatched", _("未归类")
     Invoice = "invoice", _("💳 账单收款")
-    Deposit = "deposit", _("💰 账户充值")
+    Deposit = "deposit", _("💰 充值收款")
 
 
 class TxTaskStatus(models.TextChoices):
@@ -741,7 +741,7 @@ class TxTask(UndeletableModel):
 
 
 class VaultSlotUsage(models.TextChoices):
-    DEPOSIT = "deposit", _("账户充值")
+    DEPOSIT = "deposit", _("充值收款")
     INVOICE = "invoice", _("账单收款")
 
 
@@ -1182,7 +1182,7 @@ class VaultSlotCollectSchedule(models.Model):
 class DepositVaultSlot(VaultSlot):
     class Meta:
         proxy = True
-        verbose_name = _("账户充值地址")
+        verbose_name = _("充值收款地址")
         verbose_name_plural = verbose_name
 
 

@@ -11,7 +11,7 @@
 | 用途 | URL | 说明 |
 |------|-----|------|
 | API 网关 | `https://{你的域名}` | 例如 `https://{你的域名}/v1/invoice` |
-| 管理后台 | `https://{你的域名}` | 创建项目、配置链 RPC、配置 Webhook、查看账单与充币记录 |
+| 管理后台 | `https://{你的域名}` | 创建项目、配置链 RPC、配置 Webhook、查看账单收款与充值收款记录 |
 
 ### Xcash 官方服务
 
@@ -162,36 +162,36 @@ const signature = crypto
 
 | 方法 | 路径 | 说明 | 签名 |
 |------|------|------|------|
-| `POST` | `/v1/invoice` | 创建账单 | 需要 |
-| `GET` | `/v1/invoice/{sys_no}` | 查询账单公开状态 | 不需要 |
-| `GET` | `/v1/deposit/address` | 获取充币地址 | 需要 |
+| `POST` | `/v1/invoice` | 创建账单收款 | 需要 |
+| `GET` | `/v1/invoice/{sys_no}` | 查询账单收款公开状态 | 不需要 |
+| `GET` | `/v1/deposit/address` | 获取充值收款地址 | 需要 |
 | `GET` / `POST` | `/epay/submit.php` | 易支付 V1 创建订单 | EPay MD5 签名 |
 
-## 创建账单
+## 创建账单收款
 
 `POST /v1/invoice`
 
-创建一个支付账单。创建成功后返回 `pay_url`，买家打开支付页完成选币、选链和付款。
+创建一笔账单收款。创建成功后返回 `pay_url`，买家打开账单收款页完成选币、选链和付款。
 
 ### 请求参数
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `out_no` | string | 是 | 商户订单号，最长 32 位，同一项目内唯一 |
-| `title` | string | 是 | 账单标题，最长 32 位 |
+| `title` | string | 是 | 账单收款标题，最长 32 位 |
 | `currency` | string | 是 | 计价币种，可为法币（如 `USD`、`CNY`）或已启用的加密货币（如 `USDT`） |
 | `amount` | string | 是 | 计价金额，范围 `0.00000001` 到 `1000000` |
 | `duration` | integer | 否 | 有效期分钟数，范围 `10` 到 `30`，默认 `10` |
-| `methods` | object | 否 | 限定支付方式，格式 `{"币种": ["链码"]}` |
-| `notify_url` | string | 否 | 账单级 Webhook 地址，优先于项目默认通知地址 |
-| `return_url` | string | 否 | 支付完成后的同步跳转地址 |
+| `methods` | object | 否 | 限定账单收款方式，格式 `{"币种": ["链码"]}` |
+| `notify_url` | string | 否 | 账单收款级 Webhook 地址，优先于项目默认通知地址 |
+| `return_url` | string | 否 | 账单收款完成后的同步跳转地址 |
 
 ### methods 生成规则
 
-`methods` 是最终可支付组合的收敛条件：
+`methods` 是最终可账单收款组合的收敛条件：
 
 - 不传 `methods`：系统按项目配置生成全部可用组合。
-- 传入 `methods`：必须是系统生成组合的子集，否则返回无可用支付方式。
+- 传入 `methods`：必须是系统生成组合的子集，否则返回无可用账单收款方式。
 - 当 `currency` 本身是加密货币时，最终 `methods` 会自动收敛到该币种。
 - `crypto` symbol 使用大写，`chain` code 使用上方表格中的小写 code。
 
@@ -199,8 +199,8 @@ const signature = crypto
 
 - 只支持 EVM 链。
 - 项目必须先配置“收款归集地址”，且该地址必须是符合系统校验规则的 EVM 多签地址。
-- 买家在支付页选定链和币种后，系统为账单分配 VaultSlot 支付地址；买家向该地址支付。
-- 账单确认后，系统会调度 VaultSlot 归集，业务资金最终流入项目配置的收款归集地址。
+- 买家在账单收款页选定链和币种后，系统为账单收款分配 VaultSlot 收款地址；买家向该地址付款。
+- 账单收款确认后，系统会调度 VaultSlot 归集，业务资金最终流入项目配置的收款归集地址。
 - 系统钱包需要在对应 EVM 链上保留少量 Gas，用于 VaultSlot 部署和归集交易广播。
 
 ### 请求示例
@@ -269,34 +269,34 @@ const signature = crypto
 }
 ```
 
-如果最终只剩一个支付组合，系统会在创建时自动选择该方式，此时 `chain`、`crypto`、`pay_address`、`pay_amount` 可能已返回具体值。
+如果最终只剩一个账单收款组合，系统会在创建时自动选择该方式，此时 `chain`、`crypto`、`pay_address`、`pay_amount` 可能已返回具体值。
 
 ### 限流
 
 默认匿名限流：`256/minute`。
 
-## 查询账单
+## 查询账单收款
 
 `GET /v1/invoice/{sys_no}`
 
-公开接口，无需签名。该接口用于支付页或买家侧轮询账单状态，不返回 `appid`、`out_no`、`notify_url`。
+公开接口，无需签名。该接口用于账单收款页或买家侧轮询账单收款状态，不返回 `appid`、`out_no`、`notify_url`。
 
 ### 响应字段
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `sys_no` | string | 系统账单号；格式为前缀 + 6 位日期(YYMMDD) + 8 位大写字母数字，账单前缀 `INV`、充币前缀 `DXC` |
+| `sys_no` | string | 系统账单收款号；格式为前缀 + 6 位日期(YYMMDD) + 8 位大写字母数字，账单收款前缀 `INV`、充值收款前缀 `DXC` |
 | `title` | string | 标题 |
 | `currency` | string | 计价币种 |
 | `amount` | string | 计价金额 |
-| `methods` | object | 可选支付方式 |
+| `methods` | object | 可选账单收款方式 |
 | `chain` | string \| null | 已选链 |
 | `crypto` | string \| null | 已选币种 |
 | `crypto_address` | string \| null | 币种在该链上的合约地址；Gas 代币通常为空 |
-| `pay_address` | string \| null | 买家付款地址 |
+| `pay_address` | string \| null | 账单收款地址 |
 | `pay_amount` | string \| null | 买家应付加密货币数量 |
-| `pay_url` | string | 支付页地址 |
-| `started_at` | string \| null | 支付方式分配时间 |
+| `pay_url` | string | 账单收款页地址 |
+| `started_at` | string \| null | 账单收款方式分配时间 |
 | `created_at` | string | 创建时间 |
 | `expires_at` | string | 过期时间 |
 | `return_url` | string \| null | 同步跳转地址 |
@@ -324,11 +324,11 @@ const signature = crypto
 
 `60/minute`，按 `sys_no + IP` 维度。
 
-## 获取充币地址
+## 获取充值收款地址
 
 `GET /v1/deposit/address`
 
-需要 HMAC 签名。为项目下的终端客户获取 EVM 充币地址。同一项目、同一 `uid`、同一链会稳定返回同一个 VaultSlot 地址。
+需要 HMAC 签名。为项目下的终端客户获取 EVM 充值收款地址。同一项目、同一 `uid`、同一链会稳定返回同一个 VaultSlot 地址。
 
 ### 查询参数
 
@@ -356,9 +356,9 @@ GET 请求签名时 `request_body` 为空字符串。
 
 注意事项：
 
-- 当前充币地址接口只面向 EVM 链开放。
+- 当前充值收款地址接口只面向 EVM 链开放。
 - 请求的链和币种必须已启用，且币种必须支持该链。
-- 充币确认后，系统会调度 VaultSlot 归集；系统钱包需要在对应链保留少量 Gas。
+- 充值收款确认后，系统会调度 VaultSlot 归集；系统钱包需要在对应链保留少量 Gas。
 
 ### 限流
 
@@ -366,19 +366,19 @@ GET 请求签名时 `request_body` 为空字符串。
 
 ## Webhook 回调
 
-Xcash 在账单或充币进入关键状态时向商户投递 Webhook。
+Xcash 在账单收款或充值收款进入关键状态时向商户投递 Webhook。
 
 ### 投递地址
 
-- Xcash 原生协议账单事件：优先使用账单创建时传入的 `notify_url`，为空时使用项目默认通知地址。
-- 充币事件：使用项目默认通知地址。
+- Xcash 原生协议账单收款事件：优先使用账单收款创建时传入的 `notify_url`，为空时使用项目默认通知地址。
+- 充值收款事件：使用项目默认通知地址。
 - EPay V1 订单：使用 EPay 下单参数中的 `notify_url`，且按 EPay 协议 GET query 投递。
 
 生产环境默认只允许投递到 HTTPS 公网地址，拒绝 `http`、`localhost` 和私有网段地址。
 
 ### Xcash Webhook 签名
 
-Xcash 原生协议账单与充币事件使用 `POST application/json`，并带 HMAC 头：
+Xcash 原生协议账单收款与充值收款事件使用 `POST application/json`，并带 HMAC 头：
 
 ```http
 XC-Appid: {appid}
@@ -405,12 +405,12 @@ signature = HMAC-SHA256(message, hmac_key).hexdigest()
 - 只有网络错误或 5xx 会按指数退避重试；2xx 非 200、3xx、4xx 不重试。
 - 连续失败达到系统阈值后，项目 Webhook 会被熔断关闭。
 
-### 账单 Webhook
+### 账单收款 Webhook
 
 触发逻辑：
 
-- `confirmed=false`：账单匹配到链上付款、进入 `confirming`，且项目开启预通知，并且该笔账单需要完整区块确认。
-- `confirmed=true`：账单进入 `completed`。
+- `confirmed=false`：账单收款匹配到链上付款、进入 `confirming`，且项目开启预通知，并且该笔账单收款需要完整区块确认。
+- `confirmed=true`：账单收款进入 `completed`。
 
 示例：
 
@@ -433,12 +433,12 @@ signature = HMAC-SHA256(message, hmac_key).hexdigest()
 }
 ```
 
-### 充币 Webhook
+### 充值收款 Webhook
 
 触发逻辑：
 
-- `confirmed=false`：检测到充币并创建记录后，若项目开启预通知，会发送一次预通知。
-- `confirmed=true`：充币对应链上转账达到确认要求。
+- `confirmed=false`：检测到充值收款并创建记录后，若项目开启预通知，会发送一次预通知。
+- `confirmed=true`：充值收款对应链上转账达到确认要求。
 
 示例：
 
@@ -485,7 +485,7 @@ EPay 入口不使用 Xcash HMAC 头，使用 EPay 自有 MD5 签名。
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `pid` | integer | 是 | EPay 商户 ID |
-| `type` | string | 否 | 支付方式标识，最长 32 位 |
+| `type` | string | 否 | EPay 支付方式标识，最长 32 位 |
 | `out_trade_no` | string | 是 | 商户订单号，最长 64 位，同一 EPay 商户下唯一 |
 | `notify_url` | string | 是 | EPay 异步通知地址 |
 | `return_url` | string | 否 | 同步跳转地址 |
@@ -537,19 +537,19 @@ params["sign"] = hashlib.md5(
 
 ### 创建响应
 
-- 成功：HTTP `302`，重定向到 Xcash 支付页 `/pay/{sys_no}`。
+- 成功：HTTP `302`，重定向到 Xcash 账单收款页 `/pay/{sys_no}`。
 - 失败：HTTP `400`，纯文本 `fail`。
 
 ### EPay 异步通知
 
-账单完成后，Xcash 向 `notify_url` 发送 GET 请求，query string 包含：
+账单收款完成后，Xcash 向 `notify_url` 发送 GET 请求，query string 包含：
 
 | 字段 | 说明 |
 |------|------|
 | `pid` | EPay 商户 ID |
 | `trade_no` | Xcash 系统订单号 |
 | `out_trade_no` | 商户订单号 |
-| `type` | 支付方式标识 |
+| `type` | EPay 支付方式标识 |
 | `name` | 商品名称 |
 | `money` | 订单金额，两位小数 |
 | `trade_status` | 固定 `TRADE_SUCCESS` |
@@ -561,7 +561,7 @@ params["sign"] = hashlib.md5(
 
 ### 同步跳转
 
-支付完成后，若 EPay 下单传入 `return_url`，公开查询接口中的 `return_url` 会在账单完成时返回带 EPay 参数和签名的同步跳转 URL。同步跳转只表示支付页流程结束，核心发货逻辑仍应以异步通知为准。
+账单收款完成后，若 EPay 下单传入 `return_url`，公开查询接口中的 `return_url` 会在账单收款完成时返回带 EPay 参数和签名的同步跳转 URL。同步跳转只表示账单收款页流程结束，核心发货逻辑仍应以异步通知为准。
 
 ## 错误码
 
@@ -592,27 +592,27 @@ params["sign"] = hashlib.md5(
 | `2005` | 链、加密货币设置错误 | 400 |
 | `3006` | 金额精度超过该链上代币所支持的小数位 | 400 |
 
-### 充币错误
+### 充值收款错误
 
 | 错误码 | 说明 | HTTP |
 |--------|------|------|
 | `4000` | 无效 UID | 400 |
 | `4001` | 项目未配置该链的归集收款地址 | 400 |
 
-### 账单错误
+### 账单收款错误
 
 | 错误码 | 说明 | HTTP |
 |--------|------|------|
-| `5000` | 账单类型错误 | 400 |
-| `5003` | 支付时间错误 | 400 |
+| `5000` | 账单收款类型错误 | 400 |
+| `5003` | 账单收款时间错误 | 400 |
 | `5005` | 无效参数：`sys_no` | 400 |
-| `5006` | 账单状态错误 | 400 |
+| `5006` | 账单收款状态错误 | 400 |
 | `5007` | 不允许的链与加密货币 | 400 |
-| `5008` | 无可用支付方式 | 400 |
-| `5009` | 待支付账单过多 | 400 |
-| `5010` | 无效的支付方式 | 400 |
-| `5011` | 账单不存在 | 400 |
-| `5012` | 账单已过期 | 400 |
+| `5008` | 无可用账单收款方式 | 400 |
+| `5009` | 待账单收款记录过多 | 400 |
+| `5010` | 无效的账单收款方式 | 400 |
+| `5011` | 账单收款不存在 | 400 |
+| `5012` | 账单收款已过期 | 400 |
 
 ### SaaS / 内部权限错误
 
@@ -625,18 +625,18 @@ params["sign"] = hashlib.md5(
 
 ## 完整流程
 
-### 支付账单
+### 账单收款
 
 ```text
 商户服务器 -> Xcash: POST /v1/invoice
 Xcash -> 商户服务器: 返回 sys_no / pay_url
-买家 -> Xcash: 打开 pay_url，在支付页选币、选链
+买家 -> Xcash: 打开 pay_url，在账单收款页选币、选链
 买家 -> 区块链: 转账
 Xcash -> 商户服务器: Webhook invoice
 商户服务器 -> Xcash: ok
 ```
 
-### 充币
+### 充值收款
 
 ```text
 商户服务器 -> Xcash: GET /v1/deposit/address

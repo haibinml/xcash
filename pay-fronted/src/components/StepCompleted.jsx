@@ -24,7 +24,7 @@ function StepCompleted({ invoice }) {
             </div>
             <div>
               <h2 className="text-xl font-bold">
-                {t("payment.paymentCompleted") || "支付成功！"}
+                {t("payment.paymentCompleted") || "账单收款成功！"}
               </h2>
               <p className="text-sm text-muted-foreground mt-1">
                 {t("confirmation.transactionConfirmed") || "区块链交易已确认"}

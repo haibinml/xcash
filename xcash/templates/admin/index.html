@@ -107,19 +107,19 @@
                     </div>
                 {% endcomponent %}
 
-                {% trans "支付方式分布（30日）" as title %}
+                {% trans "账单收款方式分布（30日）" as title %}
                 {% component "unfold/components/card.html" with title=title %}
                     <div class="divide-y divide-gray-200">
                         {% for row in payment_methods %}
                             <div class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
                                 <div>
                                     <div class="font-medium">{{ row.label }}</div>
-                                    <div class="text-xs text-gray-400 mt-1">{% translate "成功账单" %} {{ row.order_count }} {% translate "笔" %}</div>
+                                    <div class="text-xs text-gray-400 mt-1">{% translate "成功账单收款" %} {{ row.order_count }} {% translate "笔" %}</div>
                                 </div>
                                 <div class="text-sm font-semibold">{{ row.gmv }}</div>
                             </div>
                         {% empty %}
-                            <div class="py-6 text-center text-gray-400">{% translate "暂无支付方式分布数据" %}</div>
+                            <div class="py-6 text-center text-gray-400">{% translate "暂无账单收款方式分布数据" %}</div>
                         {% endfor %}
                     </div>
                 {% endcomponent %}

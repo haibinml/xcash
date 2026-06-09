@@ -67,7 +67,7 @@ def _build_operational_inspection_payload(metrics):
     stalled_invoice_rows = [
         {
             "level": _("中"),
-            "title": _("账单长时间待链上确认"),
+            "title": _("账单收款长时间待链上确认"),
             "description": _("%(project)s / %(sys_no)s / %(crypto)s-%(chain)s")
             % {
                 "project": invoice.project.name,
@@ -82,10 +82,10 @@ def _build_operational_inspection_payload(metrics):
     inspection_sections.append(
         {
             "title": _("链上确认巡检"),
-            "subtitle": _("已观察到付款但长时间未满足确认数的账单"),
+            "subtitle": _("已观察到付款但长时间未满足确认数的账单收款"),
             "count": len(stalled_invoice_rows),
             "rows": stalled_invoice_rows,
-            "empty_text": _("当前没有长时间待链上确认的账单"),
+            "empty_text": _("当前没有长时间待链上确认的账单收款"),
         }
     )
     attention_items.extend(stalled_invoice_rows)
@@ -159,28 +159,28 @@ def dashboard_callback(request, context):
         {
             "title": _("今日成交额"),
             "metric": _fmt_usd(snapshot["today_completed_worth"]),
-            "subtitle": _("今日成功账单 %(count)s 笔")
+            "subtitle": _("今日成功账单收款 %(count)s 笔")
             % {"count": snapshot["today_completed_count"]},
             "tone": "bg-emerald-50",
         },
         {
             "title": _("7日成交额"),
             "metric": _fmt_usd(snapshot["rolling_7d_completed_worth"]),
-            "subtitle": _("近7日成功账单 %(count)s 笔")
+            "subtitle": _("近7日成功账单收款 %(count)s 笔")
             % {"count": snapshot["rolling_7d_completed_count"]},
             "tone": "bg-sky-50",
         },
         {
             "title": _("30日成交额"),
             "metric": _fmt_usd(snapshot["rolling_30d_completed_worth"]),
-            "subtitle": _("近30日成功账单 %(count)s 笔")
+            "subtitle": _("近30日成功账单收款 %(count)s 笔")
             % {"count": snapshot["rolling_30d_completed_count"]},
             "tone": "bg-indigo-50",
         },
         {
-            "title": _("30日支付转化率"),
+            "title": _("30日账单收款转化率"),
             "metric": f"{snapshot['conversion_rate_30d']}%",
-            "subtitle": _("近30日共创建账单 %(count)s 笔")
+            "subtitle": _("近30日共创建账单收款 %(count)s 笔")
             % {"count": snapshot["created_30d_count"]},
             "tone": "bg-amber-50",
         },
@@ -205,13 +205,13 @@ def dashboard_callback(request, context):
 
     backlog_rows = [
         {
-            "label": _("待支付账单"),
+            "label": _("待账单收款"),
             "value": snapshot["waiting_count"],
             "detail": _fmt_usd(snapshot["waiting_worth"]),
             "href": f"{reverse('admin:invoices_invoice_changelist')}?status__exact=waiting",
         },
         {
-            "label": _("待链上确认账单"),
+            "label": _("待链上确认账单收款"),
             "value": snapshot["confirming_count"],
             "detail": _fmt_usd(snapshot["confirming_worth"]),
             "href": f"{reverse('admin:invoices_invoice_changelist')}?status__exact=waiting",
@@ -293,7 +293,7 @@ def dashboard_callback(request, context):
                             "tension": 0.35,
                         },
                         {
-                            "label": str(_("创建账单数")),
+                            "label": str(_("创建账单收款数")),
                             "type": "bar",
                             "yAxisID": "y1",
                             "data": [row["created_count"] for row in chart_rows],
@@ -301,7 +301,7 @@ def dashboard_callback(request, context):
                             "borderColor": "#60a5fa",
                         },
                         {
-                            "label": str(_("超时账单数")),
+                            "label": str(_("超时账单收款数")),
                             "type": "bar",
                             "yAxisID": "y1",
                             "data": [row["expired_count"] for row in chart_rows],

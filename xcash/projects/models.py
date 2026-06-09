@@ -12,7 +12,7 @@ from common.fields import AddressField
 
 class InvoiceReceivingMode(models.TextChoices):
     VaultSlot = "vault_slot", _("VaultSlot")
-    Differ = "differ", _("差额账单")
+    Differ = "differ", _("差额账单收款")
 
 
 class Project(models.Model):
@@ -57,7 +57,7 @@ class Project(models.Model):
         decimal_places=2,
         default=Decimal("10"),
         verbose_name=_("快速确认阈值（USD）"),
-        help_text=_("低于该金额的账单无需等待区块确认数，立即确认"),
+        help_text=_("低于该金额的账单收款无需等待区块确认数，立即确认"),
     )
     hmac_key = ShortUUIDField(
         verbose_name=_("HMAC密钥"),
@@ -80,7 +80,7 @@ class Project(models.Model):
         choices=InvoiceReceivingMode,
         default=InvoiceReceivingMode.VaultSlot,
         help_text=_(
-            "EVM 链账单生成支付地址时使用 VaultSlot 合约归集还是差额收款地址。"
+            "EVM 链账单收款生成收款地址时使用 VaultSlot 合约归集还是差额收款地址。"
             "EVM gas 便宜，默认 VaultSlot。"
         ),
     )
@@ -89,7 +89,7 @@ class Project(models.Model):
         choices=InvoiceReceivingMode,
         default=InvoiceReceivingMode.Differ,
         help_text=_(
-            "Tron 链账单生成支付地址时使用 VaultSlot 合约归集还是差额收款地址。"
+            "Tron 链账单收款生成收款地址时使用 VaultSlot 合约归集还是差额收款地址。"
             "Tron 归集成本高，默认差额收款。"
         ),
     )
@@ -99,7 +99,7 @@ class Project(models.Model):
         verbose_name=_("测试项目"),
         default=False,
         help_text=_(
-            "测试项目只能使用测试网链（创建充币地址、账单仅限测试网）；"
+            "测试项目只能使用测试网链（创建充值收款地址、账单收款仅限测试网）；"
             "非测试项目只能使用主网。用于隔离主网与测试网代币，防止混淆。"
         ),
     )

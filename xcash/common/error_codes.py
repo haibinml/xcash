@@ -49,18 +49,18 @@ class ErrorCode(Enum):
     )
 
     # Invoice
-    INVALID_INVOICE_CURRENCY = ErrorInfo("5000", _("账单类型错误"), 400)
-    DURATION_ERROR = ErrorInfo("5003", _("支付时间错误"), 400)
+    INVALID_INVOICE_CURRENCY = ErrorInfo("5000", _("账单收款类型错误"), 400)
+    DURATION_ERROR = ErrorInfo("5003", _("账单收款时间错误"), 400)
     INVALID_INVOICE_ID = ErrorInfo("5005", _("无效参数：sys_no"), 400)
-    INVALID_INVOICE_STATUS = ErrorInfo("5006", _("账单状态错误"), 400)
+    INVALID_INVOICE_STATUS = ErrorInfo("5006", _("账单收款状态错误"), 400)
     CHAIN_CRYPTO_NOT_ALLOWED = ErrorInfo("5007", _("不允许的链与加密货币"), 400)
     NO_RECIPIENT_ADDRESS = ErrorInfo(
-        "5008", _("无可用支付方式。请确保已设置支付地址且methods可用。"), 400
+        "5008", _("无可用账单收款方式。请确保已设置账单收款地址且 methods 可用。"), 400
     )
-    TOO_MANY_WAITING = ErrorInfo("5009", _("待支付账单过多，请勿滥用"), 400)
-    NO_AVAILABLE_METHOD = ErrorInfo("5010", _("无效的支付方式"), 400)
-    INVOICE_NOT_EXIST = ErrorInfo("5011", _("账单不存在"), 400)
-    INVOICE_EXPIRED = ErrorInfo("5012", _("账单已过期"), 400)
+    TOO_MANY_WAITING = ErrorInfo("5009", _("待账单收款记录过多，请勿滥用"), 400)
+    NO_AVAILABLE_METHOD = ErrorInfo("5010", _("无效的账单收款方式"), 400)
+    INVOICE_NOT_EXIST = ErrorInfo("5011", _("账单收款不存在"), 400)
+    INVOICE_EXPIRED = ErrorInfo("5012", _("账单收款已过期"), 400)
 
     # SaaS API
     INVALID_SAAS_TOKEN = ErrorInfo("6000", _("SaaS API 令牌无效"), 401)

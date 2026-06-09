@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 
 class InvoiceStatus(models.TextChoices):
-    WAITING = "waiting", _("待支付")
+    WAITING = "waiting", _("待账单收款")
     COMPLETED = "completed", _("已完成")
     EXPIRED = "expired", _("已超时")
 
@@ -48,7 +48,7 @@ class InvoiceProtocol(models.TextChoices):
 
 
 class DifferRecipientAddress(models.Model):
-    """项目在指定链类型下用于差额账单的外部收款地址。"""
+    """项目在指定链类型下用于差额账单收款的外部收款地址。"""
 
     project = models.ForeignKey(
         "projects.Project",
@@ -131,7 +131,7 @@ class Invoice(models.Model):
     )
     methods = models.JSONField(
         default=dict,
-        verbose_name=_("支持的支付方式"),
+        verbose_name=_("支持的账单收款方式"),
     )
 
     crypto = models.ForeignKey(
@@ -149,24 +149,24 @@ class Invoice(models.Model):
         verbose_name=_("链"),
     )
     pay_amount = models.DecimalField(
-        verbose_name=_("支付加密货币数量"),
+        verbose_name=_("账单收款加密货币数量"),
         max_digits=32,
         decimal_places=8,
         blank=True,
         null=True,
-        help_text=_("支付加密货币数量"),
+        help_text=_("账单收款加密货币数量"),
     )
     pay_address = AddressField(
-        verbose_name=_("支付地址"),
+        verbose_name=_("账单收款地址"),
         blank=True,
         null=True,
         db_index=True,
     )
 
-    started_at = models.DateTimeField(_("支付开始时间"), auto_now_add=True)
-    expires_at = models.DateTimeField(_("支付截止时间"))
+    started_at = models.DateTimeField(_("账单收款开始时间"), auto_now_add=True)
+    expires_at = models.DateTimeField(_("账单收款截止时间"))
     notify_url = models.URLField(_("异步通知地址"), blank=True, default="")
-    return_url = models.URLField(_("支付成功后同步跳转地址"), blank=True, default="")
+    return_url = models.URLField(_("账单收款成功后同步跳转地址"), blank=True, default="")
     worth = models.DecimalField(
         _("价值(USD)"),
         max_digits=16,
@@ -352,14 +352,14 @@ class Invoice(models.Model):
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> tuple[str, Decimal]:
-        """差额账单：从项目链类型地址池中分配未被 WAITING 账单占用的金额组合。"""
+        """差额账单收款：从项目链类型地址池中分配未被 WAITING 账单占用的金额组合。"""
         from chains.capabilities import ChainProductCapabilityService
 
         if crypto.is_native and not ChainProductCapabilityService.differ_supports_native(
             chain_type=chain.type
         ):
             raise self.InvoiceAllocationError(
-                f"project={self.project_id}, chain={chain.code} 差额账单不支持该链原生币"
+                f"project={self.project_id}, chain={chain.code} 差额账单收款不支持该链原生币"
             )
 
         base_amount = crypto_amount.quantize(self.DIFFER_AMOUNT_STEP, rounding=ROUND_UP)
@@ -603,7 +603,7 @@ class EpayOrder(models.Model):
         "invoices.Invoice",
         on_delete=models.CASCADE,
         related_name="epay_order",
-        verbose_name=_("账单"),
+        verbose_name=_("账单收款"),
     )
     merchant = models.ForeignKey(
         "invoices.EpayMerchant",
@@ -614,7 +614,7 @@ class EpayOrder(models.Model):
     pid = models.CharField(_("EPay 商户 ID"), max_length=32)
     trade_no = models.CharField(_("EPay 平台订单号"), max_length=64, db_index=True)
     out_trade_no = models.CharField(_("商户订单号"), max_length=64, db_index=True)
-    type = models.CharField(_("支付类型"), max_length=32, blank=True, default="")
+    type = models.CharField(_("账单收款类型"), max_length=32, blank=True, default="")
     name = models.CharField(_("商品名称"), max_length=128)
     money = models.DecimalField(_("订单金额"), max_digits=32, decimal_places=2)
     notify_url = models.URLField(_("异步通知地址"))
