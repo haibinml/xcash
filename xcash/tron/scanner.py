@@ -26,6 +26,10 @@ from currencies.models import CryptoOnChain
 # 单块 USDT 事件最差几百条、分页 200 一页，batch=32 时单 tick 最坏约 96 次 RPC，符合 TronGrid 限速。
 DEFAULT_TRON_SCAN_BATCH_SIZE = 32
 
+# TronGrid /v1 事件索引与 walletsolidity 固化头不是同一个数据面。扫描上界保守扣几块，
+# 避免索引器短暂滞后时把“还没索引好”误当成“本块无事件”并推进游标。
+DEFAULT_TRON_SCAN_SAFE_LAG_BLOCKS = 4
+
 
 @dataclass(frozen=True)
 class TronScanSummary:
@@ -69,9 +73,15 @@ class TronScanner:
         last_successfully_scanned: int | None = None
         matched_addresses_seen: set[str] = set()
         try:
-            latest_block = client.get_latest_solid_block_number()
+            latest_solid_block = client.get_latest_solid_block_number()
             Chain.objects.filter(pk=chain.pk).update(
-                latest_block_number=Greatest(F("latest_block_number"), latest_block)
+                latest_block_number=Greatest(
+                    F("latest_block_number"), latest_solid_block
+                )
+            )
+            latest_block = max(
+                latest_solid_block - cls.scan_safe_lag_blocks(),
+                0,
             )
 
             if cursor.enabled:
@@ -144,6 +154,19 @@ class TronScanner:
         )
 
     @staticmethod
+    def scan_safe_lag_blocks() -> int:
+        return max(
+            int(
+                getattr(
+                    settings,
+                    "TRON_SCAN_SAFE_LAG_BLOCKS",
+                    DEFAULT_TRON_SCAN_SAFE_LAG_BLOCKS,
+                )
+            ),
+            0,
+        )
+
+    @staticmethod
     def _load_crypto_on_chains(
         *,
         chain: Chain,
@@ -203,11 +226,14 @@ class TronScanner:
         # 既不误扫，也不必为原生扫描给每个既有扫描器单测额外打桩。
         if not isinstance(payload, dict):
             return []
+        block_hash = cls._extract_block_id(payload=payload, chain=chain)
+        block_timestamp_ms = cls._extract_block_timestamp_ms(
+            payload=payload,
+            chain=chain,
+        )
         transactions = payload.get("transactions") or []
         if not isinstance(transactions, list) or not transactions:
             return []
-        block_hash = cls._extract_block_id(payload=payload, chain=chain)
-        block_timestamp_ms = cls._extract_block_timestamp_ms(payload=payload, chain=chain)
         candidates: list[ParsedTronTransferEvent] = []
         for tx in transactions:
             candidates.extend(

@@ -773,6 +773,7 @@ class TronWatchCursorAdminTests(TestCase):
         self.admin.message_user.assert_called_once()
 
 
+@override_settings(TRON_SCAN_SAFE_LAG_BLOCKS=0)
 class TronScannerTests(TestCase):
     def setUp(self):
         self.usdt = Crypto.objects.create(
@@ -849,6 +850,35 @@ class TronScannerTests(TestCase):
 
         self.assertEqual(summary.blocks_scanned, 1)
         client.list_confirmed_contract_events.assert_called_once()
+
+    @override_settings(TRON_SCAN_SAFE_LAG_BLOCKS=4)
+    @patch("chains.service.TransferService.enqueue_processing")
+    @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_keeps_safe_lag_from_latest_solid_block(
+        self,
+        client_cls,
+        _enqueue_processing_mock,
+    ):
+        from tron.scanner import TronScanner
+
+        self._set_cursor_block(last_scanned_block=123451)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
+        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+
+        summary = TronScanner.scan_chain(chain=self.chain)
+
+        self.assertEqual(summary.blocks_scanned, 1)
+        client.list_confirmed_contract_events.assert_called_once()
+        self.assertEqual(
+            client.list_confirmed_contract_events.call_args.kwargs["block_number"],
+            123452,
+        )
+        cursor = TronWatchCursor.objects.get(chain=self.chain)
+        self.assertEqual(cursor.last_scanned_block, 123452)
+        self.chain.refresh_from_db()
+        self.assertEqual(self.chain.latest_block_number, 123456)
 
     @override_settings(DEBUG=True)
     @patch("tron.scanner.TronHttpClient")
@@ -1036,6 +1066,34 @@ class TronScannerTests(TestCase):
         TronScanner.scan_chain(chain=self.chain)
 
         block_number_updated_delay_mock.assert_called_once_with(self.chain.pk)
+
+    @patch("chains.service.TransferService.enqueue_processing")
+    @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_stops_when_native_block_payload_has_no_block_id(
+        self,
+        client_cls,
+        _enqueue_processing_mock,
+    ):
+        from tron.scanner import TronScanner
+
+        CryptoOnChain.objects.update_or_create(
+            chain=self.chain,
+            crypto=self.trx,
+            defaults={"address": "", "decimals": 6, "active": True},
+        )
+        cursor = self._set_cursor_block(last_scanned_block=123455)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
+        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_solid_block.return_value = {}
+
+        with self.assertRaisesMessage(TronClientError, "invalid solid block id"):
+            TronScanner.scan_chain(chain=self.chain)
+
+        cursor.refresh_from_db()
+        self.assertEqual(cursor.last_scanned_block, 123455)
+        self.assertIn("invalid solid block id", cursor.last_error)
 
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("tron.scanner.TronHttpClient")
