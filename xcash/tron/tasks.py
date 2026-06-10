@@ -28,7 +28,8 @@ from common.time import ago
 
 logger = structlog.get_logger()
 
-TRON_SENDER_BROADCAST_LOCK_TIMEOUT_SECONDS = 60
+TRON_BROADCAST_LOCK_TIMEOUT_SECONDS = 180
+TRON_SENDER_BROADCAST_LOCK_TIMEOUT_SECONDS = TRON_BROADCAST_LOCK_TIMEOUT_SECONDS
 TRON_RECEIPT_TX_TASK_TYPES = (TxTaskType.VaultSlotDeploy, TxTaskType.VaultSlotCollect)
 
 
@@ -126,7 +127,7 @@ def find_tron_receipt_across_hashes(
 
 
 @shared_task(ignore_result=True)
-@singleton_task(timeout=30, use_params=True)
+@singleton_task(timeout=TRON_BROADCAST_LOCK_TIMEOUT_SECONDS, use_params=True)
 def broadcast_tron_task(pk: int) -> None:
     tx_task = TronTxTask.objects.select_related("base_task", "chain", "sender").get(pk=pk)
     lock_key = sender_broadcast_lock_key(

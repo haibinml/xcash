@@ -21,6 +21,8 @@ from tron.client import TronHttpClient
 from tron.models import TRON_MAX_BROADCAST_HASHES
 from tron.models import TronTxTask
 from tron.models import TronWatchCursor
+from tron.tasks import TRON_BROADCAST_LOCK_TIMEOUT_SECONDS
+from tron.tasks import TRON_SENDER_BROADCAST_LOCK_TIMEOUT_SECONDS
 from tron.tasks import broadcast_tron_task
 from tron.tasks import confirm_tron_receipt_tx_tasks
 from web3 import Web3
@@ -696,6 +698,13 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
         execute_broadcast.assert_not_called()
         task.base_task.refresh_from_db()
         self.assertEqual(task.base_task.status, TxTaskStatus.FAILED)
+
+    def test_broadcast_lock_timeouts_cover_worst_case_http_budget(self):
+        self.assertEqual(
+            TRON_SENDER_BROADCAST_LOCK_TIMEOUT_SECONDS,
+            TRON_BROADCAST_LOCK_TIMEOUT_SECONDS,
+        )
+        self.assertGreaterEqual(TRON_BROADCAST_LOCK_TIMEOUT_SECONDS, 150)
 
     @patch("tron.models.TronTxTask.rebroadcast_expired_submitted")
     @patch("tron.models.TronTxTask.broadcast")
