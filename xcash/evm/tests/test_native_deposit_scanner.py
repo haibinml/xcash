@@ -106,17 +106,28 @@ class EvmLogScannerTests(TestCase):
             "transactionHash": bytes.fromhex("cd" * 32),
         }
 
+    @staticmethod
+    def _build_receipt(*logs: dict) -> dict:
+        return {
+            "status": 1,
+            "blockNumber": logs[0]["blockNumber"],
+            "blockHash": logs[0]["blockHash"],
+            "logs": list(logs),
+        }
+
     @patch("chains.service.TransferService.enqueue_processing")
     def test_scan_range_creates_native_transfer_from_deposit_event(
         self,
         _enqueue_processing_mock,
     ):
+        log = self._build_native_log()
         rpc_client = type(
             "Rpc",
             (),
             {
-                "get_logs": lambda *_args, **_kwargs: [self._build_native_log()],
+                "get_logs": lambda *_args, **_kwargs: [log],
                 "get_transaction": lambda *_args, **_kwargs: {"to": self.slot.address},
+                "get_transaction_receipt": lambda *_args, **_kwargs: self._build_receipt(log),
                 "get_block_timestamp": lambda *_args, **_kwargs: 1_700_000_000,
             },
         )()
@@ -189,12 +200,14 @@ class EvmLogScannerTests(TestCase):
             (),
             {"created": True},
         )()
+        log = self._build_native_log()
         rpc_client = type(
             "Rpc",
             (),
             {
-                "get_logs": lambda *_args, **_kwargs: [self._build_native_log()],
+                "get_logs": lambda *_args, **_kwargs: [log],
                 "get_transaction": lambda *_args, **_kwargs: {"to": self.slot.address},
+                "get_transaction_receipt": lambda *_args, **_kwargs: self._build_receipt(log),
                 "get_block_timestamp": lambda *_args, **_kwargs: 1_700_000_000,
             },
         )()
@@ -223,6 +236,7 @@ class EvmLogScannerTests(TestCase):
         rpc_client = Mock()
         rpc_client.get_logs.return_value = logs
         rpc_client.get_transaction.return_value = {"to": self.slot.address}
+        rpc_client.get_transaction_receipt.return_value = self._build_receipt(*logs)
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
 
         created = EvmLogScanner.scan_range(
@@ -236,7 +250,7 @@ class EvmLogScannerTests(TestCase):
         self.assertIsNone(created)
         transfers = list(Transfer.objects.order_by("event_index"))
         self.assertEqual(len(transfers), 2)
-        self.assertEqual([transfer.event_index for transfer in transfers], [7, 8])
+        self.assertEqual([transfer.event_index for transfer in transfers], [0, 1])
         self.assertEqual({transfer.to_address for transfer in transfers}, {self.slot.address})
         self.assertEqual({transfer.hash for transfer in transfers}, {"0x" + "cd" * 32})
         rpc_client.get_block_timestamp.assert_called_once_with(block_number=120)

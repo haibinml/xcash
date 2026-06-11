@@ -19,6 +19,7 @@ from currencies.models import CryptoOnChain
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.rpc import EvmScannerRpcClient
+from evm.scanner.rpc import EvmScannerRpcError
 
 logger = structlog.get_logger()
 
@@ -259,8 +260,25 @@ class EvmObservedTransferProcessor:
     ) -> None:
         """逐条外部入账事件幂等落库。"""
         timestamp_cache: dict[int, int] = {}
+        receipt_cache: dict[str, dict[str, Any]] = {}
 
         for log in logs:
+            receipt = cls.receipt_for_log(
+                chain=chain,
+                log=log,
+                rpc_client=rpc_client,
+                receipt_cache=receipt_cache,
+            )
+            event_index = cls.receipt_event_index_for_log(
+                receipt=receipt,
+                block_log_index=log.event_index,
+            )
+            if event_index is None:
+                raise EvmScannerRpcError(
+                    "EVM 入账日志无法在交易 receipt 中稳定定位 "
+                    f"chain={chain.code} tx_hash={log.tx_hash}"
+                )
+
             timestamp = timestamp_cache.get(log.block_number)
             if timestamp is None:
                 timestamp = rpc_client.get_block_timestamp(
@@ -272,7 +290,7 @@ class EvmObservedTransferProcessor:
                 chain=chain,
                 block=log.block_number,
                 tx_hash=log.tx_hash,
-                event_index=log.event_index,
+                event_index=event_index,
                 from_address=log.from_address,
                 to_address=log.to_address,
                 crypto=log.crypto,
@@ -287,6 +305,42 @@ class EvmObservedTransferProcessor:
                 source="evm-scan",
             )
             cls._persist_observed_transfer_safely(chain=chain, observed=observed)
+
+    @staticmethod
+    def receipt_for_log(
+        *,
+        chain: Chain,
+        log: ParsedEvmTransferLog,
+        rpc_client: EvmScannerRpcClient,
+        receipt_cache: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        receipt = receipt_cache.get(log.tx_hash)
+        if receipt is not None:
+            return receipt
+
+        receipt = rpc_client.get_transaction_receipt(tx_hash=log.tx_hash)
+        if receipt is None:
+            raise EvmScannerRpcError(
+                "EVM 入账日志 receipt 暂不可见 "
+                f"chain={chain.code} tx_hash={log.tx_hash}"
+            )
+        receipt_cache[log.tx_hash] = receipt
+        return receipt
+
+    @classmethod
+    def receipt_event_index_for_log(
+        cls,
+        *,
+        receipt: dict[str, Any],
+        block_log_index: int | None,
+    ) -> int | None:
+        """把区块级 logIndex 转成交易 receipt 内日志序号。"""
+        if block_log_index is None:
+            return None
+        for index, receipt_log in enumerate(receipt.get("logs") or []):
+            if cls._parse_optional_int(receipt_log.get("logIndex")) == block_log_index:
+                return index
+        return None
 
     @staticmethod
     def _persist_observed_transfer_safely(

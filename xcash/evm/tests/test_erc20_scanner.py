@@ -196,6 +196,15 @@ class EvmErc20ScannerTests(TestCase):
             "transactionHash": bytes.fromhex("ab" * 32),
         }
 
+    @staticmethod
+    def _build_receipt(*logs: dict) -> dict:
+        return {
+            "status": 1,
+            "blockNumber": logs[0]["blockNumber"],
+            "blockHash": logs[0]["blockHash"],
+            "logs": list(logs),
+        }
+
     def _build_internal_erc20_task(
         self,
         *,
@@ -263,7 +272,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(cursor.last_scanned_block, 32)
 
     @patch("chains.service.TransferService.enqueue_processing")
-    @patch("evm.scanner.logs.EvmScannerRpcClient.get_transaction")
+    @patch("evm.scanner.logs.EvmScannerRpcClient.get_transaction_receipt")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
@@ -272,23 +281,22 @@ class EvmErc20ScannerTests(TestCase):
         get_latest_block_number_mock,
         get_logs_mock,
         get_block_timestamp_mock,
-        get_transaction_mock,
+        get_transaction_receipt_mock,
         _enqueue_processing_mock,
     ):
         # 命中的 ERC20 Transfer 应落到统一 Transfer 表；首扫会直接对齐链头附近窗口。
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
-        get_transaction_mock.return_value = {"to": self.token_on_chain.address}
+        transfer_log = self._build_transfer_log(
+            from_address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000cc"
+            ),
+            to_address=self.vault_slot.address,
+        )
+        get_transaction_receipt_mock.return_value = self._build_receipt(transfer_log)
         get_logs_mock.side_effect = [
             [],
-            [
-                self._build_transfer_log(
-                    from_address=Web3.to_checksum_address(
-                        "0x00000000000000000000000000000000000000cc"
-                    ),
-                    to_address=self.vault_slot.address,
-                ),
-            ],
+            [transfer_log],
             [],
         ]
 
@@ -395,7 +403,7 @@ class EvmErc20ScannerTests(TestCase):
             ),
         ]
         rpc_client = Mock()
-        rpc_client.get_transaction.return_value = {"to": self.token_on_chain.address}
+        rpc_client.get_transaction_receipt.return_value = self._build_receipt(*logs)
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
 
         created = EvmLogScanner._process_logs(
@@ -408,7 +416,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertIsNone(created)
         transfers = list(Transfer.objects.order_by("event_index"))
         self.assertEqual(len(transfers), 2)
-        self.assertEqual([transfer.event_index for transfer in transfers], [5, 6])
+        self.assertEqual([transfer.event_index for transfer in transfers], [0, 1])
         self.assertEqual(
             [transfer.to_address for transfer in transfers],
             [self.vault_slot.address, second_slot.address],
@@ -450,6 +458,7 @@ class EvmErc20ScannerTests(TestCase):
             ),
         ]
         rpc_client = Mock()
+        rpc_client.get_transaction_receipt.return_value = self._build_receipt(*logs)
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
 
         created = EvmLogScanner._process_logs(
@@ -462,7 +471,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertIsNone(created)
         create_observed_transfer_mock.assert_called_once()
         observed = create_observed_transfer_mock.call_args.kwargs["observed"]
-        self.assertEqual(observed.event_index, 6)
+        self.assertEqual(observed.event_index, 1)
         self.assertEqual(observed.to_address, second_slot.address)
 
     @patch("evm.scanner.observed_transfers.TransferService.create_observed_transfer")
@@ -497,6 +506,7 @@ class EvmErc20ScannerTests(TestCase):
             ),
         ]
         rpc_client = Mock()
+        rpc_client.get_transaction_receipt.return_value = self._build_receipt(*logs)
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
         create_observed_transfer_mock.side_effect = [
             RuntimeError("numeric field overflow"),
@@ -516,7 +526,7 @@ class EvmErc20ScannerTests(TestCase):
             call.kwargs["observed"].event_index
             for call in create_observed_transfer_mock.call_args_list
         ]
-        self.assertEqual(observed_events, [5, 6])
+        self.assertEqual(observed_events, [0, 1])
 
     @patch("evm.scanner.observed_transfers.TransferService.create_observed_transfer")
     def test_erc20_scanner_raises_on_transient_database_error(
@@ -535,6 +545,7 @@ class EvmErc20ScannerTests(TestCase):
             ),
         ]
         rpc_client = Mock()
+        rpc_client.get_transaction_receipt.return_value = self._build_receipt(*logs)
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
         create_observed_transfer_mock.side_effect = OperationalError(
             "server closed the connection unexpectedly"
@@ -754,7 +765,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(Transfer.objects.count(), 0)
 
     @patch("chains.service.TransferService.enqueue_processing")
-    @patch("evm.scanner.logs.EvmScannerRpcClient.get_transaction")
+    @patch("evm.scanner.logs.EvmScannerRpcClient.get_transaction_receipt")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
@@ -763,13 +774,12 @@ class EvmErc20ScannerTests(TestCase):
         get_latest_block_number_mock,
         get_logs_mock,
         get_block_timestamp_mock,
-        get_transaction_mock,
+        get_transaction_receipt_mock,
         _enqueue_processing_mock,
     ):
         # 手动重扫同一区间会重复看到同一日志，但统一唯一键必须保证不会重复落库。
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
-        get_transaction_mock.return_value = {"to": self.token_on_chain.address}
         repeated_log = self._build_transfer_log(
             from_address=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000cc"
@@ -777,6 +787,7 @@ class EvmErc20ScannerTests(TestCase):
             to_address=self.vault_slot.address,
             block_number=99,
         )
+        get_transaction_receipt_mock.return_value = self._build_receipt(repeated_log)
         get_logs_mock.side_effect = [[], [repeated_log], [], [repeated_log]]
 
         first = EvmLogScanner.scan_chain(chain=self.chain, batch_size=100)
@@ -795,7 +806,7 @@ class EvmErc20ScannerTests(TestCase):
         side_effect=AssertionError("scanner should use prefetched token decimals"),
     )
     @patch("chains.service.TransferService.enqueue_processing")
-    @patch("evm.scanner.logs.EvmScannerRpcClient.get_transaction")
+    @patch("evm.scanner.logs.EvmScannerRpcClient.get_transaction_receipt")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
@@ -804,7 +815,7 @@ class EvmErc20ScannerTests(TestCase):
         get_latest_block_number_mock,
         get_logs_mock,
         get_block_timestamp_mock,
-        get_transaction_mock,
+        get_transaction_receipt_mock,
         _enqueue_processing_mock,
         _crypto_get_decimals_mock,
     ):
@@ -813,18 +824,17 @@ class EvmErc20ScannerTests(TestCase):
         self.token_on_chain.save(update_fields=["decimals"])
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
-        get_transaction_mock.return_value = {"to": self.token_on_chain.address}
+        transfer_log = self._build_transfer_log(
+            from_address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000cc"
+            ),
+            to_address=self.vault_slot.address,
+            value=10**6,
+        )
+        get_transaction_receipt_mock.return_value = self._build_receipt(transfer_log)
         get_logs_mock.side_effect = [
             [],
-            [
-                self._build_transfer_log(
-                    from_address=Web3.to_checksum_address(
-                        "0x00000000000000000000000000000000000000cc"
-                    ),
-                    to_address=self.vault_slot.address,
-                    value=10**6,
-                )
-            ],
+            [transfer_log],
             [],
         ]
 
