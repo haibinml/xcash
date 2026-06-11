@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 
 
 class DepositService:
-    """VaultSlot 收款体系下的充值生命周期。"""
+    """智能合约收款体系下的充值生命周期。"""
 
     @staticmethod
     def build_webhook_payload(

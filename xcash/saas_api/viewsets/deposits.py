@@ -40,7 +40,7 @@ class SaasDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
 
     @action(detail=False, methods=["get"])
     def address(self, request, project_appid=None):
-        """获取 VaultSlot 充币地址。"""
+        """获取智能合约充值收款地址。"""
         uid = request.query_params.get("uid", "")
         chain_type = request.query_params.get("chain_type", "")
         chain_code = request.query_params.get("chain", "")

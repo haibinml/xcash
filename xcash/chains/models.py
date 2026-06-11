@@ -760,7 +760,7 @@ class VaultSlotUsage(models.TextChoices):
 
 
 class VaultSlot(models.Model):
-    """项目在指定链上的 XcashVaultSlot 收款槽位。
+    """项目在指定链上的 XcashVaultSlot 智能合约收款槽位。
 
     本模型只表达跨链一致的业务身份和生命周期锚点。地址预测、部署交易构造、
     归集合约调用等链专属执行细节由 chains.vault_slots 分发到 evm/tron 模块。

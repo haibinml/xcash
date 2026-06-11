@@ -1359,7 +1359,7 @@ class StressContractProvisioningTests(TestCase):
     覆盖归集地址修复与链命名收敛后、stress 合约单的建单前置与收款分配：
     - _setup_wallet_for_vault 把系统钱包派生的项目专用 EVM 地址写入 project.evm_vault；
     - _require_stress_methods_ready 校验 project.evm_vault；
-    - 合约 Invoice.select_method 在归集地址就绪时真实分配 VaultSlot 收款地址，缺归集地址时分配失败。
+    - 合约 Invoice.select_method 在归集地址就绪时真实分配智能合约收款地址，缺归集地址时分配失败。
 
     这些路径在 stress 单元测试里被 mock 掩盖，必须走真实 DB + 真实分配逻辑才能暴露归集地址缺失。
     """

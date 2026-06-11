@@ -104,13 +104,13 @@ class TestPatchFieldWhitelist:
     def test_receiving_mode_global_and_per_chain_override(self, client, project):
         """账单收款模式：全局 invoice_receiving_mode + 可选按链覆盖。
 
-        默认专属字段为空（继承全局 Differ）；PATCH 可改全局，也可单独覆盖某条链，
+        默认专属字段为空（继承全局钱包直收）；PATCH 可改全局，也可单独覆盖某条链，
         读接口回显全局与按链覆盖，供 UI 渲染。
         """
-        # 默认：全局 Differ，专属为空 → 两链有效模式都继承全局。
+        # 默认：全局钱包直收，专属为空 → 两链有效模式都继承全局。
         assert project.invoice_receiving_mode == InvoiceReceivingMode.Differ
-        assert project.evm_invoice_receiving_mode is None
-        assert project.tron_invoice_receiving_mode is None
+        assert project.evm_invoice_receiving_mode == ""
+        assert project.tron_invoice_receiving_mode == ""
 
         response = client.patch(
             _url(project),
@@ -124,10 +124,10 @@ class TestPatchFieldWhitelist:
         assert response.status_code == 200, response.content
 
         project.refresh_from_db()
-        # 全局切到 VaultSlot；EVM 覆盖为 Differ；TRON 未覆盖，继承全局。
+        # 全局切到智能合约；EVM 覆盖为钱包直收；TRON 未覆盖，继承全局。
         assert project.invoice_receiving_mode == InvoiceReceivingMode.VaultSlot
         assert project.evm_invoice_receiving_mode == InvoiceReceivingMode.Differ
-        assert project.tron_invoice_receiving_mode is None
+        assert project.tron_invoice_receiving_mode == ""
         assert (
             project.resolved_invoice_receiving_mode(ChainType.EVM)
             == InvoiceReceivingMode.Differ
@@ -141,7 +141,7 @@ class TestPatchFieldWhitelist:
         detail = client.get(_url(project), HTTP_AUTHORIZATION=AUTH_HEADER).json()
         assert detail["invoice_receiving_mode"] == InvoiceReceivingMode.VaultSlot
         assert detail["evm_invoice_receiving_mode"] == InvoiceReceivingMode.Differ
-        assert detail["tron_invoice_receiving_mode"] is None
+        assert detail["tron_invoice_receiving_mode"] == ""
 
     def test_happy_path_multiple_fields(self, client, project):
         """合法 PATCH：同时修改多个白名单字段，均正确入库。"""

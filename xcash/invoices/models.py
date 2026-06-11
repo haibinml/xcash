@@ -48,7 +48,7 @@ class InvoiceProtocol(models.TextChoices):
 
 
 class DifferRecipientAddress(models.Model):
-    """项目在指定链类型下用于差额账单收款的外部收款地址。"""
+    """项目在指定链类型下用于钱包直收的外部收款地址。"""
 
     project = models.ForeignKey(
         "projects.Project",
@@ -69,7 +69,7 @@ class DifferRecipientAddress(models.Model):
 
     class Meta:
         ordering = ("sort_order", "pk")
-        verbose_name = _("差额账单收款地址")
+        verbose_name = _("钱包直收地址")
         verbose_name_plural = verbose_name
 
     def __str__(self):
@@ -84,11 +84,11 @@ class DifferRecipientAddress(models.Model):
         if self.chain_type == ChainType.EVM and not Web3.is_checksum_address(
             self.address
         ):
-            raise ValidationError({"address": _("EVM 差额账单收款地址必须是 checksum 地址")})
+            raise ValidationError({"address": _("EVM 钱包直收地址必须是 checksum 地址")})
         if self.chain_type == ChainType.TRON and not TronAddressCodec.is_valid_base58(
             self.address
         ):
-            raise ValidationError({"address": _("Tron 差额账单收款地址必须是 Base58 地址")})
+            raise ValidationError({"address": _("Tron 钱包直收地址必须是 Base58 地址")})
 
     @staticmethod
     def matched_addresses_for_candidates(*, chain, candidates: set[str]) -> set[str]:
@@ -277,11 +277,11 @@ class Invoice(models.Model):
         chain: "Chain",
         crypto_amount: Decimal,
     ):
-        """返回本次合约账单可使用的 INVOICE VaultSlot。"""
+        """返回本次智能合约收款可使用的 INVOICE VaultSlot。"""
         vault_address = self.project.vault_address_for_chain_type(chain.type)
         if not vault_address:
             raise self.InvoiceAllocationError(
-                f"project={self.project_id}, chain={chain.code} VaultSlot 归集地址未配置"
+                f"project={self.project_id}, chain={chain.code} 智能合约收款归集地址未配置"
             )
 
         reusable_slots = VaultSlot.objects.filter(
@@ -338,7 +338,7 @@ class Invoice(models.Model):
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> tuple[str, Decimal]:
-        """合约账单：按 XcashVaultSlotFactory 获取本次账单使用的 VaultSlot。"""
+        """智能合约收款：按 XcashVaultSlotFactory 获取本次账单使用的合约地址。"""
         slot = self.get_vault_slot(
             crypto=crypto,
             chain=chain,
@@ -352,14 +352,14 @@ class Invoice(models.Model):
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> tuple[str, Decimal]:
-        """差额账单收款：从项目链类型地址池中分配未被 WAITING 账单占用的金额组合。"""
+        """钱包直收：从项目链类型地址池中分配未被 WAITING 账单占用的金额组合。"""
         from chains.capabilities import ChainProductCapabilityService
 
         if crypto.is_native and not ChainProductCapabilityService.differ_supports_native(
             chain_type=chain.type
         ):
             raise self.InvoiceAllocationError(
-                f"project={self.project_id}, chain={chain.code} 差额账单收款不支持该链原生币"
+                f"project={self.project_id}, chain={chain.code} 钱包直收不支持该链原生币"
             )
 
         base_amount = crypto_amount.quantize(self.DIFFER_AMOUNT_STEP, rounding=ROUND_UP)
@@ -380,7 +380,7 @@ class Invoice(models.Model):
                     return recipient.address, pay_amount
 
         raise self.InvoiceAllocationError(
-            f"project={self.project_id}, chain_type={chain.type} 差额账单收款地址不足"
+            f"project={self.project_id}, chain_type={chain.type} 钱包直收地址不足"
         )
 
     def _allocate_payment(

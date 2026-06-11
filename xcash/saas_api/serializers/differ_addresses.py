@@ -5,7 +5,7 @@ from invoices.models import DifferRecipientAddress
 
 
 class DifferRecipientAddressSerializer(serializers.ModelSerializer):
-    """项目差额收款地址池的读写序列化器。
+    """项目钱包直收地址池的读写序列化器。
 
     地址格式按链类型校验（EVM checksum / Tron base58）与全局唯一性，统一委托模型
     full_clean，再把 Django ValidationError 翻译成 DRF 400。项目未配置全局

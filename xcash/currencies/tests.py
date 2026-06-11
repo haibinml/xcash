@@ -81,7 +81,7 @@ class CustomTokenPricingTests(TestCase):
         )
 
     def test_differ_supports_native_only_on_tron(self):
-        # 差额模式：原生币仅 Tron 可观测（EOA 收原生靠逐块 TransferContract 扫描），EVM 不可。
+        # 钱包直收：原生币仅 Tron 可观测（EOA 收原生靠逐块 TransferContract 扫描），EVM 不可。
         from chains.models import ChainType
 
         self.assertTrue(

@@ -102,7 +102,7 @@ class ProjectViewSet(ModelViewSet):
         """当前收款配置下真正生效的 crypto→链 列表，供 UI 展示哪些币种可收。
 
         结果由「每条链的收款模式 × 能力矩阵 × 前置条件（vault/地址池）」共同推导，
-        商户切换模式或增减差额地址后会随之变化，是配置是否生效的权威反馈。
+        商户切换模式或增减钱包直收地址后会随之变化，是配置是否生效的权威反馈。
         """
         from invoices.models import Invoice
 

@@ -14,8 +14,8 @@ from common.fields import AddressField
 
 
 class InvoiceReceivingMode(models.TextChoices):
-    VaultSlot = "vault_slot", _("VaultSlot")
-    Differ = "differ", _("差额账单收款")
+    VaultSlot = "vault_slot", _("智能合约")
+    Differ = "differ", _("钱包直收")
 
 
 class Project(models.Model):
@@ -71,8 +71,8 @@ class Project(models.Model):
         null=True,
         blank=True,
         help_text=_(
-            "用于生成 EVM VaultSlot 合约的不可变归集地址，必须是 EVM checksum 地址。"
-            "留空时禁止在 EVM 生成 VaultSlot；一旦设置不可修改。"
+            "用于生成 EVM 智能合约收款地址的不可变归集地址，必须是 EVM checksum 地址。"
+            "留空时禁止在 EVM 使用智能合约收款；一旦设置不可修改。"
         ),
         unique=True,
     )
@@ -81,8 +81,8 @@ class Project(models.Model):
         null=True,
         blank=True,
         help_text=_(
-            "用于生成 Tron VaultSlot 合约的不可变归集地址，必须是 Tron Base58 地址。"
-            "留空时禁止在 Tron 生成 VaultSlot；"
+            "用于生成 Tron 智能合约收款地址的不可变归集地址，必须是 Tron Base58 地址。"
+            "留空时禁止在 Tron 使用智能合约收款；"
             "一旦设置不可修改。"
         ),
         unique=True,
@@ -96,23 +96,21 @@ class Project(models.Model):
         default=InvoiceReceivingMode.Differ,
         help_text=_(
             "项目级全局账单收款模式；某条链未单独设置覆盖时继承此模式。"
-            "差额收款零归集成本，作为默认。"
+            "钱包直收无需链上归集交易，作为默认。"
         ),
     )
     evm_invoice_receiving_mode = models.CharField(
         _("EVM 账单收款模式覆盖"),
         choices=InvoiceReceivingMode,
-        null=True,
         blank=True,
-        default=None,
+        default="",
         help_text=_("仅覆盖 EVM 链；留空则继承全局账单收款模式。"),
     )
     tron_invoice_receiving_mode = models.CharField(
         _("Tron 账单收款模式覆盖"),
         choices=InvoiceReceivingMode,
-        null=True,
         blank=True,
-        default=None,
+        default="",
         help_text=_("仅覆盖 Tron 链；留空则继承全局账单收款模式。"),
     )
 
@@ -189,7 +187,9 @@ class Project(models.Model):
             if not TronAddressCodec.is_valid_base58(address):
                 raise ValidationError(_("Tron 收款归集地址必须是 Base58 地址。"))
             return
-        raise ValidationError(_("不支持的链类型: %(chain_type)s") % {"chain_type": chain_type})
+        raise ValidationError(
+            _("不支持的链类型: %(chain_type)s") % {"chain_type": chain_type}
+        )
 
     @staticmethod
     def vault_field_for_chain_type(chain_type: ChainType | str) -> str:

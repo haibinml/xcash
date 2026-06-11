@@ -39,10 +39,10 @@ class ChainProductCapabilityService:
 
     @classmethod
     def differ_supports_native(cls, *, chain_type: str) -> bool:
-        """差额模式收款地址是普通 EOA，原生币能否被观测取决于该链的扫描机制。
+        """钱包直收地址是普通 EOA，原生币能否被观测取决于该链的扫描机制。
 
         Tron 逐块扫 TransferContract（filter_matched_events 含 DifferRecipientAddress 匹配），
         原生 TRX 打到 EOA 也能观测；EVM 靠合约事件，原生币打到 EOA 不触发合约、零事件、
-        物理不可观测，故差额模式只在 Tron 上开放原生币。
+        物理不可观测，故钱包直收只在 Tron 上开放原生币。
         """
         return chain_type == ChainType.TRON

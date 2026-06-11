@@ -1,4 +1,4 @@
-"""saas_api 差额收款地址池 CRUD 的行为测试。
+"""saas_api 钱包直收地址池 CRUD 的行为测试。
 
 覆盖：
 - 地址格式按链类型校验（EVM checksum / Tron base58）翻译为 400

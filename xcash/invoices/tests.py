@@ -653,7 +653,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         self.assertNotIn(eth.symbol, methods)
 
     def test_differ_available_methods_allows_tron_native_coin(self):
-        # Tron 原生 TRX 在差额模式可用：逐块 TransferContract 扫描能观测 EOA 收原生。
+        # Tron 原生 TRX 在钱包直收模式可用：逐块 TransferContract 扫描能观测 EOA 收原生。
         project = Project.objects.create(
             name="Invoice Differ Tron Native Project",
             evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
@@ -789,7 +789,7 @@ class InvoiceContractBillingValidationTests(TestCase):
         return InvoiceCreateSerializer(data=data, context={"request": request})
 
     def test_default_methods_filters_out_tron(self):
-        # 不传 methods：全局 VaultSlot 模式下，Tron 未通过运行时门控时不暴露 Tron。
+        # 不传 methods：全局智能合约模式下，Tron 未通过运行时门控时不暴露 Tron。
         serializer = self.build_serializer(methods={})
 
         self.assertTrue(serializer.is_valid(raise_exception=True))
@@ -799,7 +799,7 @@ class InvoiceContractBillingValidationTests(TestCase):
         )
 
     def test_explicit_tron_rejected(self):
-        # 显式要求 Tron，但全局 VaultSlot 模式下 Tron 运行时未就绪，拒绝。
+        # 显式要求 Tron，但全局智能合约模式下 Tron 运行时未就绪，拒绝。
         serializer = self.build_serializer(
             methods={self.usdt.symbol: [self.tron_chain.code]},
         )

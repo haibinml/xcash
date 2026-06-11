@@ -149,6 +149,13 @@ SIDEBAR_UNFOLD = {
                             "admin:chains_invoicevaultslot_changelist"
                         ),
                     },
+                    {
+                        "title": _("钱包直收地址"),
+                        "icon": "account_balance_wallet",
+                        "link": reverse_lazy(
+                            "admin:invoices_differrecipientaddress_changelist"
+                        ),
+                    },
                 ],
             },
             {

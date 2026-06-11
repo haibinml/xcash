@@ -10,7 +10,7 @@ from projects.models import Project
 
 
 class SaasDifferRecipientAddressViewSet(ModelViewSet):
-    """项目差额收款地址池：商户在 Differ 模式下自管的收款 EOA 列表。
+    """项目钱包直收地址池：商户在钱包直收模式下自管的收款 EOA 列表。
 
     作用域严格限定在 URL 的 project_appid，杜绝跨项目读写他人地址池。
     地址池小而固定，关闭分页让 UI 一次取全。可按 ?chain_type=evm|tron 过滤。

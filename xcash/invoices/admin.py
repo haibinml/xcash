@@ -5,10 +5,12 @@ from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from unfold.decorators import display
 
+from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
 from common.admin import StackedInline
 from common.utils.math import format_decimal_stripped
 
+from .models import DifferRecipientAddress
 from .models import EpayOrder
 from .models import Invoice
 from .models import InvoiceProtocol
@@ -40,6 +42,41 @@ class EpayOrderInline(StackedInline):
 
     def has_add_permission(self, request, obj=None):
         return False
+
+
+@admin.register(DifferRecipientAddress)
+class DifferRecipientAddressAdmin(ModelAdmin):
+    list_display = (
+        "project",
+        "chain_type",
+        "address",
+        "active",
+        "sort_order",
+        "created_at",
+    )
+    list_editable = (
+        "active",
+        "sort_order",
+    )
+    list_filter = (
+        "chain_type",
+        "active",
+        "project__is_test",
+    )
+    search_fields = (
+        "project__name",
+        "project__appid",
+        "address",
+    )
+    readonly_fields = ("created_at",)
+    fields = (
+        "project",
+        "chain_type",
+        "address",
+        "active",
+        "sort_order",
+        "created_at",
+    )
 
 
 @admin.register(Invoice)
