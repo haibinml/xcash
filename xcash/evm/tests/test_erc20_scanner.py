@@ -518,6 +518,36 @@ class EvmErc20ScannerTests(TestCase):
         ]
         self.assertEqual(observed_events, [5, 6])
 
+    @patch("evm.scanner.observed_transfers.TransferService.create_observed_transfer")
+    def test_erc20_scanner_raises_on_transient_database_error(
+        self,
+        create_observed_transfer_mock,
+    ):
+        """暂时性 DB 故障必须上抛中断本轮扫描（游标不推进），不能当毒事件跳过。"""
+        from django.db import OperationalError
+
+        sender = Web3.to_checksum_address("0x" + "cc" * 20)
+        logs = [
+            self._build_transfer_log(
+                from_address=sender,
+                to_address=self.vault_slot.address,
+                log_index=5,
+            ),
+        ]
+        rpc_client = Mock()
+        rpc_client.get_block_timestamp.return_value = 1_700_000_000
+        create_observed_transfer_mock.side_effect = OperationalError(
+            "server closed the connection unexpectedly"
+        )
+
+        with self.assertRaises(OperationalError):
+            EvmLogScanner._process_logs(
+                chain=self.chain,
+                logs=logs,
+                rpc_client=rpc_client,
+                token_registry={self.token_on_chain.address: self.token_on_chain},
+            )
+
     def test_erc20_scanner_does_not_route_known_internal_hash_to_processor(self):
         tx_hash = "0x" + "51" * 32
         recipient = Web3.to_checksum_address("0x" + "52" * 20)

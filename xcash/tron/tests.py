@@ -1492,6 +1492,58 @@ class TronScannerTests(TestCase):
         ]
         self.assertEqual(observed_events, [0, 1])
 
+    @patch("tron.scanner.TransferService.create_observed_transfer")
+    @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_raises_on_transient_database_error_keeping_cursor(
+        self,
+        client_cls,
+        create_observed_transfer_mock,
+    ):
+        """暂时性 DB 故障必须上抛并停住游标，由下一轮重扫恢复，不能当毒事件跳过。"""
+        from django.db import OperationalError
+
+        from tron.scanner import TronScanner
+
+        VaultSlot.objects.create(
+            chain=self.chain,
+            project=self.project,
+            usage=VaultSlotUsage.INVOICE,
+            invoice_index=1,
+            address=self.watch_address,
+            salt=b"e" * 32,
+        )
+        self._set_cursor_block(last_scanned_block=123455)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = 123456
+        client.get_solid_block_id.return_value = "0" * 64
+        client.list_confirmed_contract_events.return_value = {
+            "data": [
+                {
+                    "transaction_id": "6" * 64,
+                    "event_index": "0",
+                    "block_number": 123456,
+                    "block_timestamp": 1_700_000_000_000,
+                    "event_name": "Transfer",
+                    "contract_address": self.usdt_mapping.address,
+                    "result": {
+                        "from": self.sender_address,
+                        "to": self.watch_address,
+                        "value": "1000000",
+                    },
+                },
+            ],
+            "meta": {},
+        }
+        create_observed_transfer_mock.side_effect = OperationalError(
+            "server closed the connection unexpectedly"
+        )
+
+        with self.assertRaises(OperationalError):
+            TronScanner.scan_chain(chain=self.chain)
+
+        cursor = TronWatchCursor.objects.get(chain=self.chain)
+        self.assertEqual(cursor.last_scanned_block, 123455)
+
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("tron.scanner.TronHttpClient")
     def test_scan_chain_matches_differ_recipient_candidates(

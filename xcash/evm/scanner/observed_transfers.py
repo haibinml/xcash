@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
+from django.db import Error as DatabaseLayerError
 from django.utils import timezone
 from web3 import Web3
 
@@ -295,6 +296,13 @@ class EvmObservedTransferProcessor:
     ) -> None:
         try:
             TransferService.create_observed_transfer(observed=observed)
+        except DatabaseLayerError:
+            # 数据库层异常多为暂时性故障（死锁被牺牲、连接抖动、超时），必须上抛，
+            # 让本轮扫描中断、游标不推进，由下一轮重扫幂等恢复；
+            # 在这里吞掉会推进游标，把真实入账事件永久静默丢弃。
+            # 确定性脏数据（值超界 DataError、唯一键冲突 IntegrityError）已在
+            # create_observed_transfer 内部用 savepoint 消化，不会传播到这里。
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "EVM 入账事件落库失败，已跳过",
