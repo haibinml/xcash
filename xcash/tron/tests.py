@@ -8,6 +8,7 @@ from unittest.mock import Mock
 from unittest.mock import PropertyMock
 from unittest.mock import patch
 
+import eth_abi
 import httpx
 from django.contrib.admin.sites import AdminSite
 from django.db import IntegrityError
@@ -19,8 +20,13 @@ from tron.admin import TronWatchCursorAdmin
 from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.models import TRON_MAX_BROADCAST_HASHES
+from tron.models import TRON_SIMULATION_REVERT_FAIL_MIN_COUNT
+from tron.models import TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW
 from tron.models import TronTxTask
 from tron.models import TronWatchCursor
+from tron.resources import TronResourceGuardError
+from tron.resources import TronSimulationRevertError
+from tron.resources import estimate_contract_call_energy
 from tron.tasks import TRON_BROADCAST_LOCK_TIMEOUT_SECONDS
 from tron.tasks import TRON_SENDER_BROADCAST_LOCK_TIMEOUT_SECONDS
 from tron.tasks import broadcast_tron_task
@@ -782,6 +788,346 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
             dispatch_tron_tx_tasks.run()
 
         delay_mock.assert_called_once_with(first.pk)
+
+
+class TronSimulationRevertClassificationTests(SimpleTestCase):
+    """估算阶段必须把「执行必然 revert」与「资源/校验类失败」分流成不同异常。"""
+
+    def estimate_with(self, payload: dict) -> int:
+        client = Mock()
+        client.trigger_constant_contract.return_value = payload
+        return estimate_contract_call_energy(
+            client=client,
+            owner_address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+            contract_address="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+            function_selector="collect(address)",
+            parameter="00" * 32,
+        )
+
+    def test_contract_exe_error_raises_simulation_revert_with_decoded_reason(self):
+        reason = "USDT: sender is blacklisted"
+        payload = {
+            "result": {
+                "result": False,
+                "code": "CONTRACT_EXE_ERROR",
+                "message": b"REVERT opcode executed".hex(),
+            },
+            "constant_result": [
+                "08c379a0" + eth_abi.encode(["string"], [reason]).hex()
+            ],
+        }
+
+        with self.assertRaisesMessage(TronSimulationRevertError, reason):
+            self.estimate_with(payload)
+
+    def test_contract_exe_error_without_revert_data_falls_back_to_message(self):
+        payload = {
+            "result": {
+                "result": False,
+                "code": "CONTRACT_EXE_ERROR",
+                "message": b"REVERT opcode executed".hex(),
+            },
+        }
+
+        with self.assertRaisesMessage(
+            TronSimulationRevertError, "REVERT opcode executed"
+        ):
+            self.estimate_with(payload)
+
+    def test_validate_error_keeps_resource_guard_wait_semantics(self):
+        payload = {
+            "result": {
+                "result": False,
+                "code": "CONTRACT_VALIDATE_ERROR",
+                "message": b"contract validate error".hex(),
+            },
+        }
+
+        with self.assertRaises(TronResourceGuardError):
+            self.estimate_with(payload)
+
+    def test_transaction_ret_failed_raises_simulation_revert(self):
+        payload = {
+            "result": {"result": True},
+            "energy_used": 1_000,
+            "transaction": {"ret": [{"ret": "FAILED"}]},
+        }
+
+        with self.assertRaises(TronSimulationRevertError):
+            self.estimate_with(payload)
+
+
+class TronTxTaskSimulationRevertTests(TestCase):
+    """连续模拟 revert 的观测、双阈值终局与 streak 清零的状态流转。"""
+
+    def setUp(self):
+        self.chain = Chain.objects.create(
+            code=ChainCode.Tron,
+            rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
+            active=True,
+        )
+        self.wallet = Wallet.objects.create()
+        self.sender = Address.objects.create(
+            wallet=self.wallet,
+            chain_type=ChainType.TRON,
+            usage=AddressUsage.HotWallet,
+            bip44_account=Wallet.get_bip44_account(AddressUsage.HotWallet),
+            address_index=0,
+            address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        )
+
+    def make_task(
+        self, tx_type: TxTaskType = TxTaskType.VaultSlotCollect
+    ) -> TronTxTask:
+        base_task = TxTask.objects.create(
+            chain=self.chain,
+            sender=self.sender,
+            tx_type=tx_type,
+            status=TxTaskStatus.QUEUED,
+        )
+        return TronTxTask.objects.create(
+            base_task=base_task,
+            sender=self.sender,
+            chain=self.chain,
+            to="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+            function_selector="collect(address)",
+            parameter="00" * 32,
+            fee_limit=150_000_000,
+        )
+
+    def prime_streak(self, task: TronTxTask, *, count: int, first_at) -> None:
+        TronTxTask.objects.filter(pk=task.pk).update(
+            simulation_revert_count=count,
+            simulation_revert_first_at=first_at,
+        )
+        task.refresh_from_db()
+
+    @staticmethod
+    def revert_payload() -> dict:
+        return {
+            "result": {
+                "result": False,
+                "code": "CONTRACT_EXE_ERROR",
+                "message": b"REVERT opcode executed".hex(),
+            },
+        }
+
+    def unsigned_transaction(self) -> dict:
+        from tron.codec import TronAddressCodec
+
+        raw_data_hex = "0a02abcd"
+        raw_data = {
+            "contract": [
+                {
+                    "type": "TriggerSmartContract",
+                    "parameter": {
+                        "value": {
+                            "owner_address": TronAddressCodec.base58_to_hex41(
+                                self.sender.address
+                            ),
+                            "contract_address": TronAddressCodec.base58_to_hex41(
+                                "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb"
+                            ),
+                            "data": _selector("collect(address)") + "00" * 32,
+                        }
+                    },
+                }
+            ],
+            "expiration": 123,
+            "fee_limit": 150_000_000,
+        }
+        return {
+            "raw_data_hex": raw_data_hex,
+            "raw_data": raw_data,
+            "txID": sha256(bytes.fromhex(raw_data_hex)).hexdigest(),
+        }
+
+    @patch("tron.models.TronHttpClient")
+    def test_first_simulation_revert_records_streak_and_keeps_queued(
+        self, client_class
+    ):
+        task = self.make_task()
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = self.revert_payload()
+
+        task.broadcast()
+
+        task.refresh_from_db()
+        self.assertEqual(task.simulation_revert_count, 1)
+        self.assertIsNotNone(task.simulation_revert_first_at)
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.QUEUED)
+        client.trigger_smart_contract.assert_not_called()
+        client.broadcast_transaction.assert_not_called()
+
+    @patch("tron.models.TronHttpClient")
+    def test_revert_count_alone_does_not_finalize(self, client_class):
+        task = self.make_task()
+        # 次数已超阈值但首次观测就在刚才：时间窗不满足，不得终局。
+        self.prime_streak(
+            task,
+            count=TRON_SIMULATION_REVERT_FAIL_MIN_COUNT + 3,
+            first_at=timezone.now(),
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = self.revert_payload()
+
+        task.broadcast()
+
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.QUEUED)
+        task.refresh_from_db()
+        self.assertEqual(
+            task.simulation_revert_count,
+            TRON_SIMULATION_REVERT_FAIL_MIN_COUNT + 4,
+        )
+
+    @patch("tron.models.TronHttpClient")
+    def test_revert_window_alone_does_not_finalize(self, client_class):
+        task = self.make_task()
+        # 时间窗已满足但连续次数不足：调度空窗期的零星观测不得终局。
+        self.prime_streak(
+            task,
+            count=TRON_SIMULATION_REVERT_FAIL_MIN_COUNT - 2,
+            first_at=timezone.now() - TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW,
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = self.revert_payload()
+
+        task.broadcast()
+
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.QUEUED)
+
+    @patch("tron.models.TronHttpClient")
+    def test_persistent_revert_marks_failed_terminal(self, client_class):
+        task = self.make_task()
+        self.prime_streak(
+            task,
+            count=TRON_SIMULATION_REVERT_FAIL_MIN_COUNT - 1,
+            first_at=timezone.now() - TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW,
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = self.revert_payload()
+
+        task.broadcast()
+
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.FAILED)
+        client.trigger_smart_contract.assert_not_called()
+        client.broadcast_transaction.assert_not_called()
+
+    @patch("chains.vault_slots.mark_deployed_if_on_chain_for_task")
+    @patch("tron.models.TronHttpClient")
+    def test_persistent_revert_on_deploy_checks_on_chain_state(
+        self, client_class, mark_deployed
+    ):
+        task = self.make_task(tx_type=TxTaskType.VaultSlotDeploy)
+        self.prime_streak(
+            task,
+            count=TRON_SIMULATION_REVERT_FAIL_MIN_COUNT - 1,
+            first_at=timezone.now() - TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW,
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = self.revert_payload()
+
+        task.broadcast()
+
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.FAILED)
+        mark_deployed.assert_called_once()
+        self.assertEqual(mark_deployed.call_args.args[0].pk, task.base_task_id)
+
+    @patch("tron.models.TronHttpClient")
+    def test_failed_task_drops_out_of_dispatch_queue(self, client_class):
+        from tron.tasks import dispatch_tron_tx_tasks
+
+        task = self.make_task()
+        self.prime_streak(
+            task,
+            count=TRON_SIMULATION_REVERT_FAIL_MIN_COUNT - 1,
+            first_at=timezone.now() - TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW,
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = self.revert_payload()
+        task.broadcast()
+        TronTxTask.objects.filter(pk=task.pk).update(
+            created_at=timezone.now() - timedelta(seconds=10),
+            last_attempt_at=None,
+        )
+
+        with (
+            patch("tron.tasks.broadcast_tron_task.delay") as delay_mock,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            dispatch_tron_tx_tasks.run()
+
+        delay_mock.assert_not_called()
+
+    @patch("tron.models.TronHttpClient")
+    def test_energy_insufficiency_resets_revert_streak(self, client_class):
+        task = self.make_task()
+        self.prime_streak(
+            task,
+            count=3,
+            first_at=timezone.now() - timedelta(hours=1),
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = {
+            "result": {"result": True},
+            "energy_used": 1_000,
+        }
+        client.get_account_resource.return_value = {
+            "EnergyLimit": 999,
+            "EnergyUsed": 0,
+            "freeNetLimit": 10_000,
+        }
+
+        with self.assertRaisesMessage(TronClientError, "tron energy insufficient"):
+            task.broadcast()
+
+        task.refresh_from_db()
+        self.assertEqual(task.simulation_revert_count, 0)
+        self.assertIsNone(task.simulation_revert_first_at)
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.QUEUED)
+
+    @patch("tron.models.TronHttpClient")
+    @patch("chains.models.Address.sign_tron_transaction")
+    def test_successful_broadcast_resets_revert_streak(
+        self, sign_transaction, client_class
+    ):
+        task = self.make_task()
+        self.prime_streak(
+            task,
+            count=3,
+            first_at=timezone.now() - timedelta(hours=1),
+        )
+        client = client_class.return_value
+        client.trigger_constant_contract.return_value = {
+            "result": {"result": True},
+            "energy_used": 1_000,
+        }
+        client.get_account_resource.side_effect = [
+            {"EnergyLimit": 2_000, "EnergyUsed": 0, "freeNetLimit": 10_000},
+            {"EnergyLimit": 2_000, "EnergyUsed": 0, "freeNetLimit": 10_000},
+        ]
+        transaction = self.unsigned_transaction()
+        client.trigger_smart_contract.return_value = {"transaction": transaction}
+        sign_transaction.return_value = SimpleNamespace(
+            tx_hash=transaction["txID"],
+            raw_transaction={**transaction, "signature": ["b" * 130]},
+        )
+        client.broadcast_transaction.return_value = {"result": True}
+
+        task.broadcast()
+
+        task.refresh_from_db()
+        self.assertEqual(task.simulation_revert_count, 0)
+        self.assertIsNone(task.simulation_revert_first_at)
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.SUBMITTED)
 
 
 class TronWatchCursorTests(TestCase):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,8 @@ from django.utils.translation import gettext_lazy as _
 from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.codec import TronAddressCodec
+from tron.resources import TronResourceGuardError
+from tron.resources import TronSimulationRevertError
 from tron.resources import require_bandwidth_for_signed_transaction
 from tron.resources import require_energy_for_contract_call
 from web3 import Web3
@@ -19,6 +22,7 @@ from web3 import Web3
 from chains.models import TxHash
 from chains.models import TxTask
 from chains.models import TxTaskStatus
+from chains.models import TxTaskType
 from common.fields import AddressField
 from common.fields import HashField
 from common.models import UndeletableModel
@@ -29,6 +33,12 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 TRON_MAX_BROADCAST_HASHES = 5
+
+# 模拟 revert 连续观测的终局阈值：两个条件须同时满足才把任务标记失败并跳过。
+# 次数下限防止调度空窗期仅凭两三次观测误杀；时间窗下限给「代币临时暂停后恢复」
+# 这类瞬时 revert 留出自愈空间——黑名单等永久 revert 多等几小时无实质损失。
+TRON_SIMULATION_REVERT_FAIL_MIN_COUNT = 5
+TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW = timedelta(hours=4)
 
 
 class TronWatchCursor(models.Model):
@@ -100,6 +110,17 @@ class TronTxTask(UndeletableModel):
     ref_block_hash = models.CharField(_("Ref Block Hash"), max_length=32, blank=True, default="")
     signed_payload = models.JSONField(_("已签名链上载荷"), default=dict, blank=True)
     tx_id = HashField(unique=False, null=True, blank=True, verbose_name=_("当前 TxID"))
+    # 广播前模拟 revert 的连续观测计数：达到次数与时间窗双阈值后任务失败终局。
+    # 任一非 revert 观测（模拟通过、资源不足）都会清零，保证「连续」语义。
+    simulation_revert_count = models.PositiveIntegerField(
+        _("模拟 Revert 连续次数"),
+        default=0,
+    )
+    simulation_revert_first_at = models.DateTimeField(
+        _("模拟 Revert 首次观测时间"),
+        blank=True,
+        null=True,
+    )
     last_attempt_at = models.DateTimeField(_("上次尝试时间"), blank=True, null=True)
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
 
@@ -165,13 +186,25 @@ class TronTxTask(UndeletableModel):
         self.record_broadcast_attempt()
         self.validate_fee_limit()
         client = TronHttpClient(chain=self.chain)
-        resource_quote = require_energy_for_contract_call(
-            client=client,
-            owner_address=self.sender.address,
-            contract_address=self.to,
-            function_selector=self.function_selector,
-            parameter=self.parameter,
-        )
+        try:
+            resource_quote = require_energy_for_contract_call(
+                client=client,
+                owner_address=self.sender.address,
+                contract_address=self.to,
+                function_selector=self.function_selector,
+                parameter=self.parameter,
+            )
+        except TronSimulationRevertError as exc:
+            # 模拟 revert 不是资源问题，等待无意义；Tron 无 nonce、无顺序约束，
+            # 按连续观测策略标记失败并跳过，防止注定失败的任务永久占用调度队列。
+            self.register_simulation_revert(reason=str(exc))
+            return
+        except TronResourceGuardError:
+            # 资源不足时模拟本身已通过（或属暂时性校验异常），交易并非必然
+            # revert：打断连续 revert 计数，维持「等待资源补充」语义后上抛。
+            self.clear_simulation_revert_streak()
+            raise
+        self.clear_simulation_revert_streak()
         unsigned = client.trigger_smart_contract(
             owner_address=self.sender.address,
             contract_address=self.to,
@@ -208,6 +241,82 @@ class TronTxTask(UndeletableModel):
     def record_broadcast_attempt(self) -> None:
         self.last_attempt_at = timezone.now()
         self.save(update_fields=["last_attempt_at"])
+
+    def register_simulation_revert(self, *, reason: str) -> None:
+        """记录一次广播前模拟 revert 观测；连续观测满足双阈值后标记失败终局。
+
+        Tron 没有 nonce 顺序约束，注定 revert 的任务（如收款合约被代币发行方
+        拉黑）不会阻塞其他任务上链，但放任无限重试会永久占用调度轮次并空烧
+        节点 API 配额。终局须同时满足 TRON_SIMULATION_REVERT_FAIL_MIN_COUNT
+        次连续观测与 TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW 时间窗，缺一不可。
+        未达阈值时任务保持原状态，由调度器按退避周期继续重试观测。
+        """
+        now = timezone.now()
+        if self.simulation_revert_first_at is None:
+            self.simulation_revert_first_at = now
+        self.simulation_revert_count += 1
+        self.save(
+            update_fields=["simulation_revert_count", "simulation_revert_first_at"]
+        )
+
+        if not self.simulation_revert_terminal_due(now=now):
+            logger.warning(
+                "Tron 任务模拟 revert，本轮跳过广播",
+                tron_task_id=self.pk,
+                tx_task_id=self.base_task_id,
+                chain=self.chain.code,
+                sender=self.sender.address,
+                tx_type=self.base_task.tx_type,
+                revert_count=self.simulation_revert_count,
+                first_revert_at=self.simulation_revert_first_at,
+                reason=reason,
+            )
+            return
+
+        # 终局只通过受状态保护的统一入口推进：并发收口（如历史 hash 恰好
+        # 上链成功）已置终局态时此处自然落空，不会覆盖。
+        updated = TxTask.mark_finalized_failed(task_id=self.base_task_id)
+        if not updated:
+            return
+        logger.warning(
+            "Tron 任务模拟持续 revert，已标记失败终局并跳过",
+            tron_task_id=self.pk,
+            tx_task_id=self.base_task_id,
+            chain=self.chain.code,
+            sender=self.sender.address,
+            tx_type=self.base_task.tx_type,
+            revert_count=self.simulation_revert_count,
+            first_revert_at=self.simulation_revert_first_at,
+            reason=reason,
+        )
+        if self.base_task.tx_type == TxTaskType.VaultSlotDeploy:
+            # 与回执失败收口保持一致：部署失败后兜底检查链上是否已有合约
+            # （他途部署/CREATE2 撞已部署地址会模拟 revert），避免漏翻 is_deployed。
+            from chains.vault_slots import (  # noqa: PLC0415
+                mark_deployed_if_on_chain_for_task,
+            )
+
+            mark_deployed_if_on_chain_for_task(self.base_task)
+
+    def simulation_revert_terminal_due(self, *, now=None) -> bool:
+        """连续 revert 观测是否已同时满足次数与时间窗双阈值。"""
+        if self.simulation_revert_count < TRON_SIMULATION_REVERT_FAIL_MIN_COUNT:
+            return False
+        if self.simulation_revert_first_at is None:
+            return False
+        current = now or timezone.now()
+        elapsed = current - self.simulation_revert_first_at
+        return elapsed >= TRON_SIMULATION_REVERT_FAIL_MIN_WINDOW
+
+    def clear_simulation_revert_streak(self) -> None:
+        """任一非 revert 观测（模拟通过、资源不足）即打断连续 revert 计数。"""
+        if not self.simulation_revert_count and self.simulation_revert_first_at is None:
+            return
+        self.simulation_revert_count = 0
+        self.simulation_revert_first_at = None
+        self.save(
+            update_fields=["simulation_revert_count", "simulation_revert_first_at"]
+        )
 
     def validate_fee_limit(self) -> None:
         if self.fee_limit <= 0:
