@@ -138,13 +138,6 @@ SIDEBAR_UNFOLD = {
                         "link": reverse_lazy("admin:invoices_invoice_changelist"),
                     },
                     {
-                        "title": _("钱包直收"),
-                        "icon": "account_balance_wallet",
-                        "link": reverse_lazy(
-                            "admin:invoices_differrecipientaddress_changelist"
-                        ),
-                    },
-                    {
                         "title": _("账单合约"),
                         "icon": "contract",
                         "link": reverse_lazy(
