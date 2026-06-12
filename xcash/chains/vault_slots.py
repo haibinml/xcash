@@ -3,6 +3,7 @@ from __future__ import annotations
 import structlog
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
+from django.utils import timezone
 
 from chains.models import TERMINAL_TX_TASK_STATUSES
 from chains.models import Chain
@@ -235,16 +236,29 @@ def mark_deployed(slot: VaultSlot) -> bool:
     )
     if updated:
         slot.is_deployed = True
+        expedite_pending_collects(slot_pk=slot.pk)
     return bool(updated)
 
 
 def mark_deployed_by_task(tx_task: TxTask) -> bool:
-    return bool(
-        VaultSlot.objects.filter(
-            deploy_tx_task=tx_task,
-            is_deployed=False,
-        ).update(is_deployed=True)
-    )
+    slot = VaultSlot.objects.filter(deploy_tx_task=tx_task).first()
+    if slot is None:
+        return False
+    return mark_deployed(slot)
+
+
+def expedite_pending_collects(*, slot_pk: int) -> int:
+    """部署确认后把该槽位 pending 的归集计划拨到当前时间,免等退避窗口。
+
+    未部署槽位的归集会被前置闸门 defer_retry 推迟(最长 10 分钟);部署一确认就把
+    due_at 拨回当前,下一轮 execute_due 立即清扫。走「归集触发部署」路径时聚合
+    窗口在部署调度前已自然走完,不受影响;仅 EVM 原生预部署路径上,若入账恰好
+    出现在部署确认前的极窄窗口内,首笔归集会提前一次,代价只是一笔小额清扫。
+    """
+    return VaultSlotCollectSchedule.objects.filter(
+        vault_slot_id=slot_pk,
+        tx_task__isnull=True,
+    ).update(due_at=timezone.now())
 
 
 def mark_deployed_if_on_chain_for_task(tx_task: TxTask) -> bool:
@@ -370,12 +384,30 @@ def create_collect_tx_task_for_slot(*, chain: Chain, crypto, slot: VaultSlot) ->
     return get_backend(chain).create_collect_tx_task(chain=chain, crypto=crypto, slot=slot)
 
 
-def can_create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> bool:
-    return get_backend(chain).can_create_collect_tx_task(
-        chain=chain,
-        crypto=crypto,
-        slot=slot,
-    )
+def can_create_collect_tx_task(*, chain: Chain, slot: VaultSlot) -> bool:
+    """归集前置闸门:已部署放行;未部署先转入部署流,本轮归集延迟退避重试。
+
+    归集的核心路径是「部署是归集的前置状态」:slot 未部署时不归集,改为触发
+    schedule_deploy。schedule_deploy 自带行锁、deploy_tx_task 判重与链上已部署
+    检查;若链上已有合约会当场翻转 is_deployed,此时本轮直接放行,不必再等下一个
+    退避窗口。任何异常(RPC 故障、vault 未配置等)都按「暂不可归集」处理,由调度
+    退避消化,不让单个槽位的故障打断整批调度。
+    """
+    if slot.is_deployed:
+        return True
+    try:
+        schedule_deploy(slot.pk)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "VaultSlot 归集前部署调度失败,本轮归集延迟",
+            chain=chain.code,
+            vault_slot_id=slot.pk,
+            error=str(exc),
+        )
+        return False
+    # schedule_deploy 的链上检查可能已当场把 is_deployed 翻为 True。
+    slot.refresh_from_db(fields=["is_deployed"])
+    return slot.is_deployed
 
 
 def validate_supported_chain(chain: Chain) -> None:

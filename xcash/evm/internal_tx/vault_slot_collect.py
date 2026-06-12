@@ -15,15 +15,11 @@ from chains.models import TxTask
 from chains.models import VaultSlot
 from currencies.models import Crypto
 from currencies.models import CryptoOnChain
-from evm.contracts_codec import predict_xcash_vault_slot_address
 from evm.internal_tx.facts import MatchedTransferFact
 from evm.internal_tx.log_utils import matches_transfer_log
 from evm.internal_tx.log_utils import normalize_log_index
 
 _COLLECT_SELECTOR = "0x06ec16f8"
-_ENSURE_DEPLOYED_AND_COLLECT_SELECTOR = Web3.keccak(
-    text="ensureDeployedAndCollect(address,bytes32,address)"
-)[:4].hex()
 _XCASH_COLLECTED_TOPIC0 = Web3.keccak(text="XcashCollected(address,uint256)").hex()
 _ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
@@ -59,26 +55,13 @@ def _decode_collect_target(
     tx_to: str,
     data: str,
 ) -> tuple[str, str] | None:
-    raw = data.lower() if data.startswith("0x") else f"0x{data.lower()}"
-    direct_token = _decode_collect_token(raw)
-    if direct_token is not None:
-        return Web3.to_checksum_address(tx_to), direct_token
-
-    if not raw.startswith(f"0x{_ENSURE_DEPLOYED_AND_COLLECT_SELECTOR}"):
-        return None
-    try:
-        vault, salt, token = eth_abi.decode(
-            ["address", "bytes32", "address"],
-            Web3.to_bytes(hexstr=HexStr(f"0x{raw[10:]}")),
-        )
-    except (ValueError, binascii.Error, DecodingError):
-        return None
-
-    slot_address = predict_xcash_vault_slot_address(
-        vault=Web3.to_checksum_address(vault),
-        salt=salt,
+    """归集交易固定是对 slot 直调 collect(token):目标即 tx.to,代币取自 calldata。"""
+    token = _decode_collect_token(
+        data.lower() if data.startswith("0x") else f"0x{data.lower()}"
     )
-    return slot_address, Web3.to_checksum_address(token)
+    if token is None:
+        return None
+    return Web3.to_checksum_address(tx_to), token
 
 
 def _crypto_for_collect_token(*, chain: Chain, token_address: str) -> Crypto | None:

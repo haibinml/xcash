@@ -15,10 +15,10 @@
   - `receive()` 只用于转发误入 slot 的 TRX，不作为用户侧 TRX 支付入口。
 - `XcashVaultSlotFactory`
   - `deployVaultSlot(vault, salt)` 使用 OpenZeppelin Clones immutable args 和
-    TVM CREATE2 部署 slot。
-  - `ensureDeployedAndCollect(vault, salt, token)` 在 slot 尚未部署时先部署，
-    然后调用 slot 的 `collect(token)`，用于首次 TRC20 入账后的部署 + 归集收口。
-  - 不提供链上 `predict`（源码层面已删，EVM/TVM 同此一份）。Tron 地址预测必须使用
+    TVM CREATE2 部署 slot。部署与归集是两段式：先由部署交易落地 slot，
+    归集再对 slot 直调 `collect(token)`。
+  - 合约内不含任何链上地址预测（EVM 0xff 与 TVM 0x41 的 CREATE2 preimage
+    前缀不同，链上预测无法共源）。Tron 地址预测必须使用
     `xcash/tron/contracts_codec.py` 的 Python `0x41` 预测器。
 
 ## 构建与部署

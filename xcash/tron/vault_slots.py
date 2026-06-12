@@ -5,7 +5,6 @@ from tron.adapter import TronAdapter
 from tron.contracts_codec import predict_tron_vault_slot_address
 from tron.intents import build_vault_slot_collect_intent
 from tron.intents import build_vault_slot_deploy_intent
-from tron.intents import build_vault_slot_ensure_collect_intent
 from tron.models import TronTxTask
 
 from chains.models import AddressUsage
@@ -56,36 +55,19 @@ def create_deploy_tx_task(*, slot: VaultSlot) -> TxTask:
 
 
 def create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
+    # 归集前置闸门保证只有已部署的 slot 走到这里;未部署一律先走部署任务。
+    if not slot.is_deployed:
+        raise RuntimeError(f"VaultSlot {slot.pk} 尚未部署,不能创建归集任务")
     sender = SystemWallet.get_current().wallet.get_address(
         chain_type=ChainType.TRON,
         usage=AddressUsage.HotWallet,
     )
-    if slot.is_deployed:
-        intent = build_vault_slot_collect_intent(
-            sender=sender,
-            chain=chain,
-            slot_address=slot.address,
-            token_address=collect_token_address(crypto=crypto, chain=chain),
-        )
-    else:
-        intent = build_vault_slot_ensure_collect_intent(
-            sender=sender,
-            chain=chain,
-            factory_address=settings.TRON_VAULT_SLOT_FACTORY_ADDRESS,
-            vault_address=slot.project.tron_vault,
-            salt=bytes(slot.salt),
-            token_address=collect_token_address(crypto=crypto, chain=chain),
-        )
+    intent = build_vault_slot_collect_intent(
+        sender=sender,
+        chain=chain,
+        slot_address=slot.address,
+        token_address=collect_token_address(crypto=crypto, chain=chain),
+    )
     # 每个到期计划各建一笔独立任务；collect 是按当前余额全额清扫的幂等操作，
     # 余额为 0 时模板直接 return，不会重复归集。
     return TronTxTask.schedule(intent).base_task
-
-
-def can_create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> bool:
-    if slot.is_deployed:
-        return True
-    # 决策 B：未部署也可归集。归集走 factory 的 ensureDeployedAndCollect，一笔交易完成
-    # 部署 + 清扫（原生币传 address(0)，命中模板原生分支）。Tron 上 TransferContract 不触发
-    # receive()，原生入账靠区块扫描观测、与 slot 是否预先部署无关，故原生币不再要求先存在
-    # receive() 合约，与 TRC20 共用同一条未部署路径。唯一前提是已知 vault，否则无法预测部署 slot。
-    return bool(slot.project.tron_vault)

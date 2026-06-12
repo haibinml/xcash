@@ -23,6 +23,9 @@ contract XcashVaultSlotFactory {
         vaultSlotTemplate = vaultSlotTemplate_;
     }
 
+    /// @dev 本合约刻意不含任何链上地址预测：EVM(0xff) 与 TVM(0x41) 的 CREATE2
+    ///      preimage 前缀不同，链上预测无法共源。slot 地址一律由链下按链各自预测，
+    ///      链上唯一权威是 create2 指令本身；目标地址已有合约时 create2 失败并 revert。
     function deployVaultSlot(address payable vault, bytes32 salt)
         external
         returns (address vaultSlot)
@@ -32,23 +35,5 @@ contract XcashVaultSlotFactory {
             vaultSlotTemplate, abi.encodePacked(vault), salt
         );
         emit XcashVaultSlotDeployed(vaultSlot, vault, salt);
-    }
-
-    function ensureDeployedAndCollect(address payable vault, bytes32 salt, address token)
-        external
-        returns (address vaultSlot)
-    {
-        if (vault == address(0)) revert ZeroVault();
-        bytes memory args = abi.encodePacked(vault);
-        vaultSlot = Clones.predictDeterministicAddressWithImmutableArgs(
-            vaultSlotTemplate, args, salt
-        );
-        if (vaultSlot.code.length == 0) {
-            vaultSlot = Clones.cloneDeterministicWithImmutableArgs(
-                vaultSlotTemplate, args, salt
-            );
-            emit XcashVaultSlotDeployed(vaultSlot, vault, salt);
-        }
-        XcashVaultSlotTemplate(payable(vaultSlot)).collect(token);
     }
 }

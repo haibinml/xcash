@@ -40,10 +40,8 @@ from deposits.models import Deposit
 from evm.constants import XCASH_VAULT_SLOT_FACTORY_ADDRESS
 from evm.intents import DEFAULT_VAULT_SLOT_COLLECT_GAS
 from evm.intents import DEFAULT_VAULT_SLOT_DEPLOY_GAS
-from evm.intents import DEFAULT_VAULT_SLOT_ENSURE_COLLECT_GAS
 from evm.intents import build_vault_slot_collect_intent
 from evm.intents import build_vault_slot_deploy_intent
-from evm.intents import build_vault_slot_ensure_collect_intent
 from evm.models import EvmTxTask
 from evm.tests._fixtures import make_evm_chain
 from invoices.models import Invoice
@@ -113,33 +111,6 @@ def test_build_vault_slot_collect_intent_encodes_direct_slot_call():
     assert intent.value == 0
     assert intent.gas == DEFAULT_VAULT_SLOT_COLLECT_GAS
     assert intent.data.startswith(f"0x{_selector('collect(address)')}")
-    assert Web3.to_checksum_address(token_address)[2:].lower() in intent.data
-
-
-def test_build_vault_slot_ensure_collect_intent_encodes_factory_call():
-    factory_address = "0x" + "c" * 40
-    vault_address = "0x" + "e" * 40
-    token_address = "0x" + "d" * 40
-    salt = bytes.fromhex("22" * 32)
-
-    intent = build_vault_slot_ensure_collect_intent(
-        sender=_fake_address(),
-        chain=_fake_chain(),
-        factory_address=factory_address,
-        vault_address=vault_address,
-        salt=salt,
-        token_address=token_address,
-    )
-
-    assert intent.tx_type == TxTaskType.VaultSlotCollect
-    assert intent.to == Web3.to_checksum_address(factory_address)
-    assert intent.value == 0
-    assert intent.gas == DEFAULT_VAULT_SLOT_ENSURE_COLLECT_GAS
-    assert intent.data.startswith(
-        f"0x{_selector('ensureDeployedAndCollect(address,bytes32,address)')}"
-    )
-    assert Web3.to_checksum_address(vault_address)[2:].lower() in intent.data
-    assert salt.hex() in intent.data
     assert Web3.to_checksum_address(token_address)[2:].lower() in intent.data
 
 
@@ -1146,7 +1117,9 @@ class VaultSlotAddressSchedulingTests(TestCase):
         )
         self.assertIn(self.token_address[2:].lower(), schedule.tx_task.evm_task.data)
 
-    def test_due_collect_schedule_uses_ensure_collect_for_undeployed_token_slot(self):
+    def test_due_collect_schedule_defers_and_schedules_deploy_for_undeployed_slot(self):
+        # 部署是归集的前置状态:未部署槽位到期时不建归集任务,
+        # 而是转入部署流并把归集计划退避到部署确认之后。
         slot = self._create_vault_slot()
         deposit = self._create_deposit(slot=slot)
         address_patch = self.patch_address_derivation()
@@ -1156,28 +1129,51 @@ class VaultSlotAddressSchedulingTests(TestCase):
         schedule.due_at = timezone.now() - timedelta(seconds=1)
         schedule.save(update_fields=["due_at", "updated_at"])
 
-        with (
-            address_patch,
-            patch(
-                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
-                return_value=SimpleNamespace(value=1),
-            ),
-        ):
+        with address_patch:
             created_count = VaultSlotCollectSchedule.execute_due()
 
-        self.assertEqual(created_count, 1)
+        self.assertEqual(created_count, 0)
         schedule.refresh_from_db()
-        self.assertIsNotNone(schedule.tx_task)
+        self.assertIsNone(schedule.tx_task)
+        self.assertGreater(schedule.due_at, timezone.now())
+        slot.refresh_from_db()
+        self.assertIsNotNone(slot.deploy_tx_task)
+        self.assertEqual(slot.deploy_tx_task.tx_type, TxTaskType.VaultSlotDeploy)
         self.assertEqual(
-            schedule.tx_task.evm_task.to,
+            slot.deploy_tx_task.evm_task.to,
             Web3.to_checksum_address(XCASH_VAULT_SLOT_FACTORY_ADDRESS),
         )
         self.assertTrue(
-            schedule.tx_task.evm_task.data.startswith(
-                f"0x{_selector('ensureDeployedAndCollect(address,bytes32,address)')}"
+            slot.deploy_tx_task.evm_task.data.startswith(
+                f"0x{_selector('deployVaultSlot(address,bytes32)')}"
             )
         )
-        self.assertIn(self.token_address[2:].lower(), schedule.tx_task.evm_task.data)
+
+    def test_deploy_confirmation_expedites_deferred_collect_schedule(self):
+        # 部署确认翻转 is_deployed 时,把被退避的 pending 归集计划拨回当前时间,
+        # 让下一轮 execute_due 立即归集,而不是干等最长 10 分钟退避。
+        from chains.vault_slots import mark_deployed_by_task
+
+        slot = self._create_vault_slot()
+        deposit = self._create_deposit(slot=slot)
+        address_patch = self.patch_address_derivation()
+
+        with address_patch:
+            schedule = VaultSlot.schedule_collect_for_deposit(deposit.pk)
+        schedule.due_at = timezone.now() + timedelta(minutes=10)
+        schedule.save(update_fields=["due_at", "updated_at"])
+
+        with address_patch:
+            deploy_task = VaultSlot.schedule_deploy(slot.pk)
+        self.assertIsNotNone(deploy_task)
+
+        marked = mark_deployed_by_task(deploy_task)
+
+        self.assertTrue(marked)
+        slot.refresh_from_db()
+        self.assertTrue(slot.is_deployed)
+        schedule.refresh_from_db()
+        self.assertLessEqual(schedule.due_at, timezone.now())
 
     def test_due_collect_schedule_deletes_pending_schedule_when_balance_is_zero(self):
         slot = self._create_vault_slot()
@@ -1471,7 +1467,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         )
         self.assertFalse(VaultSlotCollectSchedule.objects.exists())
 
-    def test_collect_matcher_decodes_factory_ensure_deployed_and_collect_call(self):
+    def test_collect_matcher_decodes_slot_collect_call(self):
         from evm.contracts_codec import predict_xcash_vault_slot_address
         from evm.internal_tx.vault_slot_collect import vault_slot_collect_matcher
 
@@ -1481,12 +1477,10 @@ class VaultSlotAddressSchedulingTests(TestCase):
             salt=bytes(slot.salt),
         )
         slot.save(update_fields=["address"])
-        intent = build_vault_slot_ensure_collect_intent(
+        intent = build_vault_slot_collect_intent(
             sender=self.system_sender,
             chain=self.chain,
-            factory_address=XCASH_VAULT_SLOT_FACTORY_ADDRESS,
-            vault_address=self.project.evm_vault,
-            salt=bytes(slot.salt),
+            slot_address=slot.address,
             token_address=self.token_address,
         )
         evm_task = EvmTxTask.schedule(intent)

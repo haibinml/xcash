@@ -1194,7 +1194,6 @@ class VaultSlotCollectSchedule(models.Model):
             for schedule in schedules:
                 if not can_create_collect_tx_task(
                     chain=schedule.chain,
-                    crypto=schedule.crypto,
                     slot=schedule.vault_slot,
                 ):
                     schedule.defer_retry()

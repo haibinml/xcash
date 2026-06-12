@@ -2300,31 +2300,32 @@ class TronCollectScheduleExecuteTests(TestCase):
         )
 
     @patch("tron.vault_slots.TronAdapter.is_contract", return_value=False)
-    def test_execute_due_creates_ensure_collect_task_for_undeployed_token_slot(
+    def test_execute_due_defers_and_schedules_deploy_for_undeployed_slot(
         self, is_contract
     ):
+        # 部署是归集的前置状态:未部署槽位到期时不建归集任务,
+        # 而是创建部署任务并把归集计划退避到部署确认之后。
         schedule = self.make_pending_schedule()
 
         with patch("tron.vault_slots.SystemWallet.get_current") as get_current:
             get_current.return_value.wallet.get_address.return_value = self.sender
-            with patch(
-                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
-                return_value=SimpleNamespace(value=1),
-            ):
-                created = VaultSlotCollectSchedule.execute_due()
+            created = VaultSlotCollectSchedule.execute_due()
 
-        self.assertEqual(created, 1)
+        self.assertEqual(created, 0)
         schedule.refresh_from_db()
-        self.assertIsNotNone(schedule.tx_task_id)
+        self.assertIsNone(schedule.tx_task_id)
+        self.assertGreater(schedule.due_at, timezone.now())
+        self.slot.refresh_from_db()
+        self.assertIsNotNone(self.slot.deploy_tx_task)
+        tron_task = self.slot.deploy_tx_task.tron_task
         self.assertEqual(
-            schedule.tx_task.tron_task.function_selector,
-            "ensureDeployedAndCollect(address,bytes32,address)",
+            tron_task.function_selector,
+            "deployVaultSlot(address,bytes32)",
         )
-        self.assertEqual(
-            schedule.tx_task.tron_task.to,
-            "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
-        )
-        is_contract.assert_not_called()
+        self.assertEqual(tron_task.to, "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8")
+        # 部署参数 = abi.encode(vault, salt):尾 32 字节是该槽位的 CREATE2 盐。
+        self.assertTrue(tron_task.parameter.endswith("02" * 32))
+        is_contract.assert_called_once()
 
     def test_collect_token_address_native_maps_to_zero_else_contract(self):
         # 归集 token 路由：原生币 → address(0)，TRC20 → 其合约地址。
@@ -2341,41 +2342,34 @@ class TronCollectScheduleExecuteTests(TestCase):
         )
 
     @patch("tron.vault_slots.TronAdapter.is_contract", return_value=False)
-    def test_execute_due_native_undeployed_uses_ensure_collect_with_zero_token(
+    def test_execute_due_creates_single_deploy_task_for_multi_crypto_slot(
         self, is_contract
     ):
-        # 决策 B：原生 TRX 即使 slot 未部署也能归集——走 ensureDeployedAndCollect 一笔
-        # 部署+清扫，token 传 address(0)；不再被「必须先部署」拦下，也不查 is_contract。
-        trx = self.chain.native_coin
-        schedule = VaultSlotCollectSchedule.objects.create(
+        # USDT 与原生 TRX 两个归集计划同窗到期:都延迟归集,且只为该槽位建一笔部署
+        # 任务。这是旧 ensure 路径的事故面——两笔交易同时 CREATE2 必有一笔撞地址。
+        usdt_schedule = self.make_pending_schedule()
+        trx_schedule = VaultSlotCollectSchedule.objects.create(
             chain=self.chain,
             vault_slot=self.slot,
-            crypto=trx,
+            crypto=self.chain.native_coin,
             due_at=timezone.now() - timedelta(seconds=1),
         )
 
         with patch("tron.vault_slots.SystemWallet.get_current") as get_current:
             get_current.return_value.wallet.get_address.return_value = self.sender
-            with patch(
-                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
-                return_value=SimpleNamespace(value=1),
-            ):
-                created = VaultSlotCollectSchedule.execute_due()
+            created = VaultSlotCollectSchedule.execute_due()
 
-        self.assertEqual(created, 1)
-        schedule.refresh_from_db()
-        self.assertIsNotNone(schedule.tx_task_id)
-        tron_task = schedule.tx_task.tron_task
+        self.assertEqual(created, 0)
+        usdt_schedule.refresh_from_db()
+        trx_schedule.refresh_from_db()
+        self.assertIsNone(usdt_schedule.tx_task_id)
+        self.assertIsNone(trx_schedule.tx_task_id)
+        self.slot.refresh_from_db()
+        self.assertIsNotNone(self.slot.deploy_tx_task)
         self.assertEqual(
-            tron_task.function_selector,
-            "ensureDeployedAndCollect(address,bytes32,address)",
+            TxTask.objects.filter(tx_type=TxTaskType.VaultSlotDeploy).count(),
+            1,
         )
-        # token 入参（第 3 个 address，最后 32 字节）必须是 address(0)=全零，即原生币清扫。
-        self.assertTrue(
-            tron_task.parameter.endswith("0" * 64),
-            f"原生归集 token 应为 address(0)，实际 parameter={tron_task.parameter}",
-        )
-        is_contract.assert_not_called()
 
     @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)
     def test_execute_due_creates_task_when_slot_deployed(self, is_contract):

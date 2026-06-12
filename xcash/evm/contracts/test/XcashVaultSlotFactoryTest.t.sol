@@ -2,7 +2,6 @@
 pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
-import {Vm} from "forge-std/Vm.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {XcashVaultSlotTemplate} from "../src/XcashVaultSlotTemplate.sol";
 import {XcashVaultSlotFactory} from "../src/XcashVaultSlotFactory.sol";
@@ -90,39 +89,22 @@ contract XcashVaultSlotFactoryTest is Test {
         assertEq(token.balanceOf(deployed), 0);
     }
 
-    function test_ensure_deployed_and_collect_deploys_then_collects_erc20() public {
-        bytes32 salt = keccak256("ensure-erc20");
+    function test_collect_on_funded_then_deployed_slot_sweeps_erc20() public {
+        // 对应业务上的「先入金、后部署、再归集」两段式路径:
+        // 资金先打到反事实地址,部署后由独立 collect 交易清扫。
+        bytes32 salt = keccak256("fund-then-deploy");
         address predicted = _predict(vault, salt);
         MockERC20 token = new MockERC20();
         token.mint(predicted, 1000e18);
 
-        vm.expectEmit(true, true, true, true, address(factory));
-        emit XcashVaultSlotDeployed(predicted, vault, salt);
-        vm.expectEmit(true, true, true, true, predicted);
-        emit XcashCollected(address(token), 1000e18);
+        address deployed = factory.deployVaultSlot(vault, salt);
 
-        address deployed = factory.ensureDeployedAndCollect(vault, salt, address(token));
+        vm.expectEmit(true, true, true, true, deployed);
+        emit XcashCollected(address(token), 1000e18);
+        XcashVaultSlotTemplate(payable(deployed)).collect(address(token));
 
         assertEq(deployed, predicted);
-        assertGt(deployed.code.length, 0);
         assertEq(token.balanceOf(vault), 1000e18);
-        assertEq(token.balanceOf(deployed), 0);
-    }
-
-    function test_ensure_deployed_and_collect_reuses_existing_slot() public {
-        bytes32 salt = keccak256("ensure-existing");
-        address deployed = factory.deployVaultSlot(vault, salt);
-        MockERC20 token = new MockERC20();
-        token.mint(deployed, 500e18);
-
-        vm.recordLogs();
-        address ensured = factory.ensureDeployedAndCollect(vault, salt, address(token));
-
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(ensured, deployed);
-        assertEq(logs.length, 1);
-        assertEq(logs[0].emitter, deployed);
-        assertEq(token.balanceOf(vault), 500e18);
         assertEq(token.balanceOf(deployed), 0);
     }
 
