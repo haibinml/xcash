@@ -1222,6 +1222,75 @@ class VaultSlotReceivedFlagTests(TestCase):
         )
         self.assertLessEqual(schedule.due_at, timezone.now())
 
+    def test_reconcile_isolates_single_balance_schedule_errors(self):
+        from chains.vault_slot_balances import reconcile_vault_slot_collect_balance_gaps
+
+        good_slot = VaultSlot.objects.create(
+            chain=self.chain,
+            usage=VaultSlotUsage.INVOICE,
+            project=self.project,
+            invoice_index=2,
+            address=Web3.to_checksum_address("0x" + "ac" * 20),
+            salt=b"g" * 32,
+        )
+        VaultSlotBalance.objects.create(
+            chain=self.chain,
+            vault_slot=self.slot,
+            crypto=self.crypto,
+            value=Decimal("1234567"),
+            amount=Decimal("1.234567"),
+            worth=Decimal("0"),
+            synced_at=timezone.now(),
+        )
+        VaultSlotBalance.objects.create(
+            chain=self.chain,
+            vault_slot=good_slot,
+            crypto=self.crypto,
+            value=Decimal("7654321"),
+            amount=Decimal("7.654321"),
+            worth=Decimal("0"),
+            synced_at=timezone.now(),
+        )
+        original_ensure_pending_due_now = (
+            VaultSlotCollectSchedule.ensure_pending_due_now
+        )
+
+        def ensure_pending_due_now_with_one_failure(*, chain, vault_slot, crypto):
+            if vault_slot.pk == self.slot.pk:
+                raise RuntimeError("bad schedule")
+            return original_ensure_pending_due_now(
+                chain=chain,
+                vault_slot=vault_slot,
+                crypto=crypto,
+            )
+
+        with patch.object(
+            VaultSlotCollectSchedule,
+            "ensure_pending_due_now",
+            side_effect=ensure_pending_due_now_with_one_failure,
+        ):
+            summary = reconcile_vault_slot_collect_balance_gaps()
+
+        self.assertEqual(summary["created_count"], 1)
+        self.assertEqual(summary["error_count"], 1)
+        self.assertEqual(summary["recent_errors"][0]["vault_slot_id"], self.slot.pk)
+        self.assertFalse(
+            VaultSlotCollectSchedule.objects.filter(
+                chain=self.chain,
+                vault_slot=self.slot,
+                crypto=self.crypto,
+                tx_task__isnull=True,
+            ).exists()
+        )
+        self.assertTrue(
+            VaultSlotCollectSchedule.objects.filter(
+                chain=self.chain,
+                vault_slot=good_slot,
+                crypto=self.crypto,
+                tx_task__isnull=True,
+            ).exists()
+        )
+
     def test_reconcile_does_not_auto_requeue_failed_collect_balance_gap(self):
         from chains.vault_slot_balances import reconcile_vault_slot_collect_balance_gaps
 

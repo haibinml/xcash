@@ -29,6 +29,10 @@ def should_predeploy_on_address_exposure(
     """
     if chain.type != ChainType.EVM:
         return False
+    return is_chain_native_crypto(chain=chain, crypto=crypto)
+
+
+def is_chain_native_crypto(*, chain: Chain, crypto) -> bool:
     return getattr(crypto, "pk", None) == chain.native_coin.pk
 
 
@@ -237,7 +241,62 @@ def mark_deployed(slot: VaultSlot) -> bool:
     if updated:
         slot.is_deployed = True
         expedite_pending_collects(slot_pk=slot.pk)
+        db_transaction.on_commit(
+            lambda slot_pk=slot.pk: reconcile_deployed_native_balance(slot_pk)
+        )
     return bool(updated)
+
+
+def reconcile_deployed_native_balance(slot_pk: int) -> bool:
+    """EVM VaultSlot 部署确认后主动补扫部署前滞留的原生币余额。
+
+    正常 receive() 会把本次入账连同合约余额一起转发到 vault；这里兜底的是
+    CREATE2 预测地址在部署前已收到原生币的场景。余额读取放在 mark_deployed 的
+    on_commit 回调里执行，避免在行锁事务内等待链上 RPC。
+    """
+    from chains.vault_slot_balances import refresh_vault_slot_balance_safely
+
+    slot = VaultSlot.objects.select_related("chain").filter(pk=slot_pk).first()
+    if slot is None:
+        return False
+    if slot.chain.type != ChainType.EVM:
+        return False
+
+    native_crypto = slot.chain.native_coin
+    balance = refresh_vault_slot_balance_safely(
+        slot=slot,
+        crypto=native_crypto,
+        reason="vault_slot_deploy_native_reconcile",
+    )
+    if balance is None or balance.value <= 0:
+        return False
+
+    try:
+        schedule = VaultSlotCollectSchedule.ensure_pending_due_now(
+            chain=slot.chain,
+            vault_slot=slot,
+            crypto=native_crypto,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "VaultSlot 部署后发现原生币滞留，但排队归集失败",
+            chain=slot.chain.code,
+            vault_slot_id=slot.pk,
+            crypto=getattr(native_crypto, "symbol", None),
+            balance_value=str(balance.value),
+            error=str(exc),
+        )
+        return False
+
+    logger.warning(
+        "VaultSlot 部署后发现原生币滞留，已排队归集",
+        schedule_id=schedule.pk,
+        chain=slot.chain.code,
+        vault_slot_id=slot.pk,
+        crypto=getattr(native_crypto, "symbol", None),
+        balance_value=str(balance.value),
+    )
+    return True
 
 
 def mark_deployed_by_task(tx_task: TxTask) -> bool:
@@ -362,7 +421,10 @@ def schedule_collect_for_slot(
 ) -> VaultSlotCollectSchedule | None:
     # 原生币在 CryptoOnChain 里 address="" 是正常形态，不算「未部署」；只有非原生币
     # 缺合约地址才是真正的未配置，拒绝调度。原生币归集由 collect(address(0)) 承载。
-    if not crypto.address(chain) and not crypto.is_native:
+    if not crypto.address(chain) and not is_chain_native_crypto(
+        chain=chain,
+        crypto=crypto,
+    ):
         raise RuntimeError(
             f"Crypto {crypto.symbol} 未部署在链 {chain.code}，无法调度 VaultSlot 归集"
         )
@@ -377,7 +439,10 @@ def schedule_collect_for_slot(
 def create_collect_tx_task_for_slot(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
     # 原生币在 CryptoOnChain 里 address="" 是正常形态，不算「未部署」；只有非原生币
     # 缺合约地址才是真正的未配置，拒绝调度。原生币归集由 collect(address(0)) 承载。
-    if not crypto.address(chain) and not crypto.is_native:
+    if not crypto.address(chain) and not is_chain_native_crypto(
+        chain=chain,
+        crypto=crypto,
+    ):
         raise RuntimeError(
             f"Crypto {crypto.symbol} 未部署在链 {chain.code}，无法调度 VaultSlot 归集"
         )

@@ -64,6 +64,8 @@ contract XcashVaultSlotFactoryTest is Test {
 
         vm.expectEmit(true, true, true, true, predicted);
         emit XcashNativeReceived(payer, 1 ether);
+        vm.expectEmit(true, true, true, true, predicted);
+        emit XcashCollected(address(0), 1 ether);
 
         vm.prank(payer);
         (bool ok,) = predicted.call{value: 1 ether}("");
@@ -106,6 +108,24 @@ contract XcashVaultSlotFactoryTest is Test {
         assertEq(deployed, predicted);
         assertEq(token.balanceOf(vault), 1000e18);
         assertEq(token.balanceOf(deployed), 0);
+    }
+
+    function test_collect_on_funded_then_deployed_slot_sweeps_native_coin() public {
+        // 对应「部署前原生币已打到 CREATE2 预测地址」的兜底路径:
+        // 部署本身不触发 receive(),部署确认后由独立 collect(address(0)) 清扫。
+        bytes32 salt = keccak256("fund-native-then-deploy");
+        address predicted = _predict(vault, salt);
+        vm.deal(predicted, 1.5 ether);
+
+        address deployed = factory.deployVaultSlot(vault, salt);
+
+        vm.expectEmit(true, true, true, true, deployed);
+        emit XcashCollected(address(0), 1.5 ether);
+        XcashVaultSlotTemplate(payable(deployed)).collect(address(0));
+
+        assertEq(deployed, predicted);
+        assertEq(vault.balance, 1.5 ether);
+        assertEq(deployed.balance, 0);
     }
 
     function test_duplicate_salt_reverts() public {

@@ -197,23 +197,45 @@ def reconcile_vault_slot_collect_balance_gaps(*, limit: int = 32) -> dict:
     """
     created_count = 0
     failed_blocked = []
+    errors = []
     for balance in vault_slot_collect_balance_gaps()[:limit]:
-        if balance.has_failed_collect_schedule:
-            failed_blocked.append(balance)
+        try:
+            if balance.has_failed_collect_schedule:
+                failed_blocked.append(balance)
+                logger.warning(
+                    "VaultSlot 余额仍未归集且最近存在失败归集任务，等待人工重试",
+                    chain=balance.chain.code,
+                    vault_slot_id=balance.vault_slot_id,
+                    crypto=getattr(balance.crypto, "symbol", None),
+                    balance_value=str(balance.value),
+                )
+                continue
+
+            schedule = VaultSlotCollectSchedule.ensure_pending_due_now(
+                chain=balance.chain,
+                vault_slot=balance.vault_slot,
+                crypto=balance.crypto,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(
+                {
+                    "balance_id": balance.pk,
+                    "chain": balance.chain.code,
+                    "vault_slot_id": balance.vault_slot_id,
+                    "crypto": getattr(balance.crypto, "symbol", None),
+                    "error": str(exc),
+                }
+            )
             logger.warning(
-                "VaultSlot 余额仍未归集且最近存在失败归集任务，等待人工重试",
+                "VaultSlot 余额对账补建归集计划失败，跳过该余额",
                 chain=balance.chain.code,
                 vault_slot_id=balance.vault_slot_id,
                 crypto=getattr(balance.crypto, "symbol", None),
                 balance_value=str(balance.value),
+                error=str(exc),
             )
             continue
 
-        schedule = VaultSlotCollectSchedule.ensure_pending_due_now(
-            chain=balance.chain,
-            vault_slot=balance.vault_slot,
-            crypto=balance.crypto,
-        )
         created_count += 1
         logger.info(
             "VaultSlot 余额对账已补建归集计划",
@@ -228,4 +250,6 @@ def reconcile_vault_slot_collect_balance_gaps(*, limit: int = 32) -> dict:
         "created_count": created_count,
         "failed_blocked_count": len(failed_blocked),
         "recent_failed_blocked": failed_blocked,
+        "error_count": len(errors),
+        "recent_errors": errors,
     }

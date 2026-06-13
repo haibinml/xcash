@@ -15,6 +15,18 @@ from evm.intents import build_vault_slot_collect_intent
 from evm.intents import build_vault_slot_deploy_intent
 from evm.models import EvmTxTask
 
+# 原生币在 CryptoOnChain 里 address=""，但 VaultSlot 模板用 collect(address(0))
+# 表示清扫合约当前原生币余额。这里必须按「本链 native_coin」判断，避免把其它链
+# 的原生币 Crypto 误映射成 address(0)。
+NATIVE_COLLECT_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
+def collect_token_address(*, crypto, chain: Chain) -> str:
+    """归集时该 crypto 对应的 token 入参：本链原生币用 address(0)，ERC20 用合约地址。"""
+    if getattr(crypto, "pk", None) == chain.native_coin.pk:
+        return NATIVE_COLLECT_TOKEN_ADDRESS
+    return crypto.address(chain)
+
 
 def predict_address(*, vault: str, salt: bytes) -> str:
     return predict_xcash_vault_slot_address(vault=vault, salt=salt)
@@ -53,7 +65,7 @@ def create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
         sender=sender,
         chain=chain,
         slot_address=slot.address,
-        token_address=crypto.address(chain),
+        token_address=collect_token_address(crypto=crypto, chain=chain),
     )
     # 不复用在途归集任务:归集计划 tx_task 是 OneToOne,复用同一任务会让第二个
     # 窗口撞唯一约束;collect(token) 是全额清扫,独立任务最多产生余额为 0 的空扫。

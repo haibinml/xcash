@@ -33,6 +33,8 @@ contract XcashVaultSlotTest is Test {
 
         vm.expectEmit(true, true, true, true, address(slot));
         emit XcashNativeReceived(payer, 2 ether);
+        vm.expectEmit(true, true, true, true, address(slot));
+        emit XcashCollected(address(0), 2 ether);
 
         vm.prank(payer);
         (bool ok,) = address(slot).call{value: 2 ether}("");
@@ -42,7 +44,7 @@ contract XcashVaultSlotTest is Test {
         assertEq(address(slot).balance, 0);
     }
 
-    function test_receive_only_forwards_msg_value_leaving_preexisting_balance() public {
+    function test_receive_forwards_full_balance_including_preexisting_native() public {
         XcashVaultSlotTemplate slot = _deployVaultSlot("existing-native");
         vm.deal(address(slot), 0.4 ether);
         address payer = address(0xA11CE);
@@ -50,19 +52,13 @@ contract XcashVaultSlotTest is Test {
 
         vm.expectEmit(true, true, true, true, address(slot));
         emit XcashNativeReceived(payer, 0.6 ether);
+        vm.expectEmit(true, true, true, true, address(slot));
+        emit XcashCollected(address(0), 1 ether);
 
         vm.prank(payer);
         (bool ok,) = address(slot).call{value: 0.6 ether}("");
 
         assertTrue(ok);
-        // receive 只转出 msg.value，预存的 0.4 ether 留在 slot 等显式清扫。
-        assertEq(vault.balance, 0.6 ether);
-        assertEq(address(slot).balance, 0.4 ether);
-
-        vm.expectEmit(true, true, true, true, address(slot));
-        emit XcashCollected(address(0), 0.4 ether);
-        slot.collect(address(0));
-
         assertEq(vault.balance, 1 ether);
         assertEq(address(slot).balance, 0);
     }

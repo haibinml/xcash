@@ -19,7 +19,10 @@ contract XcashVaultSlotTemplate {
         if (msg.value == 0) revert ZeroAmount();
         emit XcashNativeReceived(msg.sender, msg.value);
 
-        (bool ok,) = vault().call{value: msg.value}("");
+        uint256 amount = address(this).balance;
+        emit XcashCollected(address(0), amount);
+
+        (bool ok,) = vault().call{value: amount}("");
         if (!ok) revert ForwardFailed();
     }
 

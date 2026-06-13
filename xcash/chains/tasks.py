@@ -71,6 +71,12 @@ def reconcile_vault_slot_collect_balance_gaps_task() -> None:
                 balance.pk for balance in summary["recent_failed_blocked"][:3]
             ],
         )
+    if summary["error_count"]:
+        logger.warning(
+            "VaultSlot 余额对账存在单行补建失败",
+            error_count=summary["error_count"],
+            recent_errors=summary["recent_errors"][:3],
+        )
 
 
 @shared_task(

@@ -19,8 +19,8 @@ contract DeployXcashVaultSlot is Script {
     ///      地址依赖 foundry.toml 中 solc_version / optimizer_runs / via_ir /
     ///      evm_version / bytecode_hash / cbor_metadata 等编译参数，
     ///      以及合约源码本身——任何一项变动都会让 init_code 变、地址漂移。
-    address internal constant EXPECTED_TEMPLATE = 0xBe5242D10E80b289E26B24687229e0553BD14007;
-    address internal constant EXPECTED_FACTORY = 0x58406B151BaF3c2c880a8CF89AF4cA37Afb9f5ae;
+    address internal constant EXPECTED_TEMPLATE = 0x20762B2649f2aA7B48d1800119499b988811a51F;
+    address internal constant EXPECTED_FACTORY = 0xe5a07Ed30d94464E5a3A88984080eaee021CbbAa;
 
     function run() external {
         bytes32 templateInitHash = keccak256(type(XcashVaultSlotTemplate).creationCode);

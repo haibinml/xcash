@@ -403,6 +403,36 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         self.assertEqual(task.sender, self.system_sender)
 
+    def test_collect_token_address_maps_chain_native_coin_to_zero_address(self):
+        from evm.vault_slots import NATIVE_COLLECT_TOKEN_ADDRESS
+        from evm.vault_slots import collect_token_address
+
+        self.assertEqual(
+            collect_token_address(crypto=self.chain.native_coin, chain=self.chain),
+            NATIVE_COLLECT_TOKEN_ADDRESS,
+        )
+        self.assertEqual(
+            collect_token_address(crypto=self.token, chain=self.chain),
+            self.token_address,
+        )
+
+    def test_create_collect_tx_task_for_native_coin_uses_zero_address_token(self):
+        slot = self._create_vault_slot()
+        self._mark_vault_slot_deployed(slot)
+
+        with self.patch_address_derivation():
+            task = create_collect_tx_task_for_slot(
+                chain=self.chain,
+                crypto=self.chain.native_coin,
+                slot=slot,
+            )
+
+        self.assertEqual(task.tx_type, TxTaskType.VaultSlotCollect)
+        self.assertEqual(
+            task.evm_task.data,
+            f"0x{_selector('collect(address)')}{'0' * 64}",
+        )
+
     def test_schedule_deploy_skips_when_slot_already_deployed_on_chain(self):
         slot = self._create_vault_slot()
         address_patch = self.patch_address_derivation()
@@ -1174,6 +1204,57 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertTrue(slot.is_deployed)
         schedule.refresh_from_db()
         self.assertLessEqual(schedule.due_at, timezone.now())
+
+    def test_deploy_confirmation_schedules_native_collect_when_balance_remains(self):
+        from chains.vault_slots import mark_deployed
+
+        slot = self._create_vault_slot()
+
+        with (
+            patch(
+                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+                return_value=SimpleNamespace(value=Decimal("1")),
+            ) as refresh_balance,
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            marked = mark_deployed(slot)
+
+        self.assertTrue(marked)
+        refresh_balance.assert_called_once()
+        schedule = VaultSlotCollectSchedule.objects.get(
+            chain=self.chain,
+            vault_slot=slot,
+            crypto=self.chain.native_coin,
+            tx_task__isnull=True,
+        )
+        self.assertLessEqual(schedule.due_at, timezone.now())
+
+    def test_due_native_collect_schedule_creates_zero_address_collect_task(self):
+        slot = self._create_vault_slot()
+        self._mark_vault_slot_deployed(slot)
+        schedule = VaultSlotCollectSchedule.objects.create(
+            chain=self.chain,
+            vault_slot=slot,
+            crypto=self.chain.native_coin,
+            due_at=timezone.now() - timedelta(seconds=1),
+        )
+
+        with (
+            self.patch_address_derivation(),
+            patch(
+                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+                return_value=SimpleNamespace(value=Decimal("1")),
+            ),
+        ):
+            created_count = VaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created_count, 1)
+        schedule.refresh_from_db()
+        self.assertIsNotNone(schedule.tx_task)
+        self.assertEqual(
+            schedule.tx_task.evm_task.data,
+            f"0x{_selector('collect(address)')}{'0' * 64}",
+        )
 
     def test_due_collect_schedule_deletes_pending_schedule_when_balance_is_zero(self):
         slot = self._create_vault_slot()
