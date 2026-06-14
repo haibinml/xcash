@@ -33,7 +33,7 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
                 isSuccess(n)
                   ? "bg-success text-success-foreground"
                   : n <= activeStep
-                  ? "bg-info text-white"
+                  ? "bg-warning text-primary-foreground"
                   : "bg-muted text-muted-foreground border",
                 isClickable(n) && "cursor-pointer hover:opacity-90"
               )}
@@ -63,7 +63,7 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
               n === activeStep
                 ? isSuccess(n)
                   ? "text-success font-medium"
-                  : "text-info font-medium"
+                  : "text-warning font-medium"
                 : isSuccess(n)
                   ? "text-success"
                   : "text-muted-foreground"
