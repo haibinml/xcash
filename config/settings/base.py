@@ -140,7 +140,7 @@ else:
         "NAME": "xcash",
         "USER": "postgres",
         "PASSWORD": env.str("POSTGRES_PASSWORD"),
-        "HOST": env.str("POSTGRES_HOST", default="django-db"),
+        "HOST": env.str("POSTGRES_HOST", default="db"),
         "PORT": env.int("POSTGRES_PORT", default=5432),
     }
 

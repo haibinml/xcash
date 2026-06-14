@@ -520,7 +520,7 @@ class InitEnvScriptTests(SimpleTestCase):
             self.assertEqual(len(env["WALLET_MNEMONIC_ENCRYPTION_KEY"]), 64)
 
     def test_does_not_overwrite_existing_env(self):
-        # 已有 .env 视为密钥复用源：再次运行不得覆盖（避免改掉助记词加密密钥）。
+        # 已有 .env 必须触发门禁失败，避免脚本静默覆盖助记词加密密钥。
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             env_path = tmp_path / ".env"
@@ -532,7 +532,8 @@ class InitEnvScriptTests(SimpleTestCase):
 
             result = self.run_init_env(tmp_path)
 
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("拒绝覆盖", result.stderr)
             self.assertEqual(env_path.read_text(encoding="utf-8"), original)
 
 

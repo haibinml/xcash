@@ -1,7 +1,7 @@
 name: xcash-dev
 
 volumes:
-  django_db_data: {}
+  db_data: {}
   redis_data: {}
   # anvil 会在 $HOME/.foundry/anvil/tmp 下按会话堆放每块 trace/receipt，独立卷便于排查与单独清理。
   foundry_home: {}
@@ -10,16 +10,16 @@ volumes:
   anvil_state: {}
 
 services:
-  django-db:
+  db:
     image: postgres:18.4-trixie
-    container_name: xcash_dev_django_db
+    container_name: xcash_dev_db
     restart: unless-stopped
     env_file:
       - .env
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - django_db_data:/var/lib/postgresql
+      - db_data:/var/lib/postgresql
 
   redis:
     image: redis:8.2.1

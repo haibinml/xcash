@@ -74,7 +74,7 @@ cleanup() {
       printf '[upgrade] NOT restarting services automatically — DB may be mid-migration.\n' >&2
       if [[ -n "${MAIN_DUMP}" && -f "${MAIN_DUMP}" ]]; then
         printf '[upgrade] 升级前备份已保留：%s\n' "${MAIN_DUMP}" >&2
-        printf '[upgrade] 回滚方向：停业务服务 → 将 django-db 重置为空库 → 用该 dump 执行 pg_restore。\n' >&2
+        printf '[upgrade] 回滚方向：停业务服务 → 将 db 重置为空库 → 用该 dump 执行 pg_restore。\n' >&2
         printf '[upgrade] 先看上方迁移报错，判断是修正后前滚（fix-forward）还是回滚到此备份。\n' >&2
       else
         printf '[upgrade] WARNING: 未找到升级前备份，回滚需依赖你的外部备份。\n' >&2
@@ -181,8 +181,8 @@ wait_for_postgres() {
 dump_main_database() {
   local output="$1"
 
-  log "dump django-db (full)"
-  "${COMPOSE[@]}" exec -T django-db sh -c \
+  log "dump db (full)"
+  "${COMPOSE[@]}" exec -T db sh -c \
     'pg_dump --format=custom --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >"${output}"
 }
 
@@ -201,7 +201,7 @@ run_main_manage() {
 
   # POSTGRES_PASSWORD 由 compose 的 env_file (.env) 注入，不再通过命令行 -e 传递，
   # 避免短时间内出现在宿主 ps aux 输出中。
-  # one-off 容器在 compose 网络内访问 django-db，必须使用容器端口 5432，
+  # one-off 容器在 compose 网络内访问 db，必须使用容器端口 5432，
   # 避免 .env 中宿主映射端口污染生产/演练 manage.py 连接。
   # -T 禁用 PTY，确保 stdout 是干净字节流，避免 ANSI 控制序列/CR 行尾污染 plan 比对。
   "${COMPOSE[@]}" run --rm --no-deps -T \
@@ -325,8 +325,8 @@ log "ensure database and cache dependencies are running"
 # 配置（典型如卷映射写错），重建后的新容器会以空库启动，随后的"备份"与演练都将在
 # 空库上全绿通过，整条防线失效。db/redis 的配置变更统一推迟到升级末尾的
 # up -d --remove-orphans 应用——那时真实数据的备份已经在手。
-"${COMPOSE[@]}" up -d --no-recreate django-db redis
-wait_for_postgres django-db
+"${COMPOSE[@]}" up -d --no-recreate db redis
+wait_for_postgres db
 
 if [[ "${STOP_BEFORE_REHEARSAL}" == "true" ]]; then
   log "quiesced dump: stop app services before dump (backup == production at migrate time)"
@@ -365,7 +365,7 @@ if [[ "${STOP_BEFORE_REHEARSAL}" != "true" ]]; then
 fi
 
 log "verify production migration plans"
-run_main_manage django-db migrate --plan 2>&1 \
+run_main_manage db migrate --plan 2>&1 \
   | tee "${TMP_DIR}/main-production-plan.log" >"${MAIN_PRODUCTION_PLAN}"
 compare_plans "${MAIN_REHEARSAL_PLAN}" "${MAIN_PRODUCTION_PLAN}" "main database"
 
@@ -374,13 +374,13 @@ compare_plans "${MAIN_REHEARSAL_PLAN}" "${MAIN_PRODUCTION_PLAN}" "main database"
 PRODUCTION_MIGRATE_STARTED=true
 
 log "apply production migrations"
-run_main_manage django-db migrate --noinput 2>&1 \
+run_main_manage db migrate --noinput 2>&1 \
   | tee "${TMP_DIR}/main-production-migrate.log"
 PRODUCTION_MIGRATE_COMPLETED=true
 
 log "run production post-migration setup"
-run_main_manage django-db collectstatic --noinput
-run_main_manage django-db ensure_default_superuser
+run_main_manage db collectstatic --noinput
+run_main_manage db ensure_default_superuser
 
 log "start application services"
 "${COMPOSE[@]}" up -d --remove-orphans

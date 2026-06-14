@@ -13,8 +13,8 @@ help:
 	@echo "  make dev-sync         同步本地开发依赖（uv dev group）"
 	@echo "  make dev-up           前台运行 Django + Celery（开发模式）"
 	@echo "  make dev-up-pro       生产级方式运行（gunicorn + 高并发 worker，适合压测）"
-	@echo "  make dev-up-deps      仅启动 django-db/redis"
-	@echo "  make dev-up-chain     启动 django-db/redis/anvil"
+	@echo "  make dev-up-deps      仅启动 db/redis"
+	@echo "  make dev-up-chain     启动 db/redis/anvil"
 	@echo "  make dev-down         停止开发依赖容器"
 	@echo "  make dev-logs         查看依赖容器日志"
 	@echo "  make dev-chain-logs   查看本地区块链容器日志"
@@ -56,16 +56,16 @@ dev-up-pro:
 	ENV_FILE=$(ENV_FILE) ./scripts/dev-up-pro.sh
 
 dev-up-deps:
-	$(DC) up -d django-db redis
+	$(DC) up -d db redis
 
 dev-up-chain:
-	$(DC) up -d django-db redis anvil
+	$(DC) up -d db redis anvil
 
 dev-down:
 	$(DC) down
 
 dev-logs:
-	$(DC) logs -f django-db redis flower
+	$(DC) logs -f db redis flower
 
 dev-chain-logs:
 	$(DC) logs -f anvil
@@ -104,7 +104,7 @@ dev-shell:
 	ENV_FILE=$(ENV_FILE) ./scripts/dev-manage.sh shell_plus
 
 dev-test:
-	$(DC) up -d django-db redis
+	$(DC) up -d db redis
 	# 复用已有测试库，避免非交互环境在 test_xcash 已存在时卡住确认提示。
 	PYTHONPATH=xcash ./.venv/bin/python manage.py test --settings=config.settings.test --keepdb
 
@@ -112,7 +112,7 @@ pytest:
 	uv run pytest --create-db --nomigrations -q
 
 dev-local-init:
-	$(DC) up -d django-db redis anvil
+	$(DC) up -d db redis anvil
 	# 本地链初始化与生产默认 init 分离，避免误写 Sepolia / mainnet 配置到开发库。
 	ENV_FILE=$(ENV_FILE) ./scripts/dev-manage.sh init_local_chains
 

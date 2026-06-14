@@ -2,7 +2,7 @@ name: xcash
 
 volumes:
   redis_data: {}
-  django_db_data: {}
+  db_data: {}
   django_staticfiles: {}
 
 # 同机 SaaS 等可信服务通过加入 xcash_public 按 DNS 别名互通（如 http://xcash-caddy）。
@@ -31,16 +31,16 @@ services:
     volumes:
       - redis_data:/data
 
-  django-db:
+  db:
     image: postgres:18.4-trixie
-    container_name: xcash_django_db
+    container_name: xcash_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: xcash
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - django_db_data:/var/lib/postgresql
+      - db_data:/var/lib/postgresql
 
   migration-rehearsal-db:
     image: postgres:18.4-trixie
@@ -58,7 +58,7 @@ services:
     container_name: xcash_django
     restart: unless-stopped
     depends_on:
-      - django-db
+      - db
       - redis
     # 主环境文件含 WALLET_MNEMONIC_ENCRYPTION_KEY（钱包助记词加密密钥）。
     # 地址派生与 EVM 签名在主系统内部完成，worker/beat 经 anchor 继承同一份配置。
