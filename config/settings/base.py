@@ -151,6 +151,20 @@ DATABASES = {
 }
 DATABASES["default"]["ATOMIC_REQUESTS"] = True
 DATABASES["default"]["CONN_MAX_AGE"] = 60
+# 持久连接健康检查：复用前探活，连接被干净关闭时透明重连，避免拿到死连接。
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
+# libpq TCP keepalive + 连接超时：闲置期每 30s 发探针，既维持 NAT/conntrack 状态
+# 不被回收，也能在数十秒内判定对端已死并快速失败，而非干等内核 TCP 重传超时
+# （表现为闲置后首个请求卡十几秒）。用 setdefault 合并，保留 DATABASE_URL 解析出的 OPTIONS。
+DATABASES["default"].setdefault("OPTIONS", {}).update(
+    {
+        "connect_timeout": 5,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
+)
 # https://docs.djangoproject.com/en/stable/ref/settings/#std:setting-DEFAULT_AUTO_FIELD
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
