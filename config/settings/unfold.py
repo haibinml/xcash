@@ -7,7 +7,6 @@ BASE_UNFOLD = {
     "SITE_HEADER": "Xcash",
     "SITE_URL": "https://xca.sh/",
     "SITE_SYMBOL": "dashboard",  # symbol from icon set
-    "ENVIRONMENT": "core.dashboard.environment_callback",
     "DASHBOARD_CALLBACK": "core.dashboard.dashboard_callback",
     "LOGIN": {
         "image": lambda request: static("login-bg.jpg"),
@@ -88,6 +87,21 @@ SIDEBAR_UNFOLD = {
                         "title": _("经营看板"),
                         "icon": "insert_chart",
                         "link": reverse_lazy("admin:index"),
+                    },
+                    {
+                        "title": _("异常巡检"),
+                        "icon": "health_and_safety",
+                        "link": reverse_lazy("operational-inspection"),
+                        "badge": "core.dashboard.operational_inspection_sidebar_badge",
+                        "badge_variant": "danger",
+                        "badge_style": "solid",
+                        "permission": "core.dashboard.has_operational_inspection_risk",
+                    },
+                    {
+                        "title": _("异常巡检"),
+                        "icon": "health_and_safety",
+                        "link": reverse_lazy("operational-inspection"),
+                        "permission": "core.dashboard.has_no_operational_inspection_risk",
                     },
                     {
                         "title": _("系统钱包"),

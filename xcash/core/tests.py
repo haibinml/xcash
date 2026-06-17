@@ -237,11 +237,10 @@ class OperationalRiskResourceTests(TestCase):
         self.assertEqual(alerts[0]["sender"], sender)
 
 
-class EnvironmentBadgeResourceRiskTests(TestCase):
-    """badge 的资源风险来自异步巡检写入的缓存，而非渲染时实时 RPC。
+class OperationalInspectionSidebarBadgeTests(TestCase):
+    """侧边栏风险 badge 的资源风险来自异步巡检写入的缓存，而非渲染时实时 RPC。
 
-    回归守卫：修复前 badge 调 build_summary(limit=0)，evm/tron 计数恒为 0，
-    资源告警是死代码——badge 永远不会因资源风险变红。
+    回归守卫：资源告警不能只藏在右上角，必须落到“异常巡检”导航入口。
     """
 
     def setUp(self):
@@ -264,46 +263,142 @@ class EnvironmentBadgeResourceRiskTests(TestCase):
             {"evm_low_native_balance_count": 2, "tron_low_resource_count": 3},
         )
 
-    def test_badge_flags_danger_from_cached_resource_risk(self):
+    @override_settings(ADMIN_PATH_CONFIGURED=True)
+    def test_sidebar_badge_counts_cached_resource_risk(self):
         from django.test import RequestFactory
 
-        from core.dashboard import environment_callback
+        from core.dashboard import has_no_operational_inspection_risk
+        from core.dashboard import has_operational_inspection_risk
+        from core.dashboard import operational_inspection_sidebar_badge
 
-        # 无 webhook 堆积，但缓存里有 EVM 资源风险 -> badge 必须告警。
+        # 无 webhook 堆积，但缓存里有 EVM 资源风险 -> 入口 badge 必须提示。
         OperationalRiskService.cache_resource_risk_counts(
             evm_low_native_balance_count=1,
-            tron_low_resource_count=0,
+            tron_low_resource_count=2,
         )
         request = RequestFactory().get("/")
 
-        badge = environment_callback(request)
-
-        self.assertEqual(badge[1], "danger")
+        self.assertTrue(has_operational_inspection_risk(request))
+        self.assertFalse(has_no_operational_inspection_risk(request))
+        self.assertEqual(operational_inspection_sidebar_badge(request), 3)
 
     @override_settings(ADMIN_PATH_CONFIGURED=False)
-    def test_badge_warns_when_admin_path_is_not_configured(self):
+    def test_sidebar_badge_counts_admin_path_warning(self):
         from django.test import RequestFactory
 
-        from core.dashboard import environment_callback
+        from core.dashboard import operational_inspection_sidebar_badge
 
         request = RequestFactory().get("/")
 
-        badge = environment_callback(request)
-
-        self.assertEqual(str(badge[0]), "ADMIN_PATH 未设置")
-        self.assertEqual(badge[1], "warning")
+        self.assertEqual(operational_inspection_sidebar_badge(request), 1)
 
     @override_settings(ADMIN_PATH_CONFIGURED=True)
-    def test_badge_normal_without_any_risk(self):
+    def test_sidebar_badge_hidden_without_any_risk(self):
         from django.test import RequestFactory
 
-        from core.dashboard import environment_callback
+        from core.dashboard import has_no_operational_inspection_risk
+        from core.dashboard import has_operational_inspection_risk
+        from core.dashboard import operational_inspection_sidebar_badge
 
         request = RequestFactory().get("/")
 
-        badge = environment_callback(request)
+        self.assertFalse(has_operational_inspection_risk(request))
+        self.assertTrue(has_no_operational_inspection_risk(request))
+        self.assertEqual(operational_inspection_sidebar_badge(request), 0)
 
-        self.assertEqual(badge[1], "success")
+
+class OperationalInspectionPayloadTests(TestCase):
+    def empty_metrics(self):
+        return {
+            "recent_failed_attempts": [],
+            "recent_stalled_invoices": [],
+            "recent_stalled_webhook_events": [],
+        }
+
+    @override_settings(ADMIN_PATH_CONFIGURED=False)
+    def test_payload_includes_admin_path_warning(self):
+        from core.dashboard import _build_operational_inspection_payload
+
+        payload = _build_operational_inspection_payload(self.empty_metrics())
+
+        self.assertEqual(len(payload["attention_items"]), 1)
+        self.assertEqual(str(payload["inspection_sections"][0]["title"]), "后台安全配置")
+        self.assertEqual(payload["inspection_sections"][0]["count"], 1)
+        self.assertEqual(
+            str(payload["inspection_sections"][0]["rows"][0]["title"]),
+            "后台入口未配置",
+        )
+
+    @override_settings(ADMIN_PATH_CONFIGURED=True)
+    def test_payload_includes_resource_risk_rows(self):
+        from django.urls import reverse
+
+        from core.dashboard import _build_operational_inspection_payload
+
+        evm_chain = make_evm_chain(code=ChainCode.Ethereum)
+        tron_chain = make_tron_chain()
+        wallet = Wallet.objects.create()
+        evm_sender = Address.objects.create(
+            wallet=wallet,
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.HotWallet,
+            bip44_account=Wallet.get_bip44_account(AddressUsage.HotWallet),
+            address_index=0,
+            address=Web3.to_checksum_address("0x" + "68" * 20),
+        )
+        tron_sender = Address.objects.create(
+            wallet=wallet,
+            chain_type=ChainType.TRON,
+            usage=AddressUsage.HotWallet,
+            bip44_account=Wallet.get_bip44_account(AddressUsage.HotWallet),
+            address_index=1,
+            address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        )
+        resource_risk_summary = {
+            "evm_low_native_balance_count": 1,
+            "recent_evm_low_native_balance_alerts": [
+                {
+                    "chain": evm_chain,
+                    "sender": evm_sender,
+                    "current_balance": 1_000,
+                    "required_balance": 2_000,
+                    "task_count": 1,
+                    "error": "",
+                }
+            ],
+            "tron_low_resource_count": 1,
+            "recent_tron_low_resource_alerts": [
+                {
+                    "chain": tron_chain,
+                    "sender": tron_sender,
+                    "available_energy": 5,
+                    "required_energy": 120,
+                    "available_bandwidth": 0,
+                    "required_bandwidth": 300,
+                    "task_count": 1,
+                    "error": "",
+                }
+            ],
+        }
+
+        payload = _build_operational_inspection_payload(
+            self.empty_metrics(),
+            resource_risk_summary=resource_risk_summary,
+        )
+
+        self.assertEqual(len(payload["attention_items"]), 2)
+        self.assertEqual(payload["inspection_sections"][1]["count"], 1)
+        self.assertEqual(payload["inspection_sections"][2]["count"], 1)
+        evm_row = payload["inspection_sections"][1]["rows"][0]
+        tron_row = payload["inspection_sections"][2]["rows"][0]
+        self.assertEqual(str(evm_row["title"]), "EVM Gas 余额不足")
+        self.assertIn("需要 2,000 wei", str(evm_row["description"]))
+        self.assertEqual(
+            evm_row["href"],
+            reverse("admin:chains_address_change", args=[evm_sender.pk]),
+        )
+        self.assertEqual(str(tron_row["title"]), "Tron 资源不足")
+        self.assertIn("Energy 5/120", str(tron_row["description"]))
 
 
 class DashboardMetricsTests(TestCase):

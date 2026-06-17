@@ -15,41 +15,190 @@ class HomeView(RedirectView):
     pattern_name = "admin:index"
 
 
-def _build_environment_badge(risk_summary: dict, resource_risk_counts: dict) -> list[str]:
-    """为后台顶部角标生成轻量状态摘要，避免复用完整首页聚合。"""
-    pending_count = (
-        risk_summary["stalled_webhook_event_count"]
+def _operational_inspection_risk_count(request=None) -> int:
+    if request is not None and hasattr(request, "_xcash_operational_risk_count"):
+        return request._xcash_operational_risk_count
+
+    # 侧边栏 badge 只需要轻量计数。webhook 堆积量是轻量 DB count，实时取即可；
+    # EVM/Tron 资源水位需多链实时 RPC，改读异步巡检写入的缓存，避免每次页面渲染触发链上请求。
+    risk_summary = OperationalRiskService.build_summary(limit=0)
+    resource_risk_counts = OperationalRiskService.cached_resource_risk_counts()
+    risk_count = (
+        (0 if settings.ADMIN_PATH_CONFIGURED else 1)
+        + risk_summary["stalled_webhook_event_count"]
         + resource_risk_counts["evm_low_native_balance_count"]
         + resource_risk_counts["tron_low_resource_count"]
     )
-    if pending_count > 0:
-        if not settings.ADMIN_PATH_CONFIGURED:
-            return [_("ADMIN_PATH 未设置 / 存在高风险告警"), "danger"]
-        return [_("存在高风险告警"), "danger"]
-
-    if not settings.ADMIN_PATH_CONFIGURED:
-        return [_("ADMIN_PATH 未设置"), "warning"]
-
-    return [_("运行正常"), "success"]
+    if request is not None:
+        request._xcash_operational_risk_count = risk_count
+    return risk_count
 
 
-def environment_callback(request):
-    # 顶部 environment badge 只需要判断是否有高风险积压。webhook 堆积量是轻量 DB
-    # count，实时取即可；EVM/Tron 资源水位需多链实时 RPC，改读异步巡检写入的缓存，
-    # 避免每次页面渲染触发链上请求。
-    risk_summary = OperationalRiskService.build_summary(limit=0)
-    resource_risk_counts = OperationalRiskService.cached_resource_risk_counts()
-    return _build_environment_badge(risk_summary, resource_risk_counts)
+def operational_inspection_sidebar_badge(request):
+    return _operational_inspection_risk_count(request)
+
+
+def has_operational_inspection_risk(request):
+    return _operational_inspection_risk_count(request) > 0
+
+
+def has_no_operational_inspection_risk(request):
+    return not has_operational_inspection_risk(request)
 
 
 def _fmt_usd(amount) -> str:
     return f"$ {amount:,.2f}"
 
 
-def _build_operational_inspection_payload(metrics):
+def _fmt_int(value) -> str:
+    if value is None:
+        return "-"
+    return f"{int(value):,}"
+
+
+def _address_change_href(sender) -> str:
+    if sender is None or sender.pk is None:
+        return ""
+    return reverse("admin:chains_address_change", args=[sender.pk])
+
+
+def _empty_resource_risk_summary() -> dict:
+    return {
+        "evm_low_native_balance_count": 0,
+        "recent_evm_low_native_balance_alerts": [],
+        "tron_low_resource_count": 0,
+        "recent_tron_low_resource_alerts": [],
+    }
+
+
+def _build_admin_security_rows() -> list[dict]:
+    if settings.ADMIN_PATH_CONFIGURED:
+        return []
+    return [
+        {
+            "level": _("中"),
+            "title": _("后台入口未配置"),
+            "description": _("ADMIN_PATH 未设置，后台仍使用默认入口；建议配置独立后台路径。"),
+            "href": "",
+        }
+    ]
+
+
+def _build_evm_resource_rows(resource_risk_summary: dict) -> list[dict]:
+    rows = []
+    for alert in resource_risk_summary["recent_evm_low_native_balance_alerts"]:
+        chain = alert.get("chain")
+        sender = alert.get("sender")
+        error = alert.get("error") or ""
+        if error:
+            description = _(
+                "%(chain)s / %(sender)s / 任务 %(task_count)s 个 / RPC 错误：%(error)s"
+            ) % {
+                "chain": chain.code if chain else "-",
+                "sender": sender.address if sender else "-",
+                "task_count": alert.get("task_count") or 0,
+                "error": error,
+            }
+        else:
+            description = _(
+                "%(chain)s / %(sender)s / 当前 %(current)s wei / 需要 %(required)s wei / 任务 %(task_count)s 个"
+            ) % {
+                "chain": chain.code if chain else "-",
+                "sender": sender.address if sender else "-",
+                "current": _fmt_int(alert.get("current_balance")),
+                "required": _fmt_int(alert.get("required_balance")),
+                "task_count": alert.get("task_count") or 0,
+            }
+        rows.append(
+            {
+                "level": _("高"),
+                "title": _("EVM Gas 余额不足"),
+                "description": description,
+                "href": _address_change_href(sender),
+            }
+        )
+    return rows
+
+
+def _build_tron_resource_rows(resource_risk_summary: dict) -> list[dict]:
+    rows = []
+    for alert in resource_risk_summary["recent_tron_low_resource_alerts"]:
+        chain = alert.get("chain")
+        sender = alert.get("sender")
+        error = alert.get("error") or ""
+        if error:
+            description = _(
+                "%(chain)s / %(sender)s / 任务 %(task_count)s 个 / 资源查询错误：%(error)s"
+            ) % {
+                "chain": chain.code if chain else "-",
+                "sender": sender.address if sender else "-",
+                "task_count": alert.get("task_count") or 0,
+                "error": error,
+            }
+        else:
+            description = _(
+                "%(chain)s / %(sender)s / Energy %(energy)s/%(required_energy)s / Bandwidth %(bandwidth)s/%(required_bandwidth)s / 任务 %(task_count)s 个"
+            ) % {
+                "chain": chain.code if chain else "-",
+                "sender": sender.address if sender else "-",
+                "energy": _fmt_int(alert.get("available_energy")),
+                "required_energy": _fmt_int(alert.get("required_energy")),
+                "bandwidth": _fmt_int(alert.get("available_bandwidth")),
+                "required_bandwidth": _fmt_int(alert.get("required_bandwidth")),
+                "task_count": alert.get("task_count") or 0,
+            }
+        rows.append(
+            {
+                "level": _("高"),
+                "title": _("Tron 资源不足"),
+                "description": description,
+                "href": _address_change_href(sender),
+            }
+        )
+    return rows
+
+
+def _build_operational_inspection_payload(metrics, resource_risk_summary=None):
     # 改动原因：首页摘要与独立巡检页必须共用同一套异常组装逻辑，避免两个入口出现口径漂移。
     inspection_sections = []
     attention_items = []
+    resource_risk_summary = resource_risk_summary or _empty_resource_risk_summary()
+
+    admin_security_rows = _build_admin_security_rows()
+    inspection_sections.append(
+        {
+            "title": _("后台安全配置"),
+            "subtitle": _("后台入口路径与基础安全配置检查"),
+            "count": len(admin_security_rows),
+            "rows": admin_security_rows,
+            "empty_text": _("当前没有后台安全配置风险"),
+        }
+    )
+    attention_items.extend(admin_security_rows)
+
+    evm_resource_rows = _build_evm_resource_rows(resource_risk_summary)
+    inspection_sections.append(
+        {
+            "title": _("EVM Gas 水位巡检"),
+            "subtitle": _("主动上链任务 sender 原生币余额检查"),
+            "count": len(evm_resource_rows),
+            "rows": evm_resource_rows,
+            "empty_text": _("当前没有 EVM Gas 余额不足的 sender"),
+        }
+    )
+    attention_items.extend(evm_resource_rows)
+
+    tron_resource_rows = _build_tron_resource_rows(resource_risk_summary)
+    inspection_sections.append(
+        {
+            "title": _("Tron 资源水位巡检"),
+            "subtitle": _("待广播或需重签任务的 Energy / Bandwidth 检查"),
+            "count": len(tron_resource_rows),
+            "rows": tron_resource_rows,
+            "empty_text": _("当前没有 Tron 资源不足的 sender"),
+        }
+    )
+    attention_items.extend(tron_resource_rows)
 
     failed_attempt_rows = [
         {
@@ -133,9 +282,32 @@ def _build_operational_inspection_payload(metrics):
     }
 
 
-def _build_operational_inspection_summary_cards(snapshot):
+def _build_operational_inspection_summary_cards(snapshot, resource_risk_summary):
     # 改动原因：独立巡检页需要先给出风险摘要，用户不必逐段滚动才能判断当前是否有异常。
+    admin_path_configured = settings.ADMIN_PATH_CONFIGURED
     return [
+        {
+            "title": _("后台安全"),
+            "metric": 0 if admin_path_configured else 1,
+            "subtitle": _("ADMIN_PATH 已配置")
+            if admin_path_configured
+            else _("ADMIN_PATH 未设置"),
+            "tone": "bg-emerald-50" if admin_path_configured else "bg-rose-50",
+        },
+        {
+            "title": _("EVM Gas 风险"),
+            "metric": resource_risk_summary["evm_low_native_balance_count"],
+            "subtitle": _("Gas 余额不足 sender %(count)s 个")
+            % {"count": resource_risk_summary["evm_low_native_balance_count"]},
+            "tone": "bg-rose-50",
+        },
+        {
+            "title": _("Tron 资源风险"),
+            "metric": resource_risk_summary["tron_low_resource_count"],
+            "subtitle": _("Energy / Bandwidth 不足 sender %(count)s 个")
+            % {"count": resource_risk_summary["tron_low_resource_count"]},
+            "tone": "bg-orange-50",
+        },
         {
             "title": _("链上确认风险"),
             "metric": snapshot["confirming_count"],
@@ -331,13 +503,27 @@ def dashboard_callback(request, context):
 def operational_inspection_view(request):
     # 改动原因：“异常巡检”菜单需要落到独立页面，而不是继续复用 admin 首页。
     metrics = build_dashboard_metrics()
-    inspection_payload = _build_operational_inspection_payload(metrics)
+    resource_risk_summary = OperationalRiskService.build_summary(
+        limit=4,
+        include_resource_checks=True,
+    )
+    OperationalRiskService.cache_resource_risk_counts(
+        evm_low_native_balance_count=resource_risk_summary[
+            "evm_low_native_balance_count"
+        ],
+        tron_low_resource_count=resource_risk_summary["tron_low_resource_count"],
+    )
+    inspection_payload = _build_operational_inspection_payload(
+        metrics,
+        resource_risk_summary=resource_risk_summary,
+    )
     overview_context = admin.site.each_context(request)
     overview_context.update(
         {
             "title": _("异常巡检"),
             "inspection_summary_cards": _build_operational_inspection_summary_cards(
                 metrics["snapshot"],
+                resource_risk_summary,
             ),
             "inspection_sections": inspection_payload["inspection_sections"],
             "attention_items_count": len(inspection_payload["attention_items"]),
