@@ -59,6 +59,8 @@ def ensure_deposit_address(
     customer,
     crypto,
 ) -> str:
+    if crypto is None:
+        raise ValueError("crypto is required for VaultSlot deposit address")
     validate_supported_chain(chain)
     backend = get_backend(chain)
 

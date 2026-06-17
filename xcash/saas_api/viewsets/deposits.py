@@ -69,19 +69,12 @@ class SaasDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
         else:
             raise APIError(ErrorCode.INVALID_CHAIN)
 
-        customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
-        if crypto_symbol:
-            try:
-                crypto = Crypto.objects.get(symbol=crypto_symbol.upper(), active=True)
-            except Crypto.DoesNotExist:
-                raise APIError(ErrorCode.INVALID_CRYPTO) from None
-        elif chain.type == ChainType.TRON:
-            try:
-                crypto = Crypto.objects.get(symbol="USDT", active=True)
-            except Crypto.DoesNotExist:
-                raise APIError(ErrorCode.INVALID_CRYPTO) from None
-        else:
-            crypto = chain.native_coin
+        if not crypto_symbol:
+            raise APIError(ErrorCode.INVALID_CRYPTO, detail="crypto is required")
+        try:
+            crypto = Crypto.objects.get(symbol=crypto_symbol.upper(), active=True)
+        except Crypto.DoesNotExist:
+            raise APIError(ErrorCode.INVALID_CRYPTO) from None
 
         if not crypto.active:
             raise APIError(ErrorCode.INVALID_CRYPTO)
@@ -92,6 +85,7 @@ class SaasDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet):
             crypto=crypto,
         ):
             raise APIError(ErrorCode.INVALID_CHAIN)
+        customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
         deposit_address = VaultSlot.ensure_deposit_address(
             chain=chain,
             customer=customer,
