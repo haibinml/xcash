@@ -52,7 +52,7 @@ class ProjectService:
 
     @staticmethod
     def invoice_receiving_mode_for_chain(*, project: Project, chain) -> str:
-        """返回项目在该链类型下实际生效的账单收款模式（按链覆盖优先，留空继承全局）。"""
+        """返回项目在该链类型下实际生效的账单收款模式。"""
         return project.resolved_invoice_receiving_mode(chain.type)
 
     @staticmethod

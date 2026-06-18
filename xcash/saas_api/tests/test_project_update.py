@@ -101,22 +101,16 @@ class TestPatchFieldWhitelist:
         assert project.active == original_active
         assert project.appid == original_appid
 
-    def test_receiving_mode_global_and_per_chain_override(self, client, project):
-        """账单收款模式：全局 invoice_receiving_mode + 可选按链覆盖。
-
-        默认专属字段为空（继承全局钱包直收）；PATCH 可改全局，也可单独覆盖某条链，
-        读接口回显全局与按链覆盖，供 UI 渲染。
-        """
-        # 默认：全局钱包直收，专属为空 → 两链有效模式都继承全局。
-        assert project.invoice_receiving_mode == InvoiceReceivingMode.Differ
-        assert project.evm_invoice_receiving_mode == ""
-        assert project.tron_invoice_receiving_mode == ""
+    def test_receiving_mode_per_chain_update(self, client, project):
+        """账单收款模式按链配置，切换只影响后续新账单的地址分配。"""
+        assert project.evm_invoice_receiving_mode == InvoiceReceivingMode.Differ
+        assert project.tron_invoice_receiving_mode == InvoiceReceivingMode.Differ
 
         response = client.patch(
             _url(project),
             data={
-                "invoice_receiving_mode": InvoiceReceivingMode.VaultSlot,
                 "evm_invoice_receiving_mode": InvoiceReceivingMode.Differ,
+                "tron_invoice_receiving_mode": InvoiceReceivingMode.VaultSlot,
             },
             content_type="application/json",
             HTTP_AUTHORIZATION=AUTH_HEADER,
@@ -124,10 +118,8 @@ class TestPatchFieldWhitelist:
         assert response.status_code == 200, response.content
 
         project.refresh_from_db()
-        # 全局切到智能合约；EVM 覆盖为钱包直收；TRON 未覆盖，继承全局。
-        assert project.invoice_receiving_mode == InvoiceReceivingMode.VaultSlot
         assert project.evm_invoice_receiving_mode == InvoiceReceivingMode.Differ
-        assert project.tron_invoice_receiving_mode == ""
+        assert project.tron_invoice_receiving_mode == InvoiceReceivingMode.VaultSlot
         assert (
             project.resolved_invoice_receiving_mode(ChainType.EVM)
             == InvoiceReceivingMode.Differ
@@ -137,11 +129,10 @@ class TestPatchFieldWhitelist:
             == InvoiceReceivingMode.VaultSlot
         )
 
-        # GET 详情应回显全局与按链覆盖。
+        # GET 详情只回显按链模式。
         detail = client.get(_url(project), HTTP_AUTHORIZATION=AUTH_HEADER).json()
-        assert detail["invoice_receiving_mode"] == InvoiceReceivingMode.VaultSlot
         assert detail["evm_invoice_receiving_mode"] == InvoiceReceivingMode.Differ
-        assert detail["tron_invoice_receiving_mode"] == ""
+        assert detail["tron_invoice_receiving_mode"] == InvoiceReceivingMode.VaultSlot
 
     def test_happy_path_multiple_fields(self, client, project):
         """合法 PATCH：同时修改多个白名单字段，均正确入库。"""

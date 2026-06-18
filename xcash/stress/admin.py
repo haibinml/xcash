@@ -151,7 +151,7 @@ class StressRunAdmin(ModelAdmin):
     list_display = (
         "name",
         "count",
-        "invoice_receiving_mode",
+        "evm_invoice_receiving_mode",
         "deposit_count",
         "deposit_customer_count",
         "status",
@@ -182,14 +182,14 @@ class StressRunAdmin(ModelAdmin):
             return (
                 "name",
                 "count",
-                "invoice_receiving_mode",
+                "evm_invoice_receiving_mode",
                 "deposit_count",
                 "deposit_customer_count",
             )
         return (
             "name",
             "count",
-            "invoice_receiving_mode",
+            "evm_invoice_receiving_mode",
             "deposit_count",
             "deposit_customer_count",
             "status",

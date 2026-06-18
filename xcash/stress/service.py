@@ -59,7 +59,7 @@ class StressService:
             if stress.count > 0:
                 _setup_invoice_receiving(
                     project=project,
-                    mode=stress.invoice_receiving_mode,
+                    mode=stress.evm_invoice_receiving_mode,
                 )
 
             # 充值收款仍使用 VaultSlot deposit 地址，和账单收款模式相互独立。
@@ -83,7 +83,7 @@ class StressService:
         # Vault 注资在事务提交后执行，确保数据库记录已落库。Differ-only 账单不需要 vault。
         if stress.deposit_count > 0 or (
             stress.count > 0
-            and stress.invoice_receiving_mode == InvoiceReceivingMode.VaultSlot
+            and stress.evm_invoice_receiving_mode == InvoiceReceivingMode.VaultSlot
         ):
             _fund_vault_for_stress(stress.project)
 
@@ -323,7 +323,7 @@ def _create_stress_project(stress: StressRun) -> Project:
         ip_white_list="*",
         active=True,
         is_test=True,
-        evm_invoice_receiving_mode=stress.invoice_receiving_mode,
+        evm_invoice_receiving_mode=stress.evm_invoice_receiving_mode,
         # 设置极大阈值使所有 Invoice 都走 QUICK 确认模式，
         # 因为 Anvil 本地测试链不会自动产生新区块，FULL 模式无法完成确认。
         fast_confirm_threshold=Decimal("99999999"),

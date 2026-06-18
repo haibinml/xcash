@@ -84,31 +84,18 @@ class Project(models.Model):
         ),
         unique=True,
     )
-    # 账单收款模式：全局兜底 + 按链可选覆盖。
-    # 商户在 SaaS 只配全局 invoice_receiving_mode（单一认知维度）；引擎保留按链覆盖能力
-    # （epay 等非 SaaS 消费者可用，未来也可放开"按网络单独配"）。专属字段留空即继承全局。
-    invoice_receiving_mode = models.CharField(
-        _("账单收款模式"),
+    # 账单收款模式按链独立配置。EVM 与 Tron 都有明确值，不再通过全局字段兜底。
+    evm_invoice_receiving_mode = models.CharField(
+        _("EVM 账单收款模式"),
         choices=InvoiceReceivingMode,
         default=InvoiceReceivingMode.Differ,
-        help_text=_(
-            "项目级全局账单收款模式；某条链未单独设置覆盖时继承此模式。"
-            "钱包直收无需链上归集交易，作为默认。"
-        ),
-    )
-    evm_invoice_receiving_mode = models.CharField(
-        _("EVM 账单收款模式覆盖"),
-        choices=InvoiceReceivingMode,
-        blank=True,
-        default="",
-        help_text=_("仅覆盖 EVM 链；留空则继承全局账单收款模式。"),
+        help_text=_("EVM 网络账单收款使用钱包直收或智能合约模式。"),
     )
     tron_invoice_receiving_mode = models.CharField(
-        _("Tron 账单收款模式覆盖"),
+        _("Tron 账单收款模式"),
         choices=InvoiceReceivingMode,
-        blank=True,
-        default="",
-        help_text=_("仅覆盖 Tron 链；留空则继承全局账单收款模式。"),
+        default=InvoiceReceivingMode.Differ,
+        help_text=_("Tron 网络账单收款使用钱包直收或智能合约模式。"),
     )
 
     active = models.BooleanField(verbose_name=_("启用"), default=True)
@@ -219,21 +206,20 @@ class Project(models.Model):
     @staticmethod
     def invoice_receiving_mode_field_for_chain_type(
         chain_type: ChainType | str,
-    ) -> str | None:
-        """返回某链类型的账单收款模式覆盖字段名；未知链类型返回 None（继承全局）。"""
-        return {
+    ) -> str:
+        """返回某链类型的账单收款模式字段名；未知链类型显式拒绝。"""
+        field = {
             ChainType.EVM: "evm_invoice_receiving_mode",
             ChainType.TRON: "tron_invoice_receiving_mode",
         }.get(chain_type)
+        if field is None:
+            raise ValueError(f"unsupported chain type: {chain_type}")
+        return field
 
     def resolved_invoice_receiving_mode(self, chain_type: ChainType | str) -> str:
-        """该链类型实际生效的账单收款模式：按链覆盖优先，留空则继承全局。
-
-        全局 invoice_receiving_mode 为 NOT NULL，故任何链（含未来新链）都有确定模式。
-        """
+        """该链类型实际生效的账单收款模式。"""
         field = self.invoice_receiving_mode_field_for_chain_type(chain_type)
-        override = getattr(self, field) if field else None
-        return override or self.invoice_receiving_mode
+        return getattr(self, field)
 
     @classmethod
     def retrieve(cls, appid: str):

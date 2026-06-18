@@ -219,7 +219,7 @@ class StressServiceTests(SimpleTestCase):
         stress = StressRun(
             id=23,
             count=2,
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
             status=StressRunStatus.PREPARING,
         )
         stress.save = Mock()
@@ -249,7 +249,7 @@ class StressServiceTests(SimpleTestCase):
         stress = StressRun(
             id=23,
             count=2,
-            invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
             status=StressRunStatus.PREPARING,
         )
         stress.save = Mock()
