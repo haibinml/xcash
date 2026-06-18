@@ -54,6 +54,19 @@ export const selectPayMethod = async (sysNo, crypto, chain) => {
   }
 }
 
+// 获取链/币基础元数据（图标、显示名等静态字典，单一来源在后端）
+export const getMetadata = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/metadata`, {
+      headers: { Accept: 'application/json' },
+    })
+    return await handleResponse(response, '获取基础信息失败')
+  } catch (error) {
+    console.error('获取基础元数据失败:', error)
+    throw error
+  }
+}
+
 // 获取 URL 参数
 export const getUrlParam = (name) => {
   if (typeof window === 'undefined') return null

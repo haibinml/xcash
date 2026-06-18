@@ -1,15 +1,19 @@
 from decimal import Decimal
 
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory
 from web3 import Web3
 
 from chains.capabilities import ChainProductCapabilityService
 from chains.constants import ChainCode
 from chains.models import Chain
+from chains.tests_fixtures import make_evm_chain
 from currencies.models import Crypto
 from currencies.models import CryptoOnChain
 from currencies.models import PriceUnavailableError
+from currencies.views import MetadataView
 
 
 class CustomTokenPricingTests(TestCase):
@@ -259,3 +263,70 @@ class CryptoOnChainImmutabilityTests(TestCase):
 
         self.token.refresh_from_db()
         self.assertEqual(self.token.crypto_id, self.usdc.id)
+
+
+class MetadataEndpointTests(TestCase):
+    """/v1/metadata 公开端点：单一来源下发链/币基础字典给支付页。
+
+    只固定「行为正确性」：公开可访问、只暴露 active 资产、返回结构契约；
+    不断言具体 icon URL 字面量（属配置数值，按项目约定不纳入测试）。
+    """
+
+    def setUp(self):
+        # 端点使用模块级缓存（也是限流后端），逐用例清空避免跨用例命中污染。
+        cache.clear()
+        self.factory = APIRequestFactory()
+
+    def fetch(self):
+        request = self.factory.get("/v1/metadata")
+        return MetadataView.as_view()(request)
+
+    def test_public_access_without_auth(self):
+        # 无任何鉴权头也应放行（AllowAny），且返回 chains / cryptos 两个键。
+        make_evm_chain(code=ChainCode.Ethereum, active=True)
+        response = self.fetch()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("chains", response.data)
+        self.assertIn("cryptos", response.data)
+
+    def test_only_active_chains_and_cryptos_returned(self):
+        # 停用的链/币不应出现在支付页可选项里，与正式入口对 active 的门禁一致。
+        make_evm_chain(code=ChainCode.Ethereum, active=True)
+        make_evm_chain(code=ChainCode.Sepolia, active=False)
+        Crypto.objects.create(
+            name="Tether", symbol="USDT", active=True, coingecko_id="tether"
+        )
+        Crypto.objects.create(name="Disabled Coin", symbol="DEAD", active=False)
+
+        response = self.fetch()
+
+        chain_codes = {item["code"] for item in response.data["chains"]}
+        self.assertIn(ChainCode.Ethereum, chain_codes)
+        self.assertNotIn(ChainCode.Sepolia, chain_codes)
+
+        crypto_symbols = {item["symbol"] for item in response.data["cryptos"]}
+        self.assertIn("USDT", crypto_symbols)
+        self.assertNotIn("DEAD", crypto_symbols)
+
+    def test_response_contract_fields(self):
+        # 前端依赖的字段契约：chains 含 code/name/icon/is_testnet，cryptos 含 symbol/name/icon/is_native。
+        make_evm_chain(code=ChainCode.Ethereum, active=True)
+        Crypto.objects.create(
+            name="Tether", symbol="USDT", active=True, coingecko_id="tether"
+        )
+
+        response = self.fetch()
+
+        chain = next(
+            item
+            for item in response.data["chains"]
+            if item["code"] == ChainCode.Ethereum
+        )
+        self.assertEqual(set(chain), {"code", "name", "icon", "is_testnet"})
+        self.assertEqual(chain["name"], "Ethereum")
+        self.assertFalse(chain["is_testnet"])
+
+        crypto = next(
+            item for item in response.data["cryptos"] if item["symbol"] == "USDT"
+        )
+        self.assertEqual(set(crypto), {"symbol", "name", "icon", "is_native"})

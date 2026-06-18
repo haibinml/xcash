@@ -108,7 +108,13 @@ class XcashMiddleware:
         post_patterns = [
             re.compile(r"^/v1/invoice/[^/]+/select-method$"),
         ]
-        get_patterns = [re.compile(r"^/v1/invoice/[^/]+$")]
+        # 公开只读端点：买家支付页直接访问，无商户 appid / 签名。
+        # /v1/metadata 是链/币基础字典，与 invoice 公开详情同属此类，必须豁免，
+        # 否则会被 ProjectConfigMiddleware 当作商户 API 拦成 INVALID_APPID。
+        get_patterns = [
+            re.compile(r"^/v1/invoice/[^/]+$"),
+            re.compile(r"^/v1/metadata$"),
+        ]
 
         if request.method == "POST":
             return any(pattern.match(request.path) for pattern in post_patterns)

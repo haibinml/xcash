@@ -1,11 +1,12 @@
 import { Check } from "lucide-react"
-import { getCryptoIconUrl, getCryptoDisplayName } from "@/lib/cryptoIcons"
+import { useMetadataContext } from "@/context/MetadataContext"
 import { sortCryptoOptions } from "@/lib/paymentMethodSort"
 import { useI18n } from "@/hooks/useI18n"
 import { cn } from "@/lib/utils"
 
 function TokenSelector({ availableMethods, selectedCrypto, onCryptoChange, disabled = false }) {
   const { t } = useI18n()
+  const { getCrypto } = useMetadataContext()
 
   if (!availableMethods || Object.keys(availableMethods).length === 0) {
     return (
@@ -21,6 +22,7 @@ function TokenSelector({ availableMethods, selectedCrypto, onCryptoChange, disab
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("selector.selectToken")}>
       {tokenOptions.map((token) => {
         const selected = token === selectedCrypto
+        const cryptoMeta = getCrypto(token)
 
         return (
           <button
@@ -40,14 +42,14 @@ function TokenSelector({ availableMethods, selectedCrypto, onCryptoChange, disab
             <span className="flex min-w-0 items-center gap-2.5">
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
                 <img
-                  src={getCryptoIconUrl(token)}
+                  src={cryptoMeta.icon || undefined}
                   alt=""
                   className="size-6 rounded-full"
                   onError={(e) => { e.target.style.visibility = "hidden" }}
                 />
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{getCryptoDisplayName(token)}</span>
+                <span className="block truncate text-sm font-semibold">{cryptoMeta.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {availableMethods[token].length} {t("selector.networks")}
                 </span>

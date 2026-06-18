@@ -4,7 +4,7 @@ import { Copy, Check, Clock, CheckCircle2, ArrowLeft, Loader2 } from "lucide-rea
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { getCryptoIconUrl, getChainIconUrl, getChainDisplayName } from "@/lib/cryptoIcons"
+import { useMetadataContext } from "@/context/MetadataContext"
 import { getConfirmationProgress, isPaymentConfirming } from "@/lib/invoiceStatus"
 import { useI18n } from "@/hooks/useI18n"
 
@@ -19,6 +19,7 @@ function CopyButton({ copied, onCopy }) {
 
 function PaymentAddress({ invoice, onReset }) {
   const { t } = useI18n()
+  const { getChain, getCrypto } = useMetadataContext()
   const [qrCodeUrl, setQrCodeUrl] = useState("")
   const [copiedField, setCopiedField] = useState("")
 
@@ -58,6 +59,9 @@ function PaymentAddress({ invoice, onReset }) {
   if (!invoice?.pay_address) {
     return null
   }
+
+  const cryptoMeta = getCrypto(invoice.crypto)
+  const chainMeta = getChain(invoice.chain)
 
   const handleCopy = (value, field) => {
     navigator.clipboard
@@ -176,7 +180,7 @@ function PaymentAddress({ invoice, onReset }) {
             </div>
             <div className="flex items-center gap-2">
               <img
-                src={getCryptoIconUrl(invoice.crypto)}
+                src={cryptoMeta.icon || undefined}
                 alt=""
                 className="size-5 rounded-full shrink-0"
                 onError={(e) => { e.target.style.visibility = "hidden" }}
@@ -193,12 +197,12 @@ function PaymentAddress({ invoice, onReset }) {
             </div>
             <div className="flex items-center gap-2">
               <img
-                src={getChainIconUrl(invoice.chain)}
+                src={chainMeta.icon || undefined}
                 alt=""
                 className="size-5 rounded-full shrink-0"
                 onError={(e) => { e.target.style.visibility = "hidden" }}
               />
-              <span className="font-medium text-sm">{getChainDisplayName(invoice.chain)}</span>
+              <span className="font-medium text-sm">{chainMeta.name}</span>
             </div>
           </div>
         </div>

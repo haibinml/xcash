@@ -1,11 +1,12 @@
 import { Check } from "lucide-react"
-import { getChainIconUrl, getChainDisplayName, isTestnet } from "@/lib/cryptoIcons"
+import { useMetadataContext } from "@/context/MetadataContext"
 import { sortChainOptions } from "@/lib/paymentMethodSort"
 import { useI18n } from "@/hooks/useI18n"
 import { cn } from "@/lib/utils"
 
 function ChainSelector({ availableMethods, selectedCrypto, selectedChain, onChainChange, disabled = false }) {
   const { t } = useI18n()
+  const { getChain } = useMetadataContext()
 
   if (!availableMethods || !selectedCrypto || !availableMethods[selectedCrypto]) {
     return (
@@ -23,6 +24,7 @@ function ChainSelector({ availableMethods, selectedCrypto, selectedChain, onChai
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("selector.selectNetwork")}>
       {chainOptions.map((chain) => {
         const selected = chain === selectedChain
+        const chainMeta = getChain(chain)
 
         return (
           <button
@@ -42,16 +44,16 @@ function ChainSelector({ availableMethods, selectedCrypto, selectedChain, onChai
             <span className="flex min-w-0 items-center gap-2.5">
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
                 <img
-                  src={getChainIconUrl(chain)}
+                  src={chainMeta.icon || undefined}
                   alt=""
                   className="size-6 rounded-full"
                   onError={(e) => { e.target.style.visibility = "hidden" }}
                 />
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{getChainDisplayName(chain)}</span>
+                <span className="block truncate text-sm font-semibold">{chainMeta.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {isTestnet(chain) ? t("selector.testNetwork") : t("selector.mainNetwork")}
+                  {chainMeta.isTestnet ? t("selector.testNetwork") : t("selector.mainNetwork")}
                 </span>
               </span>
             </span>
