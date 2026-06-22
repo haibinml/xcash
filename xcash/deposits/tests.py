@@ -676,6 +676,17 @@ class DepositCustomerLimitTests(TestCase):
         )
         self.assertEqual(response.data["code"], ErrorCode.DEPOSIT_CUSTOMER_LIMIT_REACHED.code)
 
+    def test_zero_limit_rejects_first_customer(self):
+        self.set_permission({"max_deposit_customers": 0})
+
+        response = self.call_address("new-user")
+
+        self.assertEqual(
+            response.status_code,
+            ErrorCode.DEPOSIT_CUSTOMER_LIMIT_REACHED.status,
+            response.data,
+        )
+
     def test_allows_existing_customer_at_limit(self):
         Customer.objects.create(project=self.project, uid="existing")
         self.set_permission({"max_deposit_customers": 1})

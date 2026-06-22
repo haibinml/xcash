@@ -115,7 +115,8 @@ def get_saas_risk_marking_enabled(*, appid: str) -> bool | None:
 def get_saas_deposit_customer_limit(*, appid: str) -> int | None:
     """读取 SaaS 下发的充值 Customer 软限额。
 
-    None 表示无限：包括自托管、冷缓存、老缓存缺 key、SaaS 下发 null/0 或非法值。
+    None 表示无限：包括自托管、冷缓存、老缓存缺 key、SaaS 下发 null 或非法值。
+    0 是有效限额，表示不允许新增充值 Customer。
     """
     perm = _read_saas_perm(appid)
     if perm is None:
@@ -128,7 +129,7 @@ def get_saas_deposit_customer_limit(*, appid: str) -> int | None:
         limit = int(raw_limit)
     except (TypeError, ValueError):
         return None
-    return limit if limit > 0 else None
+    return limit if limit >= 0 else None
 
 
 def get_saas_invoice_vault_slot_limit(*, appid: str) -> int | None:

@@ -13,6 +13,7 @@ from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from common.permission_check import _refresh_saas_permission
 from common.permission_check import check_saas_permission
+from common.permission_check import get_saas_deposit_customer_limit
 from common.permission_check import get_saas_invoice_vault_slot_limit
 from common.permission_check import get_saas_risk_marking_enabled
 
@@ -155,6 +156,24 @@ class CheckSaasPermissionTest(TestCase):
         )
 
         self.assertIs(get_saas_risk_marking_enabled(appid="XC-risk"), True)
+
+    def test_deposit_customer_limit_preserves_zero(self):
+        cache.set(
+            "saas:permission:XC-zero-deposit-customer-limit",
+            {
+                "frozen": False,
+                "max_deposit_customers": 0,
+                "_fetched_at": time.time(),
+            },
+            None,
+        )
+
+        self.assertEqual(
+            get_saas_deposit_customer_limit(
+                appid="XC-zero-deposit-customer-limit",
+            ),
+            0,
+        )
 
     def test_invoice_vault_slot_limit_reads_positive_integer(self):
         cache.set(

@@ -153,15 +153,15 @@ Before deployment, prepare the following:
 
 Recommended server profiles:
 
-| Performance mode | Hardware | Payment event monitoring only | Payment + deposit event monitoring |
-|:-------:|:-------:|:----------------------:|:---------------------:|
-| low | 1 CPU / 2 GB | 5 - 10 EVM chains | 2 - 3 EVM chains |
-| medium | 4 CPU / 8 GB | 15 - 30 EVM chains | 8 - 15 EVM chains |
-| high | 8 CPU / 16 GB | 30+ EVM chains | 15 - 30 EVM chains |
+| Performance mode | Hardware | EVM chain capacity |
+|:-------:|:-------:|:-----------:|
+| low | 1 CPU / 2 GB | 2 - 3 EVM chains |
+| medium | 4 CPU / 8 GB | 8 - 15 EVM chains |
+| high | 8 CPU / 16 GB | 15 - 30 EVM chains |
 
 `PERFORMANCE` is a performance parameter that can be set in `.env`. Valid values are `low`, `medium`, and `high`. If unset, it defaults to `low`.
 
-EVM payments and deposits are both detected and confirmed through on-chain event scanning. Actual chain capacity depends on RPC throughput, block speed, and event volume. After deposits are enabled, Xcash must monitor more addresses and events, so configure the performance profile conservatively according to the table above.
+EVM payments and deposits are both detected and confirmed through on-chain event scanning, and both are enabled by default and monitored together. Actual chain capacity depends on RPC throughput, block speed, and event volume, so configure the performance profile conservatively according to the table above.
 
 ## Quick Start
 
