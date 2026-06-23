@@ -49,7 +49,7 @@ function TokenSelector({ availableMethods, selectedCrypto, onCryptoChange, disab
                 />
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{cryptoMeta.name}</span>
+                <span className="block truncate text-sm font-semibold">{token}</span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {availableMethods[token].length} {t("selector.networks")}
                 </span>
