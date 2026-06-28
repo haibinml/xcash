@@ -11,7 +11,14 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 DOMAIN = env("SITE_DOMAIN", default="localhost").strip().lower()
 SCHEME = "https"
 # xcash-caddy：同机内部服务（如 saas）通过 Docker 共享网络访问时的 Host 头。
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", DOMAIN, "xcash-caddy"]
+ALLOWED_HOSTS = [
+    "127.0.0.1",
+    "localhost",
+    DOMAIN,
+    "xcash-caddy",
+    "app.xca.sh",
+    "pay.xca.sh",
+]
 
 # STATIC & MEDIA
 # ------------------------
