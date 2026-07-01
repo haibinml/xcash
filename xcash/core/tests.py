@@ -229,12 +229,17 @@ class OperationalRiskResourceTests(TestCase):
                 "NetLimit": 0,
                 "NetUsed": 0,
             }
-            alerts = OperationalRiskService.tron_low_resource_alerts()
+            summary = OperationalRiskService.tron_resource_summary()
 
+        alerts = summary["recent_tron_low_resource_alerts"]
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0]["available_energy"], 5)
         self.assertEqual(alerts[0]["required_energy"], 120)
+        self.assertEqual(alerts[0]["energy_deficit"], 115)
         self.assertEqual(alerts[0]["sender"], sender)
+        self.assertEqual(summary["tron_pending_resource_task_count"], 1)
+        self.assertEqual(summary["tron_required_energy_total"], 120)
+        self.assertEqual(summary["tron_energy_deficit_total"], 115)
 
 
 class OperationalInspectionSidebarBadgeTests(TestCase):
@@ -373,12 +378,16 @@ class OperationalInspectionPayloadTests(TestCase):
                     "sender": tron_sender,
                     "available_energy": 5,
                     "required_energy": 120,
+                    "energy_deficit": 115,
                     "available_bandwidth": 0,
                     "required_bandwidth": 300,
                     "task_count": 1,
                     "error": "",
                 }
             ],
+            "tron_pending_resource_task_count": 1,
+            "tron_required_energy_total": 120,
+            "tron_energy_deficit_total": 115,
         }
 
         payload = _build_operational_inspection_payload(
@@ -398,7 +407,34 @@ class OperationalInspectionPayloadTests(TestCase):
             reverse("admin:chains_address_change", args=[evm_sender.pk]),
         )
         self.assertEqual(str(tron_row["title"]), "Tron 资源不足")
-        self.assertIn("Energy 5/120", str(tron_row["description"]))
+        self.assertIn("Energy 当前 5 / 需要 120 / 需补 115", str(tron_row["description"]))
+
+    @override_settings(ADMIN_PATH_CONFIGURED=True)
+    def test_summary_card_shows_tron_energy_totals(self):
+        from core.dashboard import _build_operational_inspection_summary_cards
+
+        cards = _build_operational_inspection_summary_cards(
+            {
+                "confirming_count": 0,
+                "expiring_soon_count": 0,
+                "stalled_webhook_event_count": 0,
+                "pending_events_count": 0,
+                "failed_events_count": 0,
+            },
+            {
+                "evm_low_native_balance_count": 0,
+                "tron_low_resource_count": 1,
+                "tron_pending_resource_task_count": 3,
+                "tron_required_energy_total": 123_456,
+                "tron_energy_deficit_total": 45_678,
+            },
+        )
+
+        tron_card = cards[2]
+        self.assertEqual(str(tron_card["title"]), "Tron 待执行能量")
+        self.assertEqual(tron_card["metric"], "123,456")
+        self.assertIn("待执行 3 个", str(tron_card["subtitle"]))
+        self.assertIn("需补 45,678 Energy", str(tron_card["subtitle"]))
 
 
 class DashboardMetricsTests(TestCase):

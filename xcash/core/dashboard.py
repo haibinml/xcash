@@ -162,6 +162,9 @@ def _empty_resource_risk_summary() -> dict:
         "recent_evm_low_native_balance_alerts": [],
         "tron_low_resource_count": 0,
         "recent_tron_low_resource_alerts": [],
+        "tron_pending_resource_task_count": 0,
+        "tron_required_energy_total": 0,
+        "tron_energy_deficit_total": 0,
     }
 
 
@@ -233,12 +236,13 @@ def _build_tron_resource_rows(resource_risk_summary: dict) -> list[dict]:
             }
         else:
             description = _(
-                "%(chain)s / %(sender)s / Energy %(energy)s/%(required_energy)s / Bandwidth %(bandwidth)s/%(required_bandwidth)s / 任务 %(task_count)s 个"
+                "%(chain)s / %(sender)s / Energy 当前 %(energy)s / 需要 %(required_energy)s / 需补 %(energy_deficit)s / Bandwidth %(bandwidth)s/%(required_bandwidth)s / 任务 %(task_count)s 个"
             ) % {
                 "chain": chain.code if chain else "-",
                 "sender": sender.address if sender else "-",
                 "energy": _fmt_int(alert.get("available_energy")),
                 "required_energy": _fmt_int(alert.get("required_energy")),
+                "energy_deficit": _fmt_int(alert.get("energy_deficit")),
                 "bandwidth": _fmt_int(alert.get("available_bandwidth")),
                 "required_bandwidth": _fmt_int(alert.get("required_bandwidth")),
                 "task_count": alert.get("task_count") or 0,
@@ -406,10 +410,18 @@ def _build_operational_inspection_summary_cards(snapshot, resource_risk_summary)
             background="bg-rose-50",
         ),
         _summary_card(
-            title=_("Tron 资源风险"),
-            metric=resource_risk_summary["tron_low_resource_count"],
-            subtitle=_("Energy / Bandwidth 不足 sender %(count)s 个")
-            % {"count": resource_risk_summary["tron_low_resource_count"]},
+            title=_("Tron 待执行能量"),
+            metric=_fmt_int(resource_risk_summary.get("tron_required_energy_total", 0)),
+            subtitle=_(
+                "待执行 %(tasks)s 个，需补 %(energy)s Energy，资源不足 sender %(count)s 个"
+            )
+            % {
+                "tasks": resource_risk_summary.get("tron_pending_resource_task_count", 0),
+                "energy": _fmt_int(
+                    resource_risk_summary.get("tron_energy_deficit_total", 0)
+                ),
+                "count": resource_risk_summary["tron_low_resource_count"],
+            },
             tone="danger",
             active_count=resource_risk_summary["tron_low_resource_count"],
             background="bg-orange-50",

@@ -28,6 +28,13 @@ EMPTY_RESOURCE_RISK_COUNTS = {
     "evm_low_native_balance_count": 0,
     "tron_low_resource_count": 0,
 }
+EMPTY_TRON_RESOURCE_SUMMARY = {
+    "tron_low_resource_count": 0,
+    "recent_tron_low_resource_alerts": [],
+    "tron_pending_resource_task_count": 0,
+    "tron_required_energy_total": 0,
+    "tron_energy_deficit_total": 0,
+}
 
 
 class OperationalRiskService:
@@ -140,6 +147,17 @@ class OperationalRiskService:
     @classmethod
     def tron_low_resource_alerts(cls, *, limit: int = 8) -> list[dict]:
         """按待广播/需重签任务估算 Tron sender 资源水位。"""
+        return cls.tron_resource_summary(limit=limit)[
+            "recent_tron_low_resource_alerts"
+        ]
+
+    @classmethod
+    def tron_resource_summary(cls, *, limit: int = 8) -> dict:
+        """按待广播/需重签任务汇总 Tron 资源水位与待补 Energy。
+
+        明细受 limit 限制，汇总值不受 limit 截断；后台巡检页需要看到全量
+        待执行任务预计消耗与真实缺口，而不是只看前几条异常 sender。
+        """
         from tron.client import TronHttpClient
         from tron.models import TronTxTask
         from tron.resources import available_bandwidth
@@ -169,28 +187,34 @@ class OperationalRiskService:
             grouped[(task.chain_id, task.sender_id)].append(task)
 
         alerts = []
+        low_resource_count = 0
+        pending_task_count = 0
+        required_energy_total = 0
+        energy_deficit_total = 0
         for group_tasks in grouped.values():
             first_task = group_tasks[0]
             chain = first_task.chain
             sender = first_task.sender
+            pending_task_count += len(group_tasks)
             client = TronHttpClient(chain=chain)
             try:
                 resource = client.get_account_resource(address=sender.address)
             except Exception as exc:  # noqa: BLE001
-                alerts.append(
-                    {
-                        "chain": chain,
-                        "sender": sender,
-                        "available_energy": None,
-                        "required_energy": None,
-                        "available_bandwidth": None,
-                        "required_bandwidth": None,
-                        "task_count": len(group_tasks),
-                        "error": str(exc),
-                    }
-                )
-                if len(alerts) >= limit:
-                    break
+                low_resource_count += 1
+                if len(alerts) < limit:
+                    alerts.append(
+                        {
+                            "chain": chain,
+                            "sender": sender,
+                            "available_energy": None,
+                            "required_energy": None,
+                            "energy_deficit": None,
+                            "available_bandwidth": None,
+                            "required_bandwidth": None,
+                            "task_count": len(group_tasks),
+                            "error": str(exc),
+                        }
+                    )
                 continue
 
             required_energy = 0
@@ -224,32 +248,42 @@ class OperationalRiskService:
 
             current_energy = available_energy(resource)
             current_bandwidth = available_bandwidth(resource)
+            required_energy_total += required_energy
+            energy_deficit = max(required_energy - current_energy, 0)
+            energy_deficit_total += energy_deficit
             if current_energy < required_energy or current_bandwidth < required_bandwidth:
-                alerts.append(
-                    {
-                        "chain": chain,
-                        "sender": sender,
-                        "available_energy": current_energy,
-                        "required_energy": required_energy,
-                        "available_bandwidth": current_bandwidth,
-                        "required_bandwidth": required_bandwidth,
-                        "task_count": len(group_tasks),
-                        "error": "",
-                    }
-                )
-            if len(alerts) >= limit:
-                break
-        return alerts
+                low_resource_count += 1
+                if len(alerts) < limit:
+                    alerts.append(
+                        {
+                            "chain": chain,
+                            "sender": sender,
+                            "available_energy": current_energy,
+                            "required_energy": required_energy,
+                            "energy_deficit": energy_deficit,
+                            "available_bandwidth": current_bandwidth,
+                            "required_bandwidth": required_bandwidth,
+                            "task_count": len(group_tasks),
+                            "error": "",
+                        }
+                    )
+        return {
+            "tron_low_resource_count": low_resource_count,
+            "recent_tron_low_resource_alerts": alerts,
+            "tron_pending_resource_task_count": pending_task_count,
+            "tron_required_energy_total": required_energy_total,
+            "tron_energy_deficit_total": energy_deficit_total,
+        }
 
     @classmethod
     def build_summary(cls, *, limit: int = 4, include_resource_checks: bool = False) -> dict:
         """返回后台展示与异步巡检共享的异常概览。"""
         stalled_webhook_events = cls.stalled_webhook_events()
         evm_low_native_balance_alerts = []
-        tron_low_resource_alerts = []
+        tron_resource_summary = dict(EMPTY_TRON_RESOURCE_SUMMARY)
         if include_resource_checks:
             evm_low_native_balance_alerts = cls.evm_low_native_balance_alerts(limit=limit)
-            tron_low_resource_alerts = cls.tron_low_resource_alerts(limit=limit)
+            tron_resource_summary = cls.tron_resource_summary(limit=limit)
 
         return {
             "stalled_webhook_event_count": stalled_webhook_events.count(),
@@ -258,8 +292,7 @@ class OperationalRiskService:
             ),
             "evm_low_native_balance_count": len(evm_low_native_balance_alerts),
             "recent_evm_low_native_balance_alerts": evm_low_native_balance_alerts,
-            "tron_low_resource_count": len(tron_low_resource_alerts),
-            "recent_tron_low_resource_alerts": tron_low_resource_alerts,
+            **tron_resource_summary,
         }
 
     @classmethod
