@@ -235,6 +235,91 @@ class TronAdapterTests(SimpleTestCase):
 
         self.assertEqual(result, TxCheckStatus.MISSING)
 
+    def trc20_get_balance_with(self, payload: dict) -> int:
+        """走 TRC20 分支查询余额：crypto 与 chain.native_coin 非同一对象。"""
+        from tron.adapter import TronAdapter
+
+        with patch("tron.adapter.TronHttpClient") as client_cls:
+            client_cls.return_value.trigger_constant_contract.return_value = payload
+            chain = SimpleNamespace(code="tron", native_coin=object())
+            crypto = SimpleNamespace(
+                symbol="USDT",
+                address=lambda _chain: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            )
+            return TronAdapter().get_balance(
+                "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+                chain,
+                crypto,
+            )
+
+    def test_get_balance_trc20_reads_constant_result(self):
+        balance = self.trc20_get_balance_with(
+            {
+                "result": {"result": True},
+                "constant_result": ["0" * 62 + "64"],
+            }
+        )
+
+        self.assertEqual(balance, 100)
+
+    def test_get_balance_trc20_rejects_failed_result_instead_of_zero(self):
+        # 假 0 会让归集调度删除计划、把余额快照写脏并短路对账兜底，
+        # 资金将滞留到下一笔入账；异常响应形态必须抛错走退避重试。
+        payload = {
+            "result": {
+                "result": False,
+                "code": "CONTRACT_VALIDATE_ERROR",
+                "message": b"contract validate error".hex(),
+            },
+        }
+
+        with self.assertRaisesMessage(
+            RuntimeError, "failed to fetch Tron TRC20 balance"
+        ):
+            self.trc20_get_balance_with(payload)
+
+    def test_get_balance_trc20_rejects_missing_constant_result_instead_of_zero(self):
+        with self.assertRaisesMessage(RuntimeError, "constant_result missing"):
+            self.trc20_get_balance_with({"result": {"result": True}})
+
+    @patch("tron.adapter.TronHttpClient")
+    def test_get_balance_native_rejects_error_payload_instead_of_zero(
+        self, client_cls
+    ):
+        from tron.adapter import TronAdapter
+
+        client_cls.return_value.get_account.return_value = {
+            "Error": "class org.tron.core.exception..."
+        }
+        native = SimpleNamespace(symbol="TRX")
+        chain = SimpleNamespace(code="tron", native_coin=native)
+
+        with self.assertRaisesMessage(
+            RuntimeError, "failed to fetch Tron native balance"
+        ):
+            TronAdapter().get_balance(
+                "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+                chain,
+                native,
+            )
+
+    @patch("tron.adapter.TronHttpClient")
+    def test_get_balance_native_empty_account_is_legal_zero(self, client_cls):
+        # 未激活账户 getaccount 返回空 dict，是合法的 0 余额，不能误判为异常。
+        from tron.adapter import TronAdapter
+
+        client_cls.return_value.get_account.return_value = {}
+        native = SimpleNamespace(symbol="TRX")
+        chain = SimpleNamespace(code="tron", native_coin=native)
+
+        balance = TronAdapter().get_balance(
+            "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+            chain,
+            native,
+        )
+
+        self.assertEqual(balance, 0)
+
 
 class TronTransferConfirmationTests(TestCase):
     @patch("tron.adapter.TronHttpClient")
@@ -445,13 +530,10 @@ class TronHttpClientTests(SimpleTestCase):
         self.assertEqual(kwargs["params"]["only_confirmed"], "true")
         self.assertEqual(kwargs["params"]["fingerprint"], "cursor-1")
 
-    @patch("tron.client.httpx.get")
-    def test_list_confirmed_contract_events_sends_block_filter_and_fingerprint(
-        self,
-        get_mock,
-    ):
-        get_mock.return_value.json.return_value = {"data": [], "meta": {}}
-        get_mock.return_value.raise_for_status.return_value = None
+    @patch("tron.client.httpx.post")
+    def test_get_transaction_infos_by_block_posts_solidity_endpoint(self, post_mock):
+        post_mock.return_value.json.return_value = []
+        post_mock.return_value.raise_for_status.return_value = None
 
         chain = SimpleNamespace(
             rpc="https://api.trongrid.io",
@@ -459,27 +541,39 @@ class TronHttpClientTests(SimpleTestCase):
             tron_api_key="tron-key",
         )
         client = TronHttpClient(chain=chain)
-        client.list_confirmed_contract_events(
-            contract_address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
-            event_name="Transfer",
-            block_number=61840405,
-            fingerprint="cursor-1",
-        )
+        infos = client.get_transaction_infos_by_block(block_number=61840405)
 
-        call_args, kwargs = get_mock.call_args
+        self.assertEqual(infos, [])
+        call_args, kwargs = post_mock.call_args
         self.assertEqual(
             call_args[0],
-            "https://api.trongrid.io/v1/contracts/TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t/events",
+            "https://api.trongrid.io/walletsolidity/gettransactioninfobyblocknum",
         )
         self.assertEqual(kwargs["headers"]["TRON-PRO-API-KEY"], "tron-key")
-        self.assertEqual(kwargs["params"]["event_name"], "Transfer")
-        self.assertEqual(kwargs["params"]["block_number"], 61840405)
-        self.assertEqual(kwargs["params"]["only_confirmed"], "true")
-        self.assertEqual(kwargs["params"]["fingerprint"], "cursor-1")
+        self.assertEqual(kwargs["json"], {"num": 61840405})
 
-    @patch("tron.client.httpx.get")
-    def test_list_confirmed_contract_events_wraps_http_error(self, get_mock):
-        get_mock.side_effect = httpx.HTTPError("boom")
+    @patch("tron.client.httpx.post")
+    def test_get_transaction_infos_by_block_rejects_non_list_payload(self, post_mock):
+        # 错误形态（网关错误 dict 等）绝不能被当作空块推进游标，必须抛错停住扫描。
+        post_mock.return_value.json.return_value = {"Error": "boom"}
+        post_mock.return_value.raise_for_status.return_value = None
+
+        chain = SimpleNamespace(
+            rpc="https://api.trongrid.io",
+            code="tron-mainnet",
+            tron_api_key="tron-key",
+        )
+        client = TronHttpClient(chain=chain)
+
+        with self.assertRaisesMessage(
+            TronClientError,
+            "invalid block transaction infos from tron-mainnet",
+        ):
+            client.get_transaction_infos_by_block(block_number=61840405)
+
+    @patch("tron.client.httpx.post")
+    def test_get_transaction_infos_by_block_wraps_http_error(self, post_mock):
+        post_mock.side_effect = httpx.HTTPError("boom")
 
         chain = SimpleNamespace(
             rpc="https://api.trongrid.io",
@@ -490,13 +584,9 @@ class TronHttpClientTests(SimpleTestCase):
 
         with self.assertRaisesMessage(
             TronClientError,
-            "failed to fetch confirmed contract events from tron-mainnet",
+            "failed to fetch block transaction infos from tron-mainnet",
         ):
-            client.list_confirmed_contract_events(
-                contract_address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
-                event_name="Transfer",
-                block_number=61840405,
-            )
+            client.get_transaction_infos_by_block(block_number=61840405)
 
     @patch("tron.client.httpx.get")
     def test_retries_transient_http_error_until_success(self, get_mock):
@@ -1475,6 +1565,52 @@ class TronScannerTests(TestCase):
             cursor.last_scanned_block = last_scanned_block
         return cursor
 
+    def _trc20_transfer_log(
+        self,
+        *,
+        to_address: str,
+        value: int,
+        from_address: str | None = None,
+        contract_address: str | None = None,
+    ) -> dict:
+        """构造 TransactionInfo.log 中一条 raw TVM TRC20 Transfer 日志。"""
+        from tron.codec import TronAddressCodec
+        from tron.scanner import TRC20_TRANSFER_TOPIC0_HEX
+
+        def address_topic(base58: str) -> str:
+            return "0" * 24 + TronAddressCodec.base58_to_hex41(base58)[2:]
+
+        return {
+            # TransactionInfo 的 log.address 是 20 字节 hex，无 41 前缀。
+            "address": TronAddressCodec.base58_to_hex41(
+                contract_address or self.usdt_mapping.address
+            )[2:],
+            "topics": [
+                TRC20_TRANSFER_TOPIC0_HEX,
+                address_topic(from_address or self.sender_address),
+                address_topic(to_address),
+            ],
+            "data": f"{int(value):064x}",
+        }
+
+    def _transaction_info(
+        self,
+        *,
+        tx_id: str,
+        logs: list[dict],
+        block_number: int = 123456,
+        timestamp_ms: int = 1_700_000_000_000,
+        receipt_result: str = "SUCCESS",
+    ) -> dict:
+        """构造 walletsolidity/gettransactioninfobyblocknum 的单条 TransactionInfo。"""
+        return {
+            "id": tx_id,
+            "blockNumber": block_number,
+            "blockTimeStamp": timestamp_ms,
+            "receipt": {"result": receipt_result},
+            "log": logs,
+        }
+
     @override_settings(DEBUG=False)
     @patch("tron.scanner.TronHttpClient")
     def test_debug_false_first_scan_bootstraps_cursor_to_latest_block_without_fetching_history(
@@ -1491,7 +1627,7 @@ class TronScannerTests(TestCase):
 
         self.assertEqual(summary.blocks_scanned, 0)
         self.assertEqual(summary.filter_addresses, 0)
-        client.list_confirmed_contract_events.assert_not_called()
+        client.get_transaction_infos_by_block.assert_not_called()
         cursor = TronWatchCursor.objects.get(chain=self.chain)
         self.assertEqual(cursor.last_scanned_block, 123456)
 
@@ -1504,12 +1640,12 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
         self.assertEqual(summary.blocks_scanned, 1)
-        client.list_confirmed_contract_events.assert_called_once()
+        client.get_transaction_infos_by_block.assert_called_once()
 
     @override_settings(TRON_SCAN_SAFE_LAG_BLOCKS=4)
     @patch("chains.service.TransferService.enqueue_processing")
@@ -1525,14 +1661,14 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
         self.assertEqual(summary.blocks_scanned, 1)
-        client.list_confirmed_contract_events.assert_called_once()
+        client.get_transaction_infos_by_block.assert_called_once()
         self.assertEqual(
-            client.list_confirmed_contract_events.call_args.kwargs["block_number"],
+            client.get_transaction_infos_by_block.call_args.kwargs["block_number"],
             123452,
         )
         cursor = TronWatchCursor.objects.get(chain=self.chain)
@@ -1553,21 +1689,21 @@ class TronScannerTests(TestCase):
         client.get_solid_block_id.return_value = "0" * 64
         TronScanner.scan_chain(chain=self.chain)
 
-        client.list_confirmed_contract_events.assert_not_called()
+        client.get_transaction_infos_by_block.assert_not_called()
 
         client.reset_mock()
         client.get_latest_solid_block_number.return_value = 123501
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
         TronScanner.scan_chain(chain=self.chain)
-        client.list_confirmed_contract_events.assert_called_once()
+        client.get_transaction_infos_by_block.assert_called_once()
 
         TronScanner._debug_bootstrapped_cursors.clear()
         client.reset_mock()
         client.get_latest_solid_block_number.return_value = 123510
         client.get_solid_block_id.return_value = "0" * 64
         TronScanner.scan_chain(chain=self.chain)
-        client.list_confirmed_contract_events.assert_not_called()
+        client.get_transaction_infos_by_block.assert_not_called()
 
     @patch("tron.scanner.TronHttpClient")
     def test_scan_chain_records_cursor_error_when_latest_block_rpc_fails(
@@ -1610,7 +1746,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = latest_block
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         TronScanner.scan_chain(chain=self.chain)
 
@@ -1640,13 +1776,13 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = latest_block
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
         self.assertEqual(summary.blocks_scanned, DEFAULT_TRON_SCAN_BATCH_SIZE)
         self.assertEqual(
-            client.list_confirmed_contract_events.call_count,
+            client.get_transaction_infos_by_block.call_count,
             DEFAULT_TRON_SCAN_BATCH_SIZE,
         )
         cursor = TronWatchCursor.objects.get(chain=self.chain)
@@ -1685,7 +1821,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 120
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         TronScanner.scan_chain(chain=self.chain)
 
@@ -1721,7 +1857,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 120
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         TronScanner.scan_chain(chain=self.chain)
 
@@ -1745,7 +1881,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
         client.get_solid_block.return_value = {}
 
         with self.assertRaisesMessage(TronClientError, "invalid solid block id"):
@@ -1776,24 +1912,17 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                {
-                    "transaction_id": "d" * 64,
-                    "event_index": "0",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "1234567",
-                    },
-                }
-            ],
-            "meta": {},
-        }
+        client.get_transaction_infos_by_block.return_value = [
+            self._transaction_info(
+                tx_id="d" * 64,
+                logs=[
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=1_234_567,
+                    )
+                ],
+            )
+        ]
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
@@ -1835,37 +1964,21 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                {
-                    "transaction_id": "1" * 64,
-                    "event_index": "0",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "1000000",
-                    },
-                },
-                {
-                    "transaction_id": "1" * 64,
-                    "event_index": "1",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": second_watch_address,
-                        "value": "2000000",
-                    },
-                },
-            ],
-            "meta": {},
-        }
+        client.get_transaction_infos_by_block.return_value = [
+            self._transaction_info(
+                tx_id="1" * 64,
+                logs=[
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=1_000_000,
+                    ),
+                    self._trc20_transfer_log(
+                        to_address=second_watch_address,
+                        value=2_000_000,
+                    ),
+                ],
+            )
+        ]
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
@@ -1898,37 +2011,29 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                {
-                    "transaction_id": "2" * 64,
-                    "event_index": "0",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": str(10**32),
-                    },
-                },
-                {
-                    "transaction_id": "3" * 64,
-                    "event_index": "1",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "1000000",
-                    },
-                },
-            ],
-            "meta": {},
-        }
+        client.get_transaction_infos_by_block.return_value = [
+            self._transaction_info(
+                tx_id="2" * 64,
+                logs=[
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=10**32,
+                    )
+                ],
+            ),
+            self._transaction_info(
+                tx_id="3" * 64,
+                logs=[
+                    # 首条为无关日志（topics 不足），验证 event_index 按交易内
+                    # 全部日志的序号计数，与旧 TronGrid event_index 语义一致。
+                    {"topics": [], "data": ""},
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=1_000_000,
+                    ),
+                ],
+            ),
+        ]
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
@@ -1960,37 +2065,27 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                {
-                    "transaction_id": "4" * 64,
-                    "event_index": "0",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "1000000",
-                    },
-                },
-                {
-                    "transaction_id": "5" * 64,
-                    "event_index": "1",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "2000000",
-                    },
-                },
-            ],
-            "meta": {},
-        }
+        client.get_transaction_infos_by_block.return_value = [
+            self._transaction_info(
+                tx_id="4" * 64,
+                logs=[
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=1_000_000,
+                    )
+                ],
+            ),
+            self._transaction_info(
+                tx_id="5" * 64,
+                logs=[
+                    {"topics": [], "data": ""},
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=2_000_000,
+                    ),
+                ],
+            ),
+        ]
         create_observed_transfer_mock.side_effect = [
             RuntimeError("numeric field overflow"),
             None,
@@ -2029,24 +2124,17 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                {
-                    "transaction_id": "6" * 64,
-                    "event_index": "0",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "1000000",
-                    },
-                },
-            ],
-            "meta": {},
-        }
+        client.get_transaction_infos_by_block.return_value = [
+            self._transaction_info(
+                tx_id="6" * 64,
+                logs=[
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=1_000_000,
+                    )
+                ],
+            )
+        ]
         create_observed_transfer_mock.side_effect = OperationalError(
             "server closed the connection unexpectedly"
         )
@@ -2075,24 +2163,17 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                {
-                    "transaction_id": "e" * 64,
-                    "event_index": "0",
-                    "block_number": 123456,
-                    "block_timestamp": 1_700_000_000_000,
-                    "event_name": "Transfer",
-                    "contract_address": self.usdt_mapping.address,
-                    "result": {
-                        "from": self.sender_address,
-                        "to": self.watch_address,
-                        "value": "1234567",
-                    },
-                }
-            ],
-            "meta": {},
-        }
+        client.get_transaction_infos_by_block.return_value = [
+            self._transaction_info(
+                tx_id="e" * 64,
+                logs=[
+                    self._trc20_transfer_log(
+                        to_address=self.watch_address,
+                        value=1_234_567,
+                    )
+                ],
+            )
+        ]
 
         summary = TronScanner.scan_chain(chain=self.chain)
 
@@ -2207,7 +2288,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
         client.get_solid_block.return_value = {
             "blockID": "a" * 64,
             "block_header": {"raw_data": {"timestamp": 1_700_000_000_000}},
@@ -2252,7 +2333,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
         client.get_solid_block.return_value = {
             "blockID": "a" * 64,
             "block_header": {"raw_data": {"timestamp": 1_700_000_000_000}},
@@ -2304,7 +2385,7 @@ class TronScannerTests(TestCase):
         client = client_cls.return_value
         client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+        client.get_transaction_infos_by_block.return_value = []
 
         TronScanner.scan_chain(chain=self.chain)
 
@@ -2947,6 +3028,44 @@ class TronCollectScheduleExecuteTests(TestCase):
         self.assertEqual(
             schedule.tx_task.tron_task.fee_limit,
             TRON_VAULT_SLOT_FEE_LIMIT,
+        )
+
+    @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)
+    def test_execute_due_defers_schedule_when_balance_refresh_fails(self, is_contract):
+        # 余额刷新失败（RPC 异常 → refresh_vault_slot_balance_safely 返回 None）时
+        # 必须保留计划并退避重试，绝不能删除——删除会让该槽位资金失去归集入口。
+        VaultSlot.objects.filter(pk=self.slot.pk).update(is_deployed=True)
+        self.slot.is_deployed = True
+        schedule = self.make_pending_schedule()
+
+        with patch(
+            "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+            return_value=None,
+        ):
+            created = VaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created, 0)
+        schedule.refresh_from_db()
+        self.assertIsNone(schedule.tx_task_id)
+        self.assertGreater(schedule.due_at, timezone.now())
+
+    @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)
+    def test_execute_due_deletes_schedule_when_balance_is_zero(self, is_contract):
+        # 节点明确应答余额为 0 时删除 pending 计划，释放唯一约束槽位；
+        # 后续新入账会经 ensure_pending 重建计划。
+        VaultSlot.objects.filter(pk=self.slot.pk).update(is_deployed=True)
+        self.slot.is_deployed = True
+        schedule = self.make_pending_schedule()
+
+        with patch(
+            "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+            return_value=SimpleNamespace(value=0),
+        ):
+            created = VaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created, 0)
+        self.assertFalse(
+            VaultSlotCollectSchedule.objects.filter(pk=schedule.pk).exists()
         )
 
     @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)

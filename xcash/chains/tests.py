@@ -1623,3 +1623,114 @@ class ProcessTransferAutoretryTests(SimpleTestCase):
             getattr(process_transfer, "retry_backoff", False),
             "retry_backoff 必须启用，避免死锁后密集重试加剧锁冲突",
         )
+
+
+class ReapStaleConfirmingTransfersTests(TestCase):
+    """超龄 CONFIRMING 转账清理：删除必须以链上终验 MISSING 为前提。
+
+    纯按时间删除会在确认管线自身故障超过时限时误删真实入账（invoice 被解绑、
+    扫描游标已过无法重建）；链上仍 SUCCEEDED 的必须保留并补派确认。
+    """
+
+    def setUp(self):
+        from chains.tasks import STALE_CONFIRMING_TRANSFER_MAX_AGE_HOURS
+
+        self.crypto = Crypto.objects.create(
+            name="Ether Reap",
+            symbol="ETH-REAP",
+            coingecko_id="ether-reap",
+        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
+        self.stale_created_at = timezone.now() - timedelta(
+            hours=STALE_CONFIRMING_TRANSFER_MAX_AGE_HOURS + 1
+        )
+
+    def make_confirming_transfer(self, *, suffix: str, created_at=None) -> Transfer:
+        transfer = Transfer.objects.create(
+            chain=self.chain,
+            block=100,
+            block_hash="0x" + "aa" * 32,
+            hash="0x" + suffix * 32,
+            crypto=self.crypto,
+            from_address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000b1"
+            ),
+            to_address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000b2"
+            ),
+            value=1000,
+            amount=1,
+            timestamp=1700000000,
+            datetime=timezone.now(),
+        )
+        Transfer.objects.filter(pk=transfer.pk).update(
+            created_at=created_at or self.stale_created_at
+        )
+        return transfer
+
+    def reap_with_tx_result(self, tx_result):
+        from chains.tasks import reap_stale_confirming_transfers
+
+        with patch("chains.tasks.AdapterFactory.get_adapter") as get_adapter:
+            get_adapter.return_value.tx_result.return_value = tx_result
+            return reap_stale_confirming_transfers.run()
+
+    def test_reaps_stale_transfer_when_chain_fact_is_missing(self):
+        transfer = self.make_confirming_transfer(suffix="1a")
+
+        reaped = self.reap_with_tx_result(TxCheckStatus.MISSING)
+
+        self.assertEqual(reaped, 1)
+        self.assertFalse(Transfer.objects.filter(pk=transfer.pk).exists())
+
+    def test_keeps_stale_transfer_and_redispatches_confirm_when_succeeded(self):
+        transfer = self.make_confirming_transfer(suffix="2a")
+
+        with patch("chains.tasks.confirm_transfer.delay") as confirm_delay:
+            reaped = self.reap_with_tx_result(TxCheckStatus.SUCCEEDED)
+
+        self.assertEqual(reaped, 0)
+        self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())
+        confirm_delay.assert_called_once_with(transfer.pk)
+
+    def test_keeps_stale_transfer_when_chain_query_fails(self):
+        transfer = self.make_confirming_transfer(suffix="3a")
+
+        reaped = self.reap_with_tx_result(RuntimeError("rpc down"))
+
+        self.assertEqual(reaped, 0)
+        self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())
+
+    def test_keeps_stale_transfer_when_chain_fact_is_failed(self):
+        transfer = self.make_confirming_transfer(suffix="4a")
+
+        reaped = self.reap_with_tx_result(TxCheckStatus.FAILED)
+
+        self.assertEqual(reaped, 0)
+        self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())
+
+    def test_ignores_fresh_confirming_transfer(self):
+        transfer = self.make_confirming_transfer(
+            suffix="5a",
+            created_at=timezone.now(),
+        )
+
+        from chains.tasks import reap_stale_confirming_transfers
+
+        with patch("chains.tasks.AdapterFactory.get_adapter") as get_adapter:
+            reaped = reap_stale_confirming_transfers.run()
+
+        self.assertEqual(reaped, 0)
+        get_adapter.assert_not_called()
+        self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())
+
+    def test_ignores_confirmed_transfer_regardless_of_age(self):
+        transfer = self.make_confirming_transfer(suffix="6a")
+        Transfer.objects.filter(pk=transfer.pk).update(
+            status=TransferStatus.CONFIRMED
+        )
+
+        reaped = self.reap_with_tx_result(TxCheckStatus.MISSING)
+
+        self.assertEqual(reaped, 0)
+        self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())

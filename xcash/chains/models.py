@@ -1220,9 +1220,20 @@ class VaultSlotCollectSchedule(models.Model):
 
         execute_due 按 due_at 升序取批（limit 封顶），失败计划若不推迟会恒占
         批次头部；同因失败的计划一旦攒满 limit 个，所有链的归集调度都会被饿死。
+        调用发生在无锁的 RPC 前置检查之后，用条件更新只推迟仍未绑定任务的行，
+        避免覆盖并发路径刚完成绑定的计划。
         """
-        self.due_at = timezone.now() + self.RETRY_BACKOFF
-        self.save(update_fields=["due_at", "updated_at"])
+        due_at = timezone.now() + self.RETRY_BACKOFF
+        updated = (
+            type(self)
+            .objects.filter(
+                pk=self.pk,
+                tx_task__isnull=True,
+            )
+            .update(due_at=due_at, updated_at=timezone.now())
+        )
+        if updated:
+            self.due_at = due_at
 
     @classmethod
     def ensure_pending_due_now(
@@ -1259,57 +1270,85 @@ class VaultSlotCollectSchedule(models.Model):
 
     @classmethod
     def execute_due(cls, *, limit: int = 32) -> int:
+        """执行到期的归集计划，返回成功建任务的条数。
+
+        部署判活与余额刷新都要等链上 RPC，绝不能放在持有行锁的批量事务里：
+        那会让 schedule 行锁乃至系统热钱包 Address 行锁（create_tx_task →
+        EvmTxTask.schedule 内加锁）持续整批 RPC 时长，阻塞全部交易创建。
+        故先无锁选出到期计划，逐条在事务外完成 RPC 前置检查，仅"建任务 +
+        绑定"一步进短事务重新加锁并复核计划仍然 pending。
+        """
+        now = timezone.now()
+        due_pks = list(
+            cls.objects.filter(tx_task__isnull=True, due_at__lte=now)
+            .order_by("due_at", "pk")
+            .values_list("pk", flat=True)[:limit]
+        )
+        created_count = 0
+        for pk in due_pks:
+            created_count += cls.execute_one_due(pk)
+        return created_count
+
+    @classmethod
+    def execute_one_due(cls, pk: int) -> int:
+        """无锁执行单条到期计划的 RPC 前置检查，短事务内建任务并绑定。"""
         from chains.vault_slot_balances import refresh_vault_slot_balance_safely
         from chains.vault_slots import can_create_collect_tx_task
 
-        now = timezone.now()
-        created_count = 0
-        with db_transaction.atomic():
-            schedules = list(
-                cls.objects.select_for_update(skip_locked=True)
-                .select_related(
-                    "chain",
-                    "crypto",
-                    "vault_slot",
-                    "vault_slot__project",
-                )
-                .filter(tx_task__isnull=True, due_at__lte=now)
-                .order_by("due_at", "pk")[:limit]
+        schedule = (
+            cls.objects.select_related(
+                "chain",
+                "crypto",
+                "vault_slot",
+                "vault_slot__project",
             )
-            for schedule in schedules:
-                if not can_create_collect_tx_task(
-                    chain=schedule.chain,
-                    slot=schedule.vault_slot,
-                ):
-                    schedule.defer_retry()
-                    continue
-                balance = refresh_vault_slot_balance_safely(
-                    slot=schedule.vault_slot,
-                    crypto=schedule.crypto,
-                    reason="before_collect",
+            .filter(pk=pk, tx_task__isnull=True)
+            .first()
+        )
+        if schedule is None:
+            return 0
+        if not can_create_collect_tx_task(
+            chain=schedule.chain,
+            slot=schedule.vault_slot,
+        ):
+            schedule.defer_retry()
+            return 0
+        balance = refresh_vault_slot_balance_safely(
+            slot=schedule.vault_slot,
+            crypto=schedule.crypto,
+            reason="before_collect",
+        )
+        if balance is None:
+            schedule.defer_retry()
+            return 0
+        if balance.value <= 0:
+            # 条件删除：仅在计划仍未绑定任务时释放该 pending 槽位。
+            cls.objects.filter(pk=pk, tx_task__isnull=True).delete()
+            return 0
+        try:
+            with db_transaction.atomic():
+                # 前置检查在锁外完成，拿锁后必须复核计划仍然 pending；
+                # skip_locked 让并发执行者直接跳过而不是排队等锁。
+                locked = (
+                    cls.objects.select_for_update(skip_locked=True)
+                    .select_related("chain", "crypto", "vault_slot")
+                    .filter(pk=pk, tx_task__isnull=True)
+                    .first()
                 )
-                if balance is None:
-                    schedule.defer_retry()
-                    continue
-                if balance.value <= 0:
-                    schedule.delete()
-                    continue
-                # 单条用 savepoint 隔离:个别计划建/绑任务失败不回滚整批归集调度。
-                try:
-                    with db_transaction.atomic():
-                        tx_task = schedule.create_tx_task()
-                        schedule.tx_task = tx_task
-                        schedule.save(update_fields=["tx_task", "updated_at"])
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "VaultSlot 归集计划创建或绑定任务失败,退避重试",
-                        schedule_id=schedule.pk,
-                        error=str(exc),
-                    )
-                    schedule.defer_retry()
-                    continue
-                created_count += 1
-        return created_count
+                if locked is None:
+                    return 0
+                tx_task = locked.create_tx_task()
+                locked.tx_task = tx_task
+                locked.save(update_fields=["tx_task", "updated_at"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "VaultSlot 归集计划创建或绑定任务失败,退避重试",
+                schedule_id=pk,
+                error=str(exc),
+            )
+            schedule.defer_retry()
+            return 0
+        return 1
 
 
 class DepositVaultSlot(VaultSlot):

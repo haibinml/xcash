@@ -343,28 +343,22 @@ class TronHttpClient:
         )
         return response.json()
 
-    def list_confirmed_contract_events(
-        self,
-        *,
-        contract_address: str,
-        event_name: str,
-        block_number: int,
-        fingerprint: str | None = None,
-        limit: int = 200,
-    ) -> dict:
-        params = {
-            "event_name": event_name,
-            "block_number": block_number,
-            "limit": limit,
-            "only_confirmed": "true",
-        }
-        if fingerprint:
-            params["fingerprint"] = fingerprint
+    def get_transaction_infos_by_block(self, *, block_number: int) -> list:
+        """拉取已固化块内全部交易的 TransactionInfo（含 receipt 与 raw TVM log）。
 
+        与 walletsolidity 固化头同一数据面：块已固化则其 receipt 必可读，不存在
+        /v1 事件索引器滞后时"未索引被当作无事件"而静默漏账的问题。空块返回 []；
+        错误形态（dict 等非 list 响应）必须抛错，绝不能被当作空块推进游标。
+        """
         response = self._request_with_retry(
-            method="GET",
-            url=f"{self.base_url}/v1/contracts/{contract_address}/events",
-            request_label="failed to fetch confirmed contract events",
-            params=params,
+            method="POST",
+            url=f"{self.base_url}/walletsolidity/gettransactioninfobyblocknum",
+            request_label="failed to fetch block transaction infos",
+            json_body={"num": block_number},
         )
-        return response.json()
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise TronClientError(
+                f"invalid block transaction infos from {self.chain.code}"
+            )
+        return payload

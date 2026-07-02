@@ -86,6 +86,12 @@ chains_tasks = {
         "task": "chains.tasks.reconcile_vault_slot_collect_balance_gaps_task",
         "schedule": OPERATIONAL_RISKS_SCHEDULE_SECONDS,
     },
+    "reap_stale_confirming_transfers": {
+        # 每日清理链上已无事实的超龄 CONFIRMING 转账，防止其恒占确认批次头部。
+        # 删除前逐条做链上终验（MISSING 才删），避免确认管线故障时误删真实入账。
+        "task": "chains.tasks.reap_stale_confirming_transfers",
+        "schedule": crontab(hour=4, minute=30),
+    },
 }
 
 # ---------------------------

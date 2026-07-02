@@ -43,6 +43,74 @@ def fallback_process_transfer():
         process_transfer.delay(transfer.pk)
 
 
+# CONFIRMING 转账的最大观察时限。各链确认深度最多分钟级，超过该时限仍未确认，
+# 只剩两种可能：链上事实已消失（reorg 丢弃/同 nonce 替换），或确认管线自身故障。
+STALE_CONFIRMING_TRANSFER_MAX_AGE_HOURS = 24
+
+
+@shared_task(ignore_result=True)
+@singleton_task(timeout=300)
+def reap_stale_confirming_transfers(limit: int = 200) -> int:
+    """清理超龄且链上已无事实的 CONFIRMING 转账，返回清理条数。
+
+    确认调度按 timestamp 升序取批（batch 封顶）：链上已消失的转账会恒占批次
+    头部，攒满一批即饿死该链所有后续确认。但绝不能只按时间删——确认管线自身
+    故障超过时限时（RPC 配错、节点宕机），转账在链上仍真实存在，误删会解绑已
+    支付的账单且扫描游标已过、无法重建。故删除前必须做一次链上终验：
+    - MISSING：链上确无此交易，drop() 释放唯一约束；若日后真的重新打包，
+      扫描器可自然重建。
+    - SUCCEEDED：只是确认管线出过故障，重新派发确认任务恢复推进。
+    - FAILED / 查询异常：保留并告警，本轮跳过，等下一轮观测或人工介入。
+    """
+    stale_transfers = (
+        Transfer.objects.select_related("chain")
+        .filter(
+            status=TransferStatus.CONFIRMING,
+            created_at__lte=ago(hours=STALE_CONFIRMING_TRANSFER_MAX_AGE_HOURS),
+        )
+        .order_by("created_at")[:limit]
+    )
+    reaped_count = 0
+    for transfer in stale_transfers:
+        adapter = AdapterFactory.get_adapter(transfer.chain.type)
+        raw_result = adapter.tx_result(chain=transfer.chain, tx_hash=transfer.hash)
+        if isinstance(raw_result, Exception):
+            logger.warning(
+                "超龄 CONFIRMING 转账链上终验查询失败，本轮跳过",
+                chain=transfer.chain.code,
+                transfer_id=transfer.pk,
+                tx_hash=transfer.hash,
+                error=str(raw_result),
+            )
+            continue
+        result = (
+            raw_result.status if isinstance(raw_result, TxCheckResult) else raw_result
+        )
+        if result == TxCheckStatus.MISSING:
+            logger.warning(
+                "超龄 CONFIRMING 转账链上已无事实，清理释放确认批次",
+                chain=transfer.chain.code,
+                transfer_id=transfer.pk,
+                tx_hash=transfer.hash,
+                block=transfer.block,
+                created_at=transfer.created_at,
+            )
+            transfer.drop()
+            reaped_count += 1
+        elif result == TxCheckStatus.SUCCEEDED:
+            # 链上事实仍在，说明只是确认管线曾中断；主动补派确认，不等链高推进。
+            confirm_transfer.delay(transfer.pk)
+        else:
+            logger.warning(
+                "超龄 CONFIRMING 转账链上终验结果异常，保留待人工排查",
+                chain=transfer.chain.code,
+                transfer_id=transfer.pk,
+                tx_hash=transfer.hash,
+                result=str(result),
+            )
+    return reaped_count
+
+
 @shared_task(ignore_result=True)
 @singleton_task(timeout=55)
 def execute_due_vault_slot_collect_schedules() -> None:

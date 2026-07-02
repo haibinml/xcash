@@ -4,6 +4,7 @@ from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.codec import TronAddressCodec
 from tron.intents import trc20_balance_of_parameter
+from tron.resources import decode_hex_text
 
 from chains.adapters import AdapterInterface
 from chains.adapters import TxCheckResult
@@ -38,9 +39,13 @@ class TronAdapter(AdapterInterface):
         client = TronHttpClient(chain=chain)
         if crypto == chain.native_coin:
             try:
-                return int(client.get_account(address=address).get("balance") or 0)
+                payload = client.get_account(address=address)
             except TronClientError as exc:
                 raise RuntimeError("failed to fetch Tron native balance") from exc
+            # 网关错误响应可能带 200 + Error 字段；未激活账户返回空 dict 才是合法 0。
+            if not isinstance(payload, dict) or "Error" in payload:
+                raise RuntimeError("failed to fetch Tron native balance: invalid response")
+            return int(payload.get("balance") or 0)
 
         token_address = crypto.address(chain)
         if not token_address:
@@ -58,9 +63,23 @@ class TronAdapter(AdapterInterface):
         except TronClientError as exc:
             raise RuntimeError("failed to fetch Tron TRC20 balance") from exc
 
+        # 异常响应形态绝不能静默当 0：假 0 会让归集调度删除计划并把余额快照写脏，
+        # 且对账兜底按快照 value>0 补建，同样被假 0 短路，资金会滞留到下笔入账。
+        # 这里与 estimate_contract_call_energy 对齐，先确认节点明确应答成功再读余额，
+        # 失败一律抛错，让 refresh_vault_slot_balance_safely 返回 None 走退避重试。
+        result = payload.get("result") or {}
+        if not isinstance(result, dict) or result.get("result") is not True:
+            code = str(result.get("code") or "") if isinstance(result, dict) else ""
+            message = decode_hex_text(result.get("message")) if isinstance(result, dict) else ""
+            raise RuntimeError(
+                "failed to fetch Tron TRC20 balance: "
+                f"{message or code or 'invalid response'}"
+            )
         constant_result = payload.get("constant_result") or []
         if not constant_result:
-            return 0
+            raise RuntimeError(
+                "failed to fetch Tron TRC20 balance: constant_result missing"
+            )
         return int(str(constant_result[0]), 16)
 
     def tx_result(self, chain, tx_hash: str) -> TxCheckStatus | TxCheckResult | Exception:

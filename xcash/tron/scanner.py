@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 
@@ -11,6 +12,7 @@ from django.db import transaction
 from django.db.models import F
 from django.db.models.functions import Greatest
 from django.utils import timezone
+from eth_utils import keccak
 from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.codec import TronAddressCodec
@@ -28,12 +30,19 @@ logger = structlog.get_logger()
 
 # 单轮扫描最多向前推进的块数；walletsolidity 返回的是 BFT 不可逆块，故无需 replay。
 # Tron 3 秒一块、beat tick 30 秒 ≈ 每轮净新增 ~10 块，32 块留够冗余且能消化短暂积压；
-# 单块 USDT 事件最差几百条、分页 200 一页，batch=32 时单 tick 最坏约 96 次 RPC，符合 TronGrid 限速。
+# TRC20 走整块 receipt 拉取（每块 1 次，与代币数无关），命中事件的块再补 1 次 blockID，
+# batch=32 时单 tick 最坏约 65 次 RPC，符合 TronGrid 限速。
 DEFAULT_TRON_SCAN_BATCH_SIZE = 32
 
-# TronGrid /v1 事件索引与 walletsolidity 固化头不是同一个数据面。扫描上界保守扣几块，
-# 避免索引器短暂滞后时把“还没索引好”误当成“本块无事件”并推进游标。
+# TRC20 与原生扫描均走 walletsolidity 数据面，与固化头同源，已无 /v1 事件索引器
+# 滞后问题。保留少量 lag 是防 TronGrid 负载均衡下不同节点固化头的微小偏差：
+# getnowblock 命中的节点可能领先 gettransactioninfobyblocknum 命中的节点，
+# 后者对"尚未固化的块"返回空列表，与空块不可区分。
 DEFAULT_TRON_SCAN_SAFE_LAG_BLOCKS = 4
+
+# TRC20 Transfer(address,address,uint256) 事件签名主题（64 位小写 hex，无 0x 前缀），
+# 用于从 raw TVM log 自行识别 Transfer 事件，不依赖事件索引服务的 event_name 过滤。
+TRC20_TRANSFER_TOPIC0_HEX = keccak(text="Transfer(address,address,uint256)").hex()
 
 
 @dataclass(frozen=True)
@@ -52,7 +61,8 @@ class TronScanner:
     """按链扫描本链 TRC20 与原生 TRX 的入账事件。
 
     与 EVM 扫描器对齐：代币集合来自 CryptoOnChain（不写死 USDT/地址），每条 Tron 链一个
-    游标，逐块对每个代币合约拉取 Transfer 事件后统一匹配观察地址。原生 TRX 走
+    游标。TRC20 逐块经 walletsolidity 读整块交易 receipt 的 raw TVM log、按 topic0 解析
+    Transfer 事件（与固化头同一数据面，见 _collect_block_events）。原生 TRX 走
     TransferContract、不 emit 事件，故在同一游标循环内额外逐块读整块交易、按 to_address
     匹配（见 _collect_block_native_transfers）；停用原生币 CryptoOnChain 即关闭原生扫描。
     """
@@ -461,85 +471,163 @@ class TronScanner:
         block_number: int,
         tokens_by_address: dict[str, CryptoOnChain],
     ) -> list[ParsedTronTransferEvent]:
+        """逐块从 walletsolidity 读全部交易 receipt 的 raw log，解析注册代币的 Transfer。
+
+        与固化头同一数据面：块已固化则 receipt 必可读，不存在 /v1 事件索引器
+        滞后导致"未索引被当作无事件"而漏账的问题。每块一次整块 receipt 拉取，
+        成本与代币数量无关。
+        """
+        if not tokens_by_address:
+            return []
+        infos = client.get_transaction_infos_by_block(block_number=block_number)
         candidates: list[ParsedTronTransferEvent] = []
-        # block_hash 整块只取一次、跨代币复用；仅在本块确有事件时才发起这次 RPC，
-        # 空块不额外打点。
-        block_hash: str | None = None
-
-        for token in tokens_by_address.values():
-            rows = cls._fetch_token_block_event_rows(
-                client=client,
-                chain=chain,
-                block_number=block_number,
-                token=token,
-            )
-            if rows and block_hash is None:
-                block_hash = client.get_solid_block_id(block_number=block_number)
-            for row in rows:
-                event = cls._parse_contract_event(
+        for info in infos:
+            candidates.extend(
+                cls._parse_transaction_info_events(
                     chain=chain,
-                    row=row,
+                    info=info,
                     expected_block_number=block_number,
-                    block_hash=block_hash,
-                    token=token,
+                    tokens_by_address=tokens_by_address,
                 )
-                if event is not None:
-                    candidates.append(event)
-
+            )
+        if candidates:
+            # TransactionInfo 不携带 blockID；仅在本块确有候选事件时补拉一次，
+            # 空块不额外打点。
+            block_hash = client.get_solid_block_id(block_number=block_number)
+            candidates = [
+                ParsedTronTransferEvent(
+                    observed=replace(event.observed, block_hash=block_hash)
+                )
+                for event in candidates
+            ]
         return cls.filter_matched_events(chain=chain, candidates=candidates)
 
     @classmethod
-    def _fetch_token_block_event_rows(
+    def _parse_transaction_info_events(
         cls,
         *,
-        client: TronHttpClient,
         chain: Chain,
-        block_number: int,
-        token: CryptoOnChain,
-    ) -> list[dict]:
-        """分页拉取单个 TRC20 合约在指定块的 Transfer 事件原始行。"""
-        page_fingerprint: str | None = None
-        seen_fingerprints: set[str] = set()
-        rows: list[dict] = []
+        info: object,
+        expected_block_number: int,
+        tokens_by_address: dict[str, CryptoOnChain],
+    ) -> list[ParsedTronTransferEvent]:
+        """单条 TransactionInfo → 命中注册 TRC20 合约的 Transfer 入账候选列表。
 
-        while True:
-            payload = client.list_confirmed_contract_events(
-                contract_address=token.address,
-                event_name="Transfer",
+        event_index 取 log 在交易全部日志中的序号，与旧 TronGrid 事件接口的
+        event_index 语义一致，保证 (chain, hash, event_index) 唯一键在数据面
+        切换前后连续、幂等重扫不产生重复行。
+        """
+        if not isinstance(info, dict):
+            return []
+        tx_id = str(info.get("id") or "")
+        if not tx_id:
+            return []
+        try:
+            block_number = int(info.get("blockNumber") or 0)
+            timestamp_ms = int(info.get("blockTimeStamp") or 0)
+        except (TypeError, ValueError):
+            return []
+        if block_number != expected_block_number or timestamp_ms <= 0:
+            return []
+        # revert 的交易不会留下有效事件；以 receipt.result 为准过滤非成功交易。
+        receipt = info.get("receipt") or {}
+        if isinstance(receipt, dict):
+            result = receipt.get("result")
+            if result not in (None, "", "SUCCESS"):
+                return []
+        logs = info.get("log") or []
+        if not isinstance(logs, list):
+            return []
+        events: list[ParsedTronTransferEvent] = []
+        for event_index, log in enumerate(logs):
+            event = cls._parse_raw_transfer_log(
+                chain=chain,
+                log=log,
+                tx_id=tx_id,
+                event_index=event_index,
                 block_number=block_number,
-                fingerprint=page_fingerprint,
+                timestamp_ms=timestamp_ms,
+                tokens_by_address=tokens_by_address,
             )
-            if not isinstance(payload, dict):
-                raise TronClientError(
-                    f"invalid contract events payload from {chain.code}"
-                )
-            data = payload.get("data")
-            meta = payload.get("meta") or {}
-            if data is None:
-                data = []
-            if not isinstance(data, list) or not isinstance(meta, dict):
-                raise TronClientError(
-                    f"invalid contract events payload from {chain.code}"
-                )
-            if not data:
-                break
+            if event is not None:
+                events.append(event)
+        return events
 
-            rows.extend(data)
+    @classmethod
+    def _parse_raw_transfer_log(
+        cls,
+        *,
+        chain: Chain,
+        log: object,
+        tx_id: str,
+        event_index: int,
+        block_number: int,
+        timestamp_ms: int,
+        tokens_by_address: dict[str, CryptoOnChain],
+    ) -> ParsedTronTransferEvent | None:
+        """单条 raw TVM log → TRC20 Transfer 入账候选；非 Transfer / 非注册代币跳过。
 
-            page_fingerprint = meta.get("fingerprint")
-            if not page_fingerprint:
-                break
-            if not isinstance(page_fingerprint, str):
-                raise TronClientError(
-                    f"invalid contract events fingerprint from {chain.code}"
-                )
-            if page_fingerprint in seen_fingerprints:
-                raise TronClientError(
-                    f"duplicate contract events fingerprint from {chain.code}"
-                )
-            seen_fingerprints.add(page_fingerprint)
-
-        return rows
+        log.address 是 20 字节 hex（无 41 前缀）、topics 为 64 位 hex；按 topic0
+        自行识别 Transfer 事件。block_hash 由调用方在确认本块有候选后统一回填。
+        """
+        if not isinstance(log, dict):
+            return None
+        topics = log.get("topics") or []
+        if not isinstance(topics, list) or len(topics) < 3:
+            return None
+        if cls._normalize_hex(topics[0]) != TRC20_TRANSFER_TOPIC0_HEX:
+            return None
+        try:
+            contract_address = cls._event_address_to_base58(log.get("address"))
+        except ValueError:
+            return None
+        token = tokens_by_address.get(contract_address)
+        if token is None:
+            return None
+        try:
+            from_address = cls._event_address_to_base58(topics[1])
+            to_address = cls._event_address_to_base58(topics[2])
+        except ValueError:
+            return None
+        data_hex = cls._normalize_hex(log.get("data"))
+        if not data_hex:
+            return None
+        try:
+            value = Decimal(int(data_hex, 16))
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        if value > MAX_TRANSFER_VALUE:
+            logger.warning(
+                "Tron TRC20 Transfer 数值超过 Transfer.value 范围，已跳过",
+                chain=chain.code,
+                tx_hash=tx_id,
+                event_index=event_index,
+                value=str(value),
+            )
+            return None
+        occurred_at = datetime.fromtimestamp(
+            timestamp_ms / 1000,
+            tz=timezone.get_current_timezone(),
+        )
+        return ParsedTronTransferEvent(
+            observed=ObservedTransferPayload(
+                chain=chain,
+                block=block_number,
+                tx_hash=tx_id,
+                event_index=event_index,
+                from_address=from_address,
+                to_address=to_address,
+                crypto=token.crypto,
+                value=value,
+                amount=value.scaleb(-token.decimals),
+                timestamp=timestamp_ms // 1000,
+                datetime=occurred_at,
+                block_hash="",
+                source="tron-scan",
+            )
+        )
 
     @staticmethod
     def filter_matched_events(
@@ -592,95 +680,6 @@ class TronScanner:
                 amount=str(observed.amount),
                 error=str(exc),
             )
-
-    @classmethod
-    def _parse_contract_event(
-        cls,
-        *,
-        chain: Chain,
-        row: dict,
-        expected_block_number: int,
-        block_hash: str,
-        token: CryptoOnChain,
-    ) -> ParsedTronTransferEvent | None:
-        if not isinstance(row, dict):
-            return None
-
-        tx_id = str(row.get("transaction_id") or "")
-        raw_event_index = row.get("event_index")
-        if raw_event_index in (None, ""):
-            return None
-        try:
-            block_number = int(row.get("block_number") or 0)
-            timestamp_ms = int(row.get("block_timestamp") or 0)
-            event_index = int(raw_event_index)
-        except (TypeError, ValueError):
-            return None
-        if not tx_id or not block_number or not timestamp_ms:
-            return None
-        if block_number != expected_block_number:
-            return None
-        if str(row.get("event_name") or "") != "Transfer":
-            return None
-
-        contract_address = str(row.get("contract_address") or "")
-        if not contract_address:
-            return None
-        try:
-            normalized_contract_address = cls._event_address_to_base58(contract_address)
-        except ValueError:
-            return None
-        if normalized_contract_address != token.address:
-            return None
-
-        result = row.get("result") or {}
-        if not isinstance(result, dict):
-            return None
-
-        try:
-            from_address = cls._event_address_to_base58(result.get("from"))
-            to_address = cls._event_address_to_base58(result.get("to"))
-        except ValueError:
-            return None
-
-        try:
-            value = Decimal(str(result.get("value") or "0"))
-        except Exception:  # noqa: BLE001
-            return None
-        if value <= 0:
-            return None
-        if value > MAX_TRANSFER_VALUE:
-            logger.warning(
-                "Tron TRC20 Transfer 数值超过 Transfer.value 范围，已跳过",
-                chain=chain.code,
-                tx_hash=tx_id,
-                event_index=event_index,
-                value=str(value),
-            )
-            return None
-
-        occurred_at = datetime.fromtimestamp(
-            timestamp_ms / 1000,
-            tz=timezone.get_current_timezone(),
-        )
-        decimals = token.decimals
-        return ParsedTronTransferEvent(
-            observed=ObservedTransferPayload(
-                chain=chain,
-                block=block_number,
-                tx_hash=tx_id,
-                event_index=event_index,
-                from_address=from_address,
-                to_address=to_address,
-                crypto=token.crypto,
-                value=value,
-                amount=value.scaleb(-decimals),
-                timestamp=timestamp_ms // 1000,
-                datetime=occurred_at,
-                block_hash=block_hash,
-                source="tron-scan",
-            )
-        )
 
     @staticmethod
     def _advance_cursor(
