@@ -192,22 +192,16 @@ def balance_reaches_collect_threshold(balance: VaultSlotBalance) -> bool:
 
 
 def vault_slot_collect_balance_gaps():
-    """返回仍有余额、无 pending / 在途归集计划、且未被确证为粉尘的快照。
+    """返回仍有余额但没有 pending / 在途归集计划的快照。
 
-    价值门槛必须与 execute_one_due 对齐：低于最小归集价值的余额会被 execute_one_due
-    删除计划（粉尘归集必亏 gas）。安全网若只看 value>0 就把刚删的计划立刻补建，两个
-    任务会就同一笔粉尘反复拉锯（建→删）永不收敛，还持续烧链上 RPC 并挤占 limit 批次。
-
-    这里在 SQL 层排除“已确证粉尘”（0 < worth < 阈值）：
-    - execute_one_due 只在实时价现算出 worth<阈值时才删除粉尘计划，删除前的余额刷新
-      已把同一 worth 写入快照，故快照落在 (0, 阈值) 与删除判据一致，粉尘被稳定排除、
-      不再进入迭代，从源头消除拉锯与批次挤占。
-    - worth==0 可能是“真零”或“缺价降级为 0”，SQL 无法区分，保留交由 reconcile 用
-      实时价（balance_reaches_collect_threshold）复核，避免误伤缺价余额。
-    - 阈值为 0（不限制）时不加价值过滤。
+    这里刻意不用 worth 快照做粉尘过滤：worth 只在余额刷新时落库、行情任务只更新
+    Crypto.prices，价格上涨后旧快照不会重算——按快照排除会把“当时是粉尘、现已
+    涨价达标”的余额永久挡在安全网之外（无新入账的槽位没有其他路径触发重估）。
+    粉尘判定的唯一权威是 reconcile 循环内的实时价复核
+    （balance_reaches_collect_threshold）；被判粉尘的行回写 worth 并推进
+    updated_at 轮转到队尾，既不恒占 limit 批次头部饿死后续缺口，涨价后轮回
+    队首时也会被重新放行。
     """
-    from core.runtime_settings import get_vault_slot_collect_min_worth_usd
-
     matching_schedules = VaultSlotCollectSchedule.objects.filter(
         chain_id=OuterRef("chain_id"),
         vault_slot_id=OuterRef("vault_slot_id"),
@@ -217,18 +211,15 @@ def vault_slot_collect_balance_gaps():
         Q(tx_task__isnull=True) | Q(tx_task__status__in=ACTIVE_COLLECT_TASK_STATUSES)
     )
     failed_schedules = matching_schedules.filter(tx_task__status=TxTaskStatus.FAILED)
-    queryset = (
+    return (
         VaultSlotBalance.objects.select_related("chain", "crypto", "vault_slot")
         .annotate(
             has_active_collect_schedule=Exists(active_schedules),
             has_failed_collect_schedule=Exists(failed_schedules),
         )
         .filter(value__gt=0, has_active_collect_schedule=False)
+        .order_by("updated_at", "pk")
     )
-    threshold = get_vault_slot_collect_min_worth_usd()
-    if threshold > 0:
-        queryset = queryset.exclude(worth__gt=0, worth__lt=threshold)
-    return queryset.order_by("updated_at", "pk")
 
 
 def reconcile_vault_slot_collect_balance_gaps(*, limit: int = 32) -> dict:
@@ -252,13 +243,24 @@ def reconcile_vault_slot_collect_balance_gaps(*, limit: int = 32) -> dict:
                     crypto=getattr(balance.crypto, "symbol", None),
                     balance_value=str(balance.value),
                 )
+                # 轮转到队尾：gaps 按 updated_at 升序切 limit 批，原地跳过会让
+                # 失败阻塞行恒占批次头部，攒满 limit 个即饿死所有后续真实缺口。
+                VaultSlotBalance.objects.filter(pk=balance.pk).update(
+                    updated_at=timezone.now()
+                )
                 continue
 
-            # 实时价复核：SQL 层只挡住 worth 快照已确证的粉尘，worth==0 的余额（真零
-            # 或缺价降级）仍会进来。低于阈值的粉尘在此跳过、不补建，打断与
-            # execute_one_due 的建删拉锯；缺价按“达到阈值”放行，交由 execute_due 复核。
+            # 实时价复核（粉尘判定的唯一权威，与 execute_one_due 判据同源）：低于
+            # 阈值的粉尘不补建计划，打断与 execute_one_due 的建删拉锯；缺价按
+            # “达到阈值”放行，交由 execute_due 复核。跳过时回写实时 worth 快照并
+            # 推进 updated_at 轮转到队尾——否则粉尘恒占批次头部饿死后续缺口；
+            # 涨价后轮回队首时会被本复核重新放行，粉尘不会被永久排除。
             if not balance_reaches_collect_threshold(balance):
                 dust_skipped += 1
+                VaultSlotBalance.objects.filter(pk=balance.pk).update(
+                    worth=balance.crypto.usd_amount(balance.amount),
+                    updated_at=timezone.now(),
+                )
                 continue
 
             schedule = VaultSlotCollectSchedule.ensure_pending_due_now(

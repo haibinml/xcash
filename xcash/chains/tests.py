@@ -1240,7 +1240,7 @@ class VaultSlotReceivedFlagTests(TestCase):
         self.crypto.prices = {"USD": "2"}
         self.crypto.save(update_fields=["prices"])
         # amount=0.1 × 2 USD = 0.2 < 阈值 1 USD，判定为粉尘。
-        VaultSlotBalance.objects.create(
+        balance = VaultSlotBalance.objects.create(
             chain=self.chain,
             vault_slot=self.slot,
             crypto=self.crypto,
@@ -1249,6 +1249,7 @@ class VaultSlotReceivedFlagTests(TestCase):
             worth=Decimal("0"),
             synced_at=timezone.now(),
         )
+        updated_at_before = balance.updated_at
 
         with patch(
             "core.runtime_settings.get_vault_slot_collect_min_worth_usd",
@@ -1265,19 +1266,27 @@ class VaultSlotReceivedFlagTests(TestCase):
                 crypto=self.crypto,
             ).exists()
         )
+        # 跳过必须回写实时 worth 并推进 updated_at 轮转到队尾：
+        # gaps 按 updated_at 升序切 limit 批，原地跳过会让粉尘恒占批次头部。
+        balance.refresh_from_db()
+        self.assertEqual(balance.worth, Decimal("0.2"))
+        self.assertGreater(balance.updated_at, updated_at_before)
 
-    def test_gaps_query_excludes_confirmed_dust_worth_snapshot(self):
-        # worth 快照已确证为粉尘（0 < worth < 阈值）时，SQL 层直接排除，
-        # 连迭代都不进入，从源头避免与 execute_one_due 拉锯及挤占 limit 批次。
-        from chains.vault_slot_balances import vault_slot_collect_balance_gaps
+    def test_reconcile_readmits_dust_after_price_rise(self):
+        # 粉尘判定必须以实时价为唯一权威：worth 快照只在余额刷新时落库，行情任务
+        # 只更新 Crypto.prices。若用快照过滤，"当时是粉尘、现已涨价达标"的余额会
+        # 被永久挡在安全网之外（无新入账的槽位没有其他路径触发重估）。
+        from chains.vault_slot_balances import reconcile_vault_slot_collect_balance_gaps
 
-        VaultSlotBalance.objects.create(
+        self.crypto.prices = {"USD": "2"}
+        self.crypto.save(update_fields=["prices"])
+        balance = VaultSlotBalance.objects.create(
             chain=self.chain,
             vault_slot=self.slot,
             crypto=self.crypto,
             value=Decimal("100000"),
             amount=Decimal("0.1"),
-            worth=Decimal("0.2"),
+            worth=Decimal("0"),
             synced_at=timezone.now(),
         )
 
@@ -1285,13 +1294,89 @@ class VaultSlotReceivedFlagTests(TestCase):
             "core.runtime_settings.get_vault_slot_collect_min_worth_usd",
             return_value=Decimal("1"),
         ):
-            in_gaps = (
-                vault_slot_collect_balance_gaps()
-                .filter(vault_slot=self.slot, crypto=self.crypto)
-                .exists()
-            )
+            first = reconcile_vault_slot_collect_balance_gaps()
+        self.assertEqual(first["dust_skipped_count"], 1)
+        # 跳过已把粉尘 worth 快照回写为 0.2（< 阈值）；此时涨价，快照不会重算。
+        balance.refresh_from_db()
+        self.assertEqual(balance.worth, Decimal("0.2"))
 
-        self.assertFalse(in_gaps)
+        self.crypto.prices = {"USD": "20"}
+        self.crypto.save(update_fields=["prices"])
+
+        with patch(
+            "core.runtime_settings.get_vault_slot_collect_min_worth_usd",
+            return_value=Decimal("1"),
+        ):
+            second = reconcile_vault_slot_collect_balance_gaps()
+
+        # amount=0.1 × 20 USD = 2 ≥ 阈值：尽管 worth 快照仍是粉尘值，
+        # 实时价复核必须重新放行并补建归集计划。
+        self.assertEqual(second["created_count"], 1)
+        self.assertTrue(
+            VaultSlotCollectSchedule.objects.filter(
+                chain=self.chain,
+                vault_slot=self.slot,
+                crypto=self.crypto,
+                tx_task__isnull=True,
+            ).exists()
+        )
+
+    def test_reconcile_dust_rotation_prevents_starvation(self):
+        # 粉尘行跳过后必须轮转到 gaps 队尾：limit 切片被粉尘占满时，
+        # 排在其后的真实缺口否则永远轮不到补建。
+        from chains.vault_slot_balances import reconcile_vault_slot_collect_balance_gaps
+
+        self.crypto.prices = {"USD": "2"}
+        self.crypto.save(update_fields=["prices"])
+        # 粉尘先建（updated_at 较早，恒排队首）。
+        VaultSlotBalance.objects.create(
+            chain=self.chain,
+            vault_slot=self.slot,
+            crypto=self.crypto,
+            value=Decimal("100000"),
+            amount=Decimal("0.1"),
+            worth=Decimal("0"),
+            synced_at=timezone.now(),
+        )
+        real_slot = VaultSlot.objects.create(
+            chain=self.chain,
+            usage=VaultSlotUsage.INVOICE,
+            project=self.project,
+            invoice_index=3,
+            address=Web3.to_checksum_address("0x" + "ba" * 20),
+            salt=b"h" * 32,
+        )
+        # 达标余额后建：amount=5 × 2 USD = 10 ≥ 阈值。
+        VaultSlotBalance.objects.create(
+            chain=self.chain,
+            vault_slot=real_slot,
+            crypto=self.crypto,
+            value=Decimal("5000000"),
+            amount=Decimal("5"),
+            worth=Decimal("0"),
+            synced_at=timezone.now(),
+        )
+
+        with patch(
+            "core.runtime_settings.get_vault_slot_collect_min_worth_usd",
+            return_value=Decimal("1"),
+        ):
+            # limit=1 模拟批次被粉尘占满：首轮只轮到粉尘，跳过并轮转到队尾。
+            first = reconcile_vault_slot_collect_balance_gaps(limit=1)
+            self.assertEqual(first["created_count"], 0)
+            self.assertEqual(first["dust_skipped_count"], 1)
+            # 次轮粉尘已在队尾，达标余额获得补建，不被饿死。
+            second = reconcile_vault_slot_collect_balance_gaps(limit=1)
+
+        self.assertEqual(second["created_count"], 1)
+        self.assertTrue(
+            VaultSlotCollectSchedule.objects.filter(
+                chain=self.chain,
+                vault_slot=real_slot,
+                crypto=self.crypto,
+                tx_task__isnull=True,
+            ).exists()
+        )
 
     def test_reconcile_isolates_single_balance_schedule_errors(self):
         from chains.vault_slot_balances import reconcile_vault_slot_collect_balance_gaps
