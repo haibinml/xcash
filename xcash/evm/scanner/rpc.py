@@ -91,6 +91,68 @@ class EvmScannerRpcClient:
         topic0: str | list[str],
         summary: str,
     ) -> list[dict[str, Any]]:
+        """拉取单个块区间日志；命中"结果过多/范围过大"类限制时按块二分重试。
+
+        eth_getLogs 只按代币合约地址过滤、不按收款地址过滤，主网高频稳定币在一个
+        窗口内可能命中的日志数超过节点上限（如 "query returned more than 10000
+        results"）。这类是确定性失败，盲目重试无用、只会让游标停在同一窗口反复超限
+        导致整链漏账；这里改为把区间二分递归下探，直到单块。单块仍超限则上抛告警，
+        绝不静默跳过（跳过等于永久漏账），由运维放宽节点上限或调小批次后自愈。
+        """
+        try:
+            return self._get_logs_single_range(
+                from_block=from_block,
+                to_block=to_block,
+                addresses=addresses,
+                topic0=topic0,
+                summary=summary,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if not self._is_result_too_large_error(exc):
+                raise
+            if from_block >= to_block:
+                raise EvmScannerRpcError(
+                    self._format_rpc_error(
+                        f"{summary}（单块日志数超过节点上限，无法继续二分）",
+                        method="eth_getLogs",
+                        exc=exc,
+                        context=f"from={from_block} to={to_block}",
+                    )
+                ) from exc
+
+        mid_block = (from_block + to_block) // 2
+        logger.warning(
+            "EVM eth_getLogs 结果超限，按块二分重试",
+            chain=self.chain.code,
+            from_block=from_block,
+            to_block=to_block,
+            mid_block=mid_block,
+        )
+        lower = self._get_logs_chunk(
+            from_block=from_block,
+            to_block=mid_block,
+            addresses=addresses,
+            topic0=topic0,
+            summary=summary,
+        )
+        upper = self._get_logs_chunk(
+            from_block=mid_block + 1,
+            to_block=to_block,
+            addresses=addresses,
+            topic0=topic0,
+            summary=summary,
+        )
+        return lower + upper
+
+    def _get_logs_single_range(
+        self,
+        *,
+        from_block: int,
+        to_block: int,
+        addresses: list[str] | None,
+        topic0: str | list[str],
+        summary: str,
+    ) -> list[dict[str, Any]]:
         filter_params: dict[str, Any] = {
             "fromBlock": from_block,
             "toBlock": to_block,
@@ -104,7 +166,28 @@ class EvmScannerRpcClient:
                 summary=summary,
                 method="eth_getLogs",
                 context=f"from={from_block} to={to_block}",
+                non_retriable_predicate=self._is_result_too_large_error,
             )
+        )
+
+    @staticmethod
+    def _is_result_too_large_error(exc: Exception) -> bool:
+        """判断 eth_getLogs 错误是否为"返回结果过多 / 查询范围过大"类的确定性限制。
+
+        只匹配明确指向"结果集/区块范围过大"的措辞——这类靠二分区间可解。故意不匹配
+        泛化的"limit exceeded / -32005"，因其常是按请求频率的限流（rate limit），
+        对其二分只会发出更多请求、无助于缩小结果集，应交由退避重试而非二分处理。
+        """
+        msg = str(exc).lower()
+        return (
+            "returned more than" in msg  # Geth/Infura: query returned more than N results
+            or "logs matched by the query exceeds" in msg
+            or "response size exceed" in msg  # Alchemy: response size exceeded
+            or "response is too large" in msg
+            or "query timeout exceeded" in msg  # 范围过大导致节点侧超时
+            or "block range" in msg  # ...too wide / is too large / exceeds limit
+            or "range too large" in msg
+            or "too many results" in msg
         )
 
     def get_block_timestamp(self, *, block_number: int) -> int:

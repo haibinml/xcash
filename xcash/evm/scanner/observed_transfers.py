@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -19,7 +20,6 @@ from currencies.models import CryptoOnChain
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.rpc import EvmScannerRpcClient
-from evm.scanner.rpc import EvmScannerRpcError
 
 logger = structlog.get_logger()
 
@@ -31,7 +31,7 @@ class ParsedEvmTransferLog:
     block_number: int
     block_hash: str
     tx_hash: str
-    event_index: int | None
+    block_log_index: int | None
     from_address: str
     to_address: str
     crypto: Any
@@ -146,7 +146,7 @@ class EvmObservedTransferProcessor:
             block_number = cls._parse_int(log["blockNumber"])
             block_hash = cls._normalize_required_hash(log["blockHash"])
             tx_hash = cls._normalize_required_hash(log["transactionHash"])
-            event_index = cls._parse_optional_int(log.get("logIndex"))
+            block_log_index = cls._parse_optional_int(log.get("logIndex"))
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             logger.warning(
                 "EVM 原生币充值日志解析失败，已跳过",
@@ -172,7 +172,7 @@ class EvmObservedTransferProcessor:
             block_number=block_number,
             block_hash=block_hash,
             tx_hash=tx_hash,
-            event_index=event_index,
+            block_log_index=block_log_index,
             from_address=payer,
             to_address=slot_address,
             crypto=chain.native_coin,
@@ -216,7 +216,7 @@ class EvmObservedTransferProcessor:
             block_number = cls._parse_int(log["blockNumber"])
             block_hash = cls._normalize_required_hash(log["blockHash"])
             tx_hash = cls._normalize_required_hash(log["transactionHash"])
-            event_index = cls._parse_optional_int(log.get("logIndex"))
+            block_log_index = cls._parse_optional_int(log.get("logIndex"))
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             logger.warning(
                 "EVM ERC20 Transfer 日志解析失败，已跳过",
@@ -232,7 +232,7 @@ class EvmObservedTransferProcessor:
                 "EVM ERC20 Transfer 数值超过 Transfer.value 范围，已跳过",
                 chain=chain.code,
                 tx_hash=tx_hash,
-                event_index=event_index,
+                block_log_index=block_log_index,
                 value=str(value),
             )
             return None
@@ -242,7 +242,7 @@ class EvmObservedTransferProcessor:
             block_number=block_number,
             block_hash=block_hash,
             tx_hash=tx_hash,
-            event_index=event_index,
+            block_log_index=block_log_index,
             from_address=from_address,
             to_address=to_address,
             crypto=token.crypto,
@@ -258,26 +258,36 @@ class EvmObservedTransferProcessor:
         logs: list[ParsedEvmTransferLog],
         rpc_client: EvmScannerRpcClient,
     ) -> None:
-        """逐条外部入账事件幂等落库。"""
+        """逐条外部入账事件幂等落库。
+
+        event_index 采用"同一交易内、按区块级 logIndex 升序的相对序号"，既不是
+        直接用区块级 logIndex，也不再回查 receipt 取其数组下标：
+
+        - 直接用区块级 logIndex 不安全：reorg 把交易重排到新区块的不同位置时
+          logIndex 会变，(chain, hash, event_index) 唯一键随之改变，旧 Transfer 行
+          不再被 reorg-drop 命中，同一笔充值会被当成新事件重复入账。
+        - 交易内相对序号在 reorg 下不变：一笔交易自身的日志始终按发射顺序（即
+          logIndex 升序）连续排列，其相对次序不随区块位置漂移，可稳定区分同一笔
+          交易内的多条入账（如批量代付合约一笔交易向多个收款地址转账）。
+
+        该序号可直接从本轮已拉取的日志计算，无需每条日志再回查一次 receipt，既省
+        一次 RPC，也消除了"receipt 暂不可见 / logIndex 匹配不上即抛错中断整轮"这一
+        单条坏日志卡死全链的风险。
+        """
+        ordinals = cls._intra_tx_event_indexes(logs=logs)
         timestamp_cache: dict[int, int] = {}
-        receipt_cache: dict[str, dict[str, Any]] = {}
 
         for log in logs:
-            receipt = cls.receipt_for_log(
-                chain=chain,
-                log=log,
-                rpc_client=rpc_client,
-                receipt_cache=receipt_cache,
-            )
-            event_index = cls.receipt_event_index_for_log(
-                receipt=receipt,
-                block_log_index=log.event_index,
-            )
+            event_index = ordinals.get((log.tx_hash, log.block_log_index))
             if event_index is None:
-                raise EvmScannerRpcError(
-                    "EVM 入账日志无法在交易 receipt 中稳定定位 "
-                    f"chain={chain.code} tx_hash={log.tx_hash}"
+                # 已确认区块的日志必带 logIndex；缺失属异常数据，跳过单条而非中断
+                # 整轮，避免一条坏日志拖垮全链扫描。
+                logger.warning(
+                    "EVM 入账日志缺少区块级 logIndex，无法稳定定位 event_index，已跳过",
+                    chain=chain.code,
+                    tx_hash=log.tx_hash,
                 )
+                continue
 
             timestamp = timestamp_cache.get(log.block_number)
             if timestamp is None:
@@ -307,40 +317,24 @@ class EvmObservedTransferProcessor:
             cls._persist_observed_transfer_safely(chain=chain, observed=observed)
 
     @staticmethod
-    def receipt_for_log(
-        *,
-        chain: Chain,
-        log: ParsedEvmTransferLog,
-        rpc_client: EvmScannerRpcClient,
-        receipt_cache: dict[str, dict[str, Any]],
-    ) -> dict[str, Any]:
-        receipt = receipt_cache.get(log.tx_hash)
-        if receipt is not None:
-            return receipt
+    def _intra_tx_event_indexes(
+        *, logs: list[ParsedEvmTransferLog]
+    ) -> dict[tuple[str, int | None], int]:
+        """按 tx_hash 分组，组内按区块级 logIndex 升序赋 0 基相对序号。
 
-        receipt = rpc_client.get_transaction_receipt(tx_hash=log.tx_hash)
-        if receipt is None:
-            raise EvmScannerRpcError(
-                "EVM 入账日志 receipt 暂不可见 "
-                f"chain={chain.code} tx_hash={log.tx_hash}"
-            )
-        receipt_cache[log.tx_hash] = receipt
-        return receipt
+        返回 {(tx_hash, block_log_index): 序号}。缺少 block_log_index 的日志不参与
+        排名（键无法命中，落库阶段按坏数据跳过）。
+        """
+        block_log_indexes_by_tx: dict[str, list[int]] = defaultdict(list)
+        for log in logs:
+            if log.block_log_index is not None:
+                block_log_indexes_by_tx[log.tx_hash].append(log.block_log_index)
 
-    @classmethod
-    def receipt_event_index_for_log(
-        cls,
-        *,
-        receipt: dict[str, Any],
-        block_log_index: int | None,
-    ) -> int | None:
-        """把区块级 logIndex 转成交易 receipt 内日志序号。"""
-        if block_log_index is None:
-            return None
-        for index, receipt_log in enumerate(receipt.get("logs") or []):
-            if cls._parse_optional_int(receipt_log.get("logIndex")) == block_log_index:
-                return index
-        return None
+        event_indexes: dict[tuple[str, int | None], int] = {}
+        for tx_hash, block_log_indexes in block_log_indexes_by_tx.items():
+            for rank, block_log_index in enumerate(sorted(block_log_indexes)):
+                event_indexes[(tx_hash, block_log_index)] = rank
+        return event_indexes
 
     @staticmethod
     def _persist_observed_transfer_safely(

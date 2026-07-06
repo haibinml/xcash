@@ -549,7 +549,11 @@ class VaultSlotAddressSchedulingTests(TestCase):
         TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
 
         evm_task = task.evm_task
-        with patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock:
+        with (
+            patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            # 部署成功收口前会复核 slot 链上有码；真实成功部署后 slot 必有码。
+            patch("evm.vault_slots.is_deployed_on_chain", return_value=True),
+        ):
             w3_mock.return_value.eth.get_transaction.return_value = {
                 "hash": tx_hash,
                 "from": self.system_sender.address,
@@ -566,6 +570,49 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertTrue(slot.is_deployed)
         notify_gas_fee.assert_called_once()
         self.assertEqual(notify_gas_fee.call_args.kwargs["tx_task"].pk, task.pk)
+
+    @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
+    def test_deploy_status_success_without_on_chain_code_finalizes_failed(
+        self,
+        notify_gas_fee,
+    ):
+        # 工厂未部署时 deployVaultSlot 会"空成功"(status=1 但地址无码)：必须按失败收口，
+        # 不能误标 is_deployed，否则 reconcile 会周期性空扫归集无限烧 gas。
+        from evm.poller import EvmTaskPoller
+
+        slot = self._create_vault_slot()
+        address_patch = self.patch_address_derivation()
+        tx_hash = "0x" + "ac" * 32
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+
+        with address_patch:
+            task = VaultSlot.schedule_deploy(slot.pk)
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
+
+        evm_task = task.evm_task
+        with (
+            patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            # 链上复核：地址无合约码（工厂空成功）。
+            patch("evm.vault_slots.is_deployed_on_chain", return_value=False),
+        ):
+            w3_mock.return_value.eth.get_transaction.return_value = {
+                "hash": tx_hash,
+                "from": self.system_sender.address,
+            }
+            EvmTaskPoller.process_succeeded_receipt(
+                evm_task=evm_task,
+                tx_hash=tx_hash,
+                receipt={"status": 1, "blockNumber": 1},
+            )
+
+        task.refresh_from_db()
+        slot.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.FAILED)
+        self.assertFalse(slot.is_deployed)
+        # 空成功不应向 SaaS 计费（部署实际没成功）。
+        notify_gas_fee.assert_not_called()
 
     @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
     def test_confirmed_deposit_deploy_initial_native_balance_creates_confirmed_deposit(
@@ -596,6 +643,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         with (
             patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            patch("evm.vault_slots.is_deployed_on_chain", return_value=True),
             patch("chains.service.TransferService.enqueue_processing"),
             patch("chains.vault_slot_balances.refresh_vault_slot_balance_for_transfer"),
             patch("deposits.service.WebhookService.create_event"),
@@ -688,6 +736,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         with (
             patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            patch("evm.vault_slots.is_deployed_on_chain", return_value=True),
             patch("chains.service.TransferService.enqueue_processing"),
             patch("chains.vault_slot_balances.refresh_vault_slot_balance_for_transfer"),
             patch(
@@ -1686,10 +1735,10 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         original_create_tx_task = VaultSlotCollectSchedule.create_tx_task
 
-        def fail_first_schedule(schedule):
+        def fail_first_schedule(schedule, *, collect_gas_hint=None):
             if schedule.pk == first.pk:
                 raise RuntimeError("token disabled")
-            return original_create_tx_task(schedule)
+            return original_create_tx_task(schedule, collect_gas_hint=collect_gas_hint)
 
         with (
             address_patch,
@@ -2147,3 +2196,76 @@ class VaultSlotCollectMinWorthThresholdTests(TestCase):
             )
 
         self.assertTrue(passed)
+
+
+class EvmEstimateCollectGasTests(TestCase):
+    """EVM 归集 gas 按链上 estimate_gas 动态上浮的行为。"""
+
+    def setUp(self):
+        self.chain = make_evm_chain(
+            code=ChainCode.Ethereum,
+            rpc="http://estimate-collect-gas.local",
+        )
+        self.project = Project.objects.create(name="Estimate Collect Gas Project")
+        self.customer = Customer.objects.create(
+            project=self.project,
+            uid="estimate-collect-gas-customer",
+        )
+        self.slot = VaultSlot.objects.create(
+            chain=self.chain,
+            usage=VaultSlotUsage.DEPOSIT,
+            customer=self.customer,
+            project=self.project,
+            address=Web3.to_checksum_address(
+                "0x0000000000000000000000000000000000000abd"
+            ),
+            salt=b"\x22" * 32,
+            is_deployed=True,
+        )
+
+    def patch_hot_wallet(self):
+        sender = SimpleNamespace(
+            address=Web3.to_checksum_address("0x" + "11" * 20)
+        )
+        wallet = SimpleNamespace(get_address=Mock(return_value=sender))
+        return patch(
+            "evm.vault_slots.SystemWallet.get_current",
+            return_value=SimpleNamespace(wallet=wallet),
+        )
+
+    def estimate(self, *, estimate_gas):
+        from evm.vault_slots import estimate_collect_gas
+
+        with (
+            patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            self.patch_hot_wallet(),
+        ):
+            w3_mock.return_value.eth.estimate_gas = estimate_gas
+            return estimate_collect_gas(
+                chain=self.chain,
+                crypto=self.chain.native_coin,
+                slot=self.slot,
+            )
+
+    def test_floats_up_with_buffer_from_on_chain_estimate(self):
+        # L2 等 estimate 高于静态默认时按 1.2x 缓冲上浮。
+        gas = self.estimate(estimate_gas=Mock(return_value=1_000_000))
+        self.assertEqual(gas, 1_200_000)
+
+    def test_never_floats_below_static_default(self):
+        # 低估（L1 常规链）时不下调，保底用静态默认，避免归集 OOG。
+        from evm.constants import DEFAULT_VAULT_SLOT_COLLECT_GAS
+
+        gas = self.estimate(estimate_gas=Mock(return_value=21_000))
+        self.assertEqual(gas, DEFAULT_VAULT_SLOT_COLLECT_GAS)
+
+    def test_caps_at_ceiling(self):
+        from evm.constants import VAULT_SLOT_COLLECT_GAS_CEILING
+
+        gas = self.estimate(estimate_gas=Mock(return_value=100_000_000))
+        self.assertEqual(gas, VAULT_SLOT_COLLECT_GAS_CEILING)
+
+    def test_returns_none_on_estimate_rpc_error(self):
+        # 估算失败必须回退静态默认（None），绝不阻断归集本身。
+        gas = self.estimate(estimate_gas=Mock(side_effect=RuntimeError("rpc down")))
+        self.assertIsNone(gas)

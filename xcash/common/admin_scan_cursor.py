@@ -14,7 +14,17 @@ class SyncScanCursorToLatestActionMixin:
     def get_sync_latest_block(self, *, chain) -> int:
         return chain.latest_block_number
 
-    @admin.action(description="启用所选扫描游标")
+    def has_sync_scan_cursor_permission(self, request) -> bool:
+        # 启停/追平扫描游标直接改动资金入账的扫描位点：暂停会停止充值/归集确认入账，
+        # 「追平到最新区块」会把 last_scanned_block 直接跳到链头、跳过区间内的充值永久
+        # 漏账（游标单调前进、无回补机制）。属系统级治理操作，收口到超管，不能靠 view
+        # 只读权限放行给审计员，与 chains.requeue / SystemSettings 口径一致。
+        return bool(request.user.is_active and request.user.is_superuser)
+
+    @admin.action(
+        description="启用所选扫描游标",
+        permissions=["sync_scan_cursor"],
+    )
     def enable_selected_scanners(self, request, queryset) -> None:
         selected_ids = list(queryset.values_list("pk", flat=True))
         if not selected_ids:
@@ -30,7 +40,10 @@ class SyncScanCursorToLatestActionMixin:
             level=messages.SUCCESS,
         )
 
-    @admin.action(description="暂停所选扫描游标")
+    @admin.action(
+        description="暂停所选扫描游标",
+        permissions=["sync_scan_cursor"],
+    )
     def disable_selected_scanners(self, request, queryset) -> None:
         selected_ids = list(queryset.values_list("pk", flat=True))
         if not selected_ids:
@@ -46,7 +59,10 @@ class SyncScanCursorToLatestActionMixin:
             level=messages.SUCCESS,
         )
 
-    @admin.action(description="追平到最新区块")
+    @admin.action(
+        description="追平到最新区块",
+        permissions=["sync_scan_cursor"],
+    )
     def sync_selected_to_latest(self, request, queryset) -> None:
         selected_cursors = list(
             queryset.select_related("chain").order_by("chain_id", "pk")

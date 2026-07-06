@@ -1,6 +1,10 @@
 from unittest.mock import Mock
+from unittest.mock import PropertyMock
+from unittest.mock import patch
 
+from django.contrib.admin.models import LogEntry
 from django.contrib.admin.sites import AdminSite
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase
 from django.test import TestCase
 from web3 import Web3
@@ -64,20 +68,84 @@ class EvmTxTaskAdminActionTests(TestCase):
             gas_price=1,
         )
 
+    def make_request(self):
+        user = get_user_model().objects.create_superuser(
+            username="ops-admin",
+            password="pw",
+        )
+        return Mock(user=user)
+
     def test_mark_queued_failed_action_only_updates_queued_tasks(self):
         queued = self.create_task(status=TxTaskStatus.QUEUED, nonce=0)
         submitted = self.create_task(status=TxTaskStatus.SUBMITTED, nonce=1)
+        request = self.make_request()
 
-        self.admin.mark_queued_failed_after_nonce_handled(
-            request=Mock(),
-            queryset=EvmTxTask.objects.filter(pk__in=[queued.pk, submitted.pk]),
-        )
+        with patch.object(
+            type(self.chain), "w3", new_callable=PropertyMock
+        ) as w3_mock:
+            # 链上 nonce 已越过 nonce=0，表示该 nonce 已被消费，护栏放行。
+            w3_mock.return_value.eth.get_transaction_count.return_value = 1
+            self.admin.mark_queued_failed_after_nonce_handled(
+                request=request,
+                queryset=EvmTxTask.objects.filter(pk__in=[queued.pk, submitted.pk]),
+            )
 
         queued.base_task.refresh_from_db()
         submitted.base_task.refresh_from_db()
         self.assertEqual(queued.base_task.status, TxTaskStatus.FAILED)
         self.assertEqual(submitted.base_task.status, TxTaskStatus.SUBMITTED)
         self.admin.message_user.assert_called_once()
+        # 标记失败必须留下可追溯的 admin 审计日志。
+        self.assertEqual(
+            LogEntry.objects.filter(object_id=str(queued.pk)).count(), 1
+        )
+
+    def test_mark_queued_failed_blocks_when_chain_nonce_not_consumed(self):
+        # 链上 nonce 尚未越过该任务：标记失败会造成永久 nonce 缺口，必须拦截。
+        queued = self.create_task(status=TxTaskStatus.QUEUED, nonce=0)
+        request = self.make_request()
+
+        with patch.object(
+            type(self.chain), "w3", new_callable=PropertyMock
+        ) as w3_mock:
+            w3_mock.return_value.eth.get_transaction_count.return_value = 0
+            self.admin.mark_queued_failed_after_nonce_handled(
+                request=request,
+                queryset=EvmTxTask.objects.filter(pk=queued.pk),
+            )
+
+        queued.base_task.refresh_from_db()
+        self.assertEqual(queued.base_task.status, TxTaskStatus.QUEUED)
+        self.assertEqual(LogEntry.objects.count(), 0)
+
+    def test_mark_queued_failed_blocks_when_chain_nonce_query_fails(self):
+        # 链上 nonce 查询失败时宁可拦截也不放行，避免误造 nonce 缺口。
+        queued = self.create_task(status=TxTaskStatus.QUEUED, nonce=0)
+        request = self.make_request()
+
+        with patch.object(
+            type(self.chain), "w3", new_callable=PropertyMock
+        ) as w3_mock:
+            w3_mock.return_value.eth.get_transaction_count.side_effect = RuntimeError(
+                "rpc down"
+            )
+            self.admin.mark_queued_failed_after_nonce_handled(
+                request=request,
+                queryset=EvmTxTask.objects.filter(pk=queued.pk),
+            )
+
+        queued.base_task.refresh_from_db()
+        self.assertEqual(queued.base_task.status, TxTaskStatus.QUEUED)
+
+    def test_mark_queued_failed_permission_is_superuser_only(self):
+        superuser = Mock(is_active=True, is_superuser=True)
+        auditor = Mock(is_active=True, is_superuser=False)
+        self.assertTrue(
+            self.admin.has_mark_queued_failed_permission(Mock(user=superuser))
+        )
+        self.assertFalse(
+            self.admin.has_mark_queued_failed_permission(Mock(user=auditor))
+        )
 
 
 class EvmScanCursorAdminTests(SimpleTestCase):
@@ -90,3 +158,21 @@ class EvmScanCursorAdminTests(SimpleTestCase):
 
         self.assertFalse(self.admin.has_delete_permission(request, obj=None))
         self.assertFalse(self.admin.has_delete_permission(request, obj=object()))
+
+    def test_scan_cursor_actions_are_superuser_only(self):
+        # 启停/追平游标会改动资金入账扫描位点，权限必须收口到超管而非 view 只读。
+        superuser = Mock(is_active=True, is_superuser=True)
+        auditor = Mock(is_active=True, is_superuser=False)
+        self.assertTrue(
+            self.admin.has_sync_scan_cursor_permission(Mock(user=superuser))
+        )
+        self.assertFalse(
+            self.admin.has_sync_scan_cursor_permission(Mock(user=auditor))
+        )
+        for action_name in (
+            "enable_selected_scanners",
+            "disable_selected_scanners",
+            "sync_selected_to_latest",
+        ):
+            action = getattr(EvmScanCursorAdmin, action_name)
+            self.assertEqual(list(action.allowed_permissions), ["sync_scan_cursor"])

@@ -9,7 +9,9 @@ from web3 import Web3
 from chains.models import Chain
 from chains.models import TxTask
 from chains.models import TxTaskType
+from chains.models import VaultSlot
 from chains.vault_slot_balances import refresh_vault_slot_balance_for_collect_task
+from chains.vault_slots import get_backend
 from chains.vault_slots import mark_deployed_by_task
 from chains.vault_slots import mark_deployed_if_on_chain_for_task
 from evm.internal_tx.routing import UnknownInternalBroadcastError
@@ -55,6 +57,35 @@ def _finalize_failed(*, tx_task: TxTask) -> None:
             mark_deployed_if_on_chain_for_task(tx_task)
 
 
+def _deploy_slot_is_on_chain(*, tx_task: TxTask) -> bool | None:
+    """复核部署交易对应的 VaultSlot 是否已在链上有合约码。
+
+    返回 True/False 表示链上有码/无码；返回 None 表示无法判定（找不到 slot 或
+    链上检查 RPC 异常），此时沿用成功路径，不因瞬时 RPC 故障误伤真实部署。
+    """
+    slot = (
+        VaultSlot.objects.select_related("chain")
+        .filter(deploy_tx_task=tx_task)
+        .first()
+    )
+    if slot is None:
+        return None
+    try:
+        return get_backend(slot.chain).is_deployed_on_chain(
+            chain=slot.chain,
+            address=slot.address,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "EVM VaultSlot 部署成功收口前链上有码检查失败，按成功路径继续",
+            chain=slot.chain.code,
+            vault_slot_id=slot.pk,
+            tx_task_id=tx_task.pk,
+            error=str(exc),
+        )
+        return None
+
+
 def _finalize_deploy_success(
     *,
     chain: Chain,
@@ -62,6 +93,20 @@ def _finalize_deploy_success(
     tx_task: TxTask,
     receipt: dict,
 ) -> bool:
+    # 部署交易 status=1 只代表调用未 revert，不代表槽位真的被部署：工厂地址本身
+    # 无合约码时，deployVaultSlot 调用会"空成功"，槽位地址仍无码。若此时按成功
+    # 收口会误标 is_deployed，之后 reconcile 见"有余额"反复重建归集任务空扫烧 gas。
+    # 故先复核链上有码，确定无码则按失败收口，待工厂部署后重建部署任务恢复。
+    if _deploy_slot_is_on_chain(tx_task=tx_task) is False:
+        logger.error(
+            "EVM VaultSlot 部署交易成功但地址无合约码，按失败收口",
+            chain=chain.code,
+            tx_hash=tx_hash,
+            tx_task_id=tx_task.pk,
+        )
+        _finalize_failed(tx_task=tx_task)
+        return True
+
     transfer = None
     updated = False
     with db_transaction.atomic():

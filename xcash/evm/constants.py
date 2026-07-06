@@ -1,6 +1,13 @@
 DEFAULT_VAULT_SLOT_DEPLOY_GAS = 160_000
 DEFAULT_VAULT_SLOT_COLLECT_GAS = 120_000
 
+# 归集 gas 按链上 estimate_gas 动态上浮的缓冲系数与安全上限。
+# L2（如 Arbitrum One）的 estimate 含 L1 calldata 提交成本分量，静态 120k 在高峰期
+# 可能不足导致归集 OOG；故以链上估算为基准上浮。用 max(静态默认) 防止低估回退，
+# 用上限防止异常/恶意报价把 gas limit 放大到烧穿热钱包 gas 预检。
+VAULT_SLOT_COLLECT_GAS_ESTIMATE_BUFFER_BPS = 12_000  # 1.2x
+VAULT_SLOT_COLLECT_GAS_CEILING = 3_000_000
+
 # 同一 (address, chain) 同时允许在 mempool 中等待确认的最大交易数。
 EVM_PIPELINE_DEPTH = 50
 

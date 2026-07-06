@@ -425,6 +425,33 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual({transfer.hash for transfer in transfers}, {"0x" + "ab" * 32})
         rpc_client.get_block_timestamp.assert_called_once_with(block_number=100)
 
+    def test_erc20_scanner_event_index_is_intra_tx_rank_not_block_log_index(self):
+        # event_index 必须是"同一交易内的相对序号"（reorg 不变），而不是区块级 logIndex：
+        # 单条入账在区块内 logIndex=7，落库 event_index 应为 0。若误用区块级 logIndex，
+        # reorg 重排会改变它、绕过 (chain,hash,event_index) 去重导致重复入账。
+        sender = Web3.to_checksum_address("0x" + "cc" * 20)
+        logs = [
+            self._build_transfer_log(
+                from_address=sender,
+                to_address=self.vault_slot.address,
+                log_index=7,
+            ),
+        ]
+        rpc_client = Mock()
+        rpc_client.get_block_timestamp.return_value = 1_700_000_000
+
+        EvmLogScanner._process_logs(
+            chain=self.chain,
+            logs=logs,
+            rpc_client=rpc_client,
+            token_registry={self.token_on_chain.address: self.token_on_chain},
+        )
+
+        transfer = Transfer.objects.get()
+        self.assertEqual(transfer.event_index, 0)
+        # 落库不再依赖每条日志回查 receipt。
+        rpc_client.get_transaction_receipt.assert_not_called()
+
     @patch("evm.scanner.observed_transfers.TransferService.create_observed_transfer")
     def test_erc20_scanner_skips_oversized_value_without_blocking_valid_event(
         self,
@@ -472,7 +499,9 @@ class EvmErc20ScannerTests(TestCase):
         self.assertIsNone(created)
         create_observed_transfer_mock.assert_called_once()
         observed = create_observed_transfer_mock.call_args.kwargs["observed"]
-        self.assertEqual(observed.event_index, 1)
+        # event_index 是"同一交易内落库日志按 logIndex 升序的相对序号"：超大值日志
+        # 在解析阶段已被过滤、不进入排名，剩下的这条有效入账即为该交易内第 0 条。
+        self.assertEqual(observed.event_index, 0)
         self.assertEqual(observed.to_address, second_slot.address)
 
     @patch("evm.scanner.observed_transfers.TransferService.create_observed_transfer")

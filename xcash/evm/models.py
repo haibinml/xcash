@@ -243,8 +243,15 @@ class EvmTxTask(UndeletableModel):
             )
             return True
         if status == 0:
+            # 先转 SUBMITTED，让链上事实脱离 QUEUED 广播路径；失败终局与成功一样
+            # 必须等确认数达标，未达标时暂不终局，改由 poller 在确认后收口，避免
+            # reorg 回滚该交易后 nonce 缺口卡死后续任务。
             self._mark_submitted()
-            EvmTaskPoller.finalize_failed_task(evm_task=self)
+            if EvmTaskPoller._has_required_confirmations(  # noqa: SLF001
+                chain=self.chain,
+                receipt=receipt,
+            ):
+                EvmTaskPoller.finalize_failed_task(evm_task=self)
             return True
         raise RuntimeError("EVM receipt status missing or invalid")
 
@@ -272,17 +279,26 @@ class EvmTxTask(UndeletableModel):
         ) // BPS_DENOMINATOR
 
     def _ensure_signed_with_latest_gas_price(self) -> None:
-        """首次广播时签名并生成首个 tx_hash；重试时仅在 gas 提升时重签。"""
+        """首次广播时签名并生成首个 tx_hash；重试时仅在 gas 提升时重签。
+
+        签名载荷落库与 tx_hash 登记必须在同一事务内提交：二者分处两个事务时，
+        worker 在"已 save signed_payload、未 append_tx_hash"之间崩溃，会留下
+        一个持有已签名载荷、但其 tx_hash 从未登记的任务。该载荷再次广播上链后，
+        poller 遍历 known_tx_hashes 查不到对应 hash，receipt 永远 MISSING，任务
+        永久卡在 SUBMITTED、业务对象永不收口。用同一 atomic 包住即可根除该窗口：
+        要么两者一起提交，要么一起回滚，回滚后按确定性签名重签重试，状态自洽。
+        """
         current_gas_price = self.chain.w3.eth.gas_price  # noqa: SLF001
         if not self.signed_payload or self.gas_price is None:
             gas_price = self._initial_gas_price(current_gas_price)
             signed = self.sender.sign_evm_transaction(
                 tx_dict=self._build_transaction_dict(gas_price=gas_price),
             )
-            self.gas_price = gas_price
-            self.signed_payload = signed.raw_transaction
-            self.save(update_fields=["gas_price", "signed_payload"])
-            self.base_task.append_tx_hash(signed.tx_hash)
+            with db_transaction.atomic():
+                self.gas_price = gas_price
+                self.signed_payload = signed.raw_transaction
+                self.save(update_fields=["gas_price", "signed_payload"])
+                self.base_task.append_tx_hash(signed.tx_hash)
             return
 
         if current_gas_price <= self.gas_price:
@@ -295,12 +311,12 @@ class EvmTxTask(UndeletableModel):
         signed = self.sender.sign_evm_transaction(
             tx_dict=self._build_transaction_dict(gas_price=replacement_gas_price),
         )
-        self.gas_price = replacement_gas_price
-        self.signed_payload = signed.raw_transaction
-        self.save(update_fields=["gas_price", "signed_payload"])
-
-        # 重签后 tx_hash 变化，更新父任务并追加历史记录以便链上观测匹配。
-        self.base_task.append_tx_hash(signed.tx_hash)
+        with db_transaction.atomic():
+            self.gas_price = replacement_gas_price
+            self.signed_payload = signed.raw_transaction
+            self.save(update_fields=["gas_price", "signed_payload"])
+            # 重签后 tx_hash 变化，更新父任务并追加历史记录以便链上观测匹配。
+            self.base_task.append_tx_hash(signed.tx_hash)
 
     def _build_transaction_dict(self, *, gas_price: int) -> dict:
         return {

@@ -929,6 +929,79 @@ class EvmTxTaskTests(TestCase):
         base_task.refresh_from_db()
         self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
 
+    def _make_recover_task(self, *, chain, receipt_status: int, block_number: int):
+        addr = Address.objects.create(
+            wallet=Wallet.objects.create(),
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.HotWallet,
+            bip44_account=1,
+            address_index=0,
+            address=Web3.to_checksum_address(
+                "0x0000000000000000000000000000000000000120"
+            ),
+        )
+        tx_hash = "0x" + "7" * 64
+        receipt = {"status": receipt_status, "blockNumber": block_number, "logs": []}
+        chain.__dict__["w3"] = SimpleNamespace(
+            eth=SimpleNamespace(
+                gas_price=1,
+                get_transaction_receipt=Mock(return_value=receipt),
+                get_balance=Mock(return_value=0),
+                send_raw_transaction=Mock(),
+            )
+        )
+        base_task = TxTask.objects.create(
+            chain=chain,
+            sender=addr,
+            tx_type=TxTaskType.VaultSlotCollect,
+            tx_hash=tx_hash,
+            status=TxTaskStatus.QUEUED,
+        )
+        TxHash.objects.create(tx_task=base_task, chain=chain, hash=tx_hash, version=0)
+        tx_task = EvmTxTask.objects.create(
+            base_task=base_task,
+            sender=addr,
+            chain=chain,
+            nonce=0,
+            to=Web3.to_checksum_address("0x0000000000000000000000000000000000000121"),
+            value=0,
+            gas=21_000,
+            data="0xdeadbeef",
+            gas_price=1,
+            signed_payload="0x7261772d6279746573",
+        )
+        return base_task, tx_task
+
+    def test_recover_status_zero_unconfirmed_defers_finalize_to_poller(self):
+        """失败 receipt 未达确认数时不能立即终局：reorg 回滚会造成 nonce 永久缺口。"""
+        chain = make_evm_chain(code=ChainCode.Ethereum)
+        block = 100
+        # 链头未越过确认深度：block 尚未确认。
+        chain.latest_block_number = block + chain.confirm_block_count - 1
+        base_task, tx_task = self._make_recover_task(
+            chain=chain, receipt_status=0, block_number=block
+        )
+
+        tx_task.broadcast()
+
+        base_task.refresh_from_db()
+        # 转 SUBMITTED 脱离 QUEUED 广播路径，但不立即 FAILED，交由 poller 确认后收口。
+        self.assertEqual(base_task.status, TxTaskStatus.SUBMITTED)
+
+    def test_recover_status_zero_confirmed_finalizes_failed(self):
+        """失败 receipt 达到确认数后才终局为 FAILED，与成功路径对称。"""
+        chain = make_evm_chain(code=ChainCode.Ethereum)
+        block = 100
+        chain.latest_block_number = block + chain.confirm_block_count
+        base_task, tx_task = self._make_recover_task(
+            chain=chain, receipt_status=0, block_number=block
+        )
+
+        tx_task.broadcast()
+
+        base_task.refresh_from_db()
+        self.assertEqual(base_task.status, TxTaskStatus.FAILED)
+
     def test_nonce_too_low_checks_existing_hash_before_reraising(self):
         """nonce too low 时若历史 hash 已有 receipt，应自动恢复而不是继续卡 QUEUED。"""
         chain = make_evm_chain(code=ChainCode.Anvil)

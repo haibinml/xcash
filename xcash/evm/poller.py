@@ -23,8 +23,13 @@ class EvmTaskPoller:
 
     对 SUBMITTED 超过短轮询延迟仍未终局的任务，遍历所有历史 tx_hash 查询 receipt：
     - 查到 receipt (status=1) 且确认数达标 -> 交给内部交易处理器按 TxTask 收口
-    - 查到 receipt (status=0) -> 标记失败终局
+    - 查到 receipt (status=0) 且确认数达标 -> 标记失败终局
     - 所有 hash 均无 receipt 且超过重播阈值 -> 交易可能已被 mempool 丢弃，重新广播
+
+    失败终局与成功终局一样要求确认数达标：status=0 的 receipt 在 reorg 后仍可能
+    被回滚、该 nonce 未被真正消费；若 0 确认即终局，reorg 丢弃该交易后本系统既
+    不会重发（schedule 恒取 max+1、FAILED 行占据该 nonce），更高 nonce 的已签任务
+    又永远排在缺口之后无法上链，整条 (sender, chain) 队列永久停摆。
     """
 
     @classmethod
@@ -78,6 +83,14 @@ class EvmTaskPoller:
                     )
                     continue
             elif status == TxCheckStatus.FAILED:
+                assert receipt is not None  # FAILED 分支一定携带命中的 receipt
+                # 与成功路径对称：失败也必须等确认数达标才终局，避免 reorg 回滚后
+                # 该 nonce 未消费却被永久标记失败，卡死整条发送地址队列。
+                if not cls._has_required_confirmations(
+                    chain=evm_task.chain,
+                    receipt=receipt,
+                ):
+                    continue
                 try:
                     cls.finalize_failed_task(evm_task=evm_task)
                 except Exception:  # noqa: BLE001
@@ -119,7 +132,7 @@ class EvmTaskPoller:
 
         返回 (status, tx_hash, receipt):
         - 找到成功 receipt -> (SUCCEEDED, 命中的 hash, receipt)
-        - 找到失败 receipt -> (FAILED, 命中的 hash, None)
+        - 找到失败 receipt -> (FAILED, 命中的 hash, receipt)
         - 全部未找到 -> (MISSING, None, None)
         - RPC 异常 -> (Exception, None, None)
         """
@@ -138,7 +151,7 @@ class EvmTaskPoller:
             if status == 1:
                 return TxCheckStatus.SUCCEEDED, tx_hash, dict(receipt)
             if status == 0:
-                return TxCheckStatus.FAILED, tx_hash, None
+                return TxCheckStatus.FAILED, tx_hash, dict(receipt)
             return RuntimeError("EVM receipt status missing or invalid"), None, None
 
         return TxCheckStatus.MISSING, None, None

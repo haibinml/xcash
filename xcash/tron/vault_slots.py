@@ -55,8 +55,19 @@ def create_deploy_tx_task(*, slot: VaultSlot) -> TxTask:
     return TronTxTask.schedule(intent).base_task
 
 
-def create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
+def estimate_collect_gas(*, chain: Chain, crypto, slot: VaultSlot) -> int | None:
+    """Tron 归集不按 EVM gas 模型计费（走能量/带宽），无 gas limit 上浮需求。
+
+    与 EVM 后端保持同名接口，供 chains 层统一按后端调用，这里恒返回 None。
+    """
+    return None
+
+
+def create_collect_tx_task(
+    *, chain: Chain, crypto, slot: VaultSlot, collect_gas_hint: int | None = None
+) -> TxTask:
     # 归集前置闸门保证只有已部署的 slot 走到这里;未部署一律先走部署任务。
+    # collect_gas_hint 仅 EVM 用于 gas limit 上浮，Tron 走能量/带宽模型，忽略即可。
     if not slot.is_deployed:
         raise RuntimeError(f"VaultSlot {slot.pk} 尚未部署,不能创建归集任务")
     sender = SystemWallet.get_current().wallet.get_address(

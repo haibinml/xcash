@@ -1206,13 +1206,14 @@ class VaultSlotCollectSchedule(models.Model):
     # 暂时性故障（RPC 抖动、币种临时停用）留出恢复窗口，又不明显拖慢资金归集。
     RETRY_BACKOFF = timedelta(minutes=10)
 
-    def create_tx_task(self) -> TxTask:
+    def create_tx_task(self, *, collect_gas_hint: int | None = None) -> TxTask:
         from chains.vault_slots import create_collect_tx_task_for_slot
 
         return create_collect_tx_task_for_slot(
             chain=self.chain,
             crypto=self.crypto,
             slot=self.vault_slot,
+            collect_gas_hint=collect_gas_hint,
         )
 
     def defer_retry(self) -> None:
@@ -1330,6 +1331,16 @@ class VaultSlotCollectSchedule(models.Model):
             balance=balance,
         ):
             return 0
+        # gas 估算必须在锁外的 RPC 前置区完成：estimate_gas 是链上调用，绝不能放进
+        # 下面持有计划行锁的短事务，也不能进入 schedule 内部的热钱包 nonce 锁。
+        # 估算失败返回 None，建任务时回退静态默认，不阻断归集。
+        from chains.vault_slots import estimate_collect_gas_for_slot
+
+        collect_gas_hint = estimate_collect_gas_for_slot(
+            chain=schedule.chain,
+            crypto=schedule.crypto,
+            slot=schedule.vault_slot,
+        )
         try:
             with db_transaction.atomic():
                 # 前置检查在锁外完成，拿锁后必须复核计划仍然 pending；
@@ -1342,7 +1353,7 @@ class VaultSlotCollectSchedule(models.Model):
                 )
                 if locked is None:
                     return 0
-                tx_task = locked.create_tx_task()
+                tx_task = locked.create_tx_task(collect_gas_hint=collect_gas_hint)
                 locked.tx_task = tx_task
                 locked.save(update_fields=["tx_task", "updated_at"])
         except Exception as exc:  # noqa: BLE001

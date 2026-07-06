@@ -442,7 +442,9 @@ def schedule_collect_for_slot(
     )
 
 
-def create_collect_tx_task_for_slot(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
+def create_collect_tx_task_for_slot(
+    *, chain: Chain, crypto, slot: VaultSlot, collect_gas_hint: int | None = None
+) -> TxTask:
     # 原生币在 CryptoOnChain 里 address="" 是正常形态，不算「未部署」；只有非原生币
     # 缺合约地址才是真正的未配置，拒绝调度。原生币归集由 collect(address(0)) 承载。
     if not crypto.address(chain) and not is_chain_native_crypto(
@@ -452,7 +454,23 @@ def create_collect_tx_task_for_slot(*, chain: Chain, crypto, slot: VaultSlot) ->
         raise RuntimeError(
             f"Crypto {crypto.symbol} 未部署在链 {chain.code}，无法调度 VaultSlot 归集"
         )
-    return get_backend(chain).create_collect_tx_task(chain=chain, crypto=crypto, slot=slot)
+    return get_backend(chain).create_collect_tx_task(
+        chain=chain,
+        crypto=crypto,
+        slot=slot,
+        collect_gas_hint=collect_gas_hint,
+    )
+
+
+def estimate_collect_gas_for_slot(
+    *, chain: Chain, crypto, slot: VaultSlot
+) -> int | None:
+    """按链后端估算归集 gas 上浮值；EVM 走链上 estimate，Tron 恒为 None。"""
+    return get_backend(chain).estimate_collect_gas(
+        chain=chain,
+        crypto=crypto,
+        slot=slot,
+    )
 
 
 def can_create_collect_tx_task(*, chain: Chain, slot: VaultSlot) -> bool:

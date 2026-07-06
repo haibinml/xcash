@@ -123,6 +123,7 @@ def build_vault_slot_collect_intent(
     chain: Chain,
     slot_address: str,
     token_address: str,
+    gas: int | None = None,
     verify_fn: Callable[[], None] | None = None,
 ) -> EvmTxIntent:
     slot_checksum = Web3.to_checksum_address(slot_address)
@@ -135,7 +136,8 @@ def build_vault_slot_collect_intent(
         chain=chain,
         contract_address=slot_checksum,
         data=f"0x{selector}{encoded_args}",
-        gas=DEFAULT_VAULT_SLOT_COLLECT_GAS,
+        # gas 为 None 时用静态默认；调用方可传入按链上 estimate_gas 上浮后的值。
+        gas=gas if gas is not None else DEFAULT_VAULT_SLOT_COLLECT_GAS,
         tx_type=TxTaskType.VaultSlotCollect,
         verify_fn=verify_fn,
     )

@@ -163,6 +163,67 @@ class EvmScannerRpcClientTests(TestCase):
         self.assertEqual(requested_ranges, [(100, 109), (110, 119), (120, 124)])
         self.assertEqual(len(logs), 3)
 
+    def test_get_logs_bisects_range_on_result_too_large_error(self):
+        # 结果集超限是确定性错误：应二分区块区间下探，而非重试后卡死游标导致漏账。
+        Chain.objects.filter(pk=self.chain.pk).update(evm_log_max_block_range=10)
+        self.chain.refresh_from_db()
+        succeeded_ranges: list[tuple[int, int]] = []
+
+        def fake_get_logs(filter_params: dict) -> list[dict]:
+            lo, hi = filter_params["fromBlock"], filter_params["toBlock"]
+            # 跨度 > 2 块的查询模拟命中节点结果上限，需要继续二分。
+            if hi - lo > 2:
+                raise ValueError("query returned more than 10000 results")
+            succeeded_ranges.append((lo, hi))
+            return [
+                {
+                    "blockNumber": lo,
+                    "logIndex": 0,
+                    "transactionHash": bytes.fromhex("ab" * 32),
+                }
+            ]
+
+        self.chain.__dict__["w3"] = SimpleNamespace(
+            eth=SimpleNamespace(get_logs=Mock(side_effect=fake_get_logs))
+        )
+
+        logs = EvmScannerRpcClient(chain=self.chain).get_logs(
+            from_block=100,
+            to_block=109,
+            addresses=[
+                Web3.to_checksum_address("0x00000000000000000000000000000000000000aa")
+            ],
+            topic0=Web3.to_hex(Web3.keccak(text="Transfer(address,address,uint256)")),
+        )
+
+        # 二分后每个成功子区间跨度都 <= 2，且完整覆盖 [100, 109] 无缺口。
+        self.assertTrue(all(hi - lo <= 2 for lo, hi in succeeded_ranges))
+        covered = sorted(b for lo, hi in succeeded_ranges for b in range(lo, hi + 1))
+        self.assertEqual(covered, list(range(100, 110)))
+        self.assertEqual(len(logs), len(succeeded_ranges))
+
+    def test_get_logs_single_block_still_too_large_raises(self):
+        # 二分到单块仍超限时必须上抛告警，绝不静默跳过（跳过等于永久漏账）。
+        self.chain.__dict__["w3"] = SimpleNamespace(
+            eth=SimpleNamespace(
+                get_logs=Mock(
+                    side_effect=ValueError("query returned more than 10000 results")
+                )
+            )
+        )
+
+        with self.assertRaises(EvmScannerRpcError):
+            EvmScannerRpcClient(chain=self.chain).get_logs(
+                from_block=100,
+                to_block=100,
+                addresses=[
+                    Web3.to_checksum_address(
+                        "0x00000000000000000000000000000000000000aa"
+                    )
+                ],
+                topic0=Web3.to_hex(Web3.keccak(text="Transfer(address,address,uint256)")),
+            )
+
     def test_get_logs_accepts_multiple_topic0_values(self):
         # native deposit + ERC20 Transfer 统一扫描时，topic0 第一位需要用 OR 查询。
         captured_filters: list[dict] = []

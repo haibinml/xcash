@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import structlog
 from web3 import Web3
 
 from chains.models import AddressUsage
@@ -9,10 +10,17 @@ from chains.models import TxTask
 from chains.models import VaultSlot
 from core.models import SystemWallet
 from evm.adapter import EvmAdapter
+from evm.constants import DEFAULT_VAULT_SLOT_COLLECT_GAS
+from evm.constants import VAULT_SLOT_COLLECT_GAS_CEILING
+from evm.constants import VAULT_SLOT_COLLECT_GAS_ESTIMATE_BUFFER_BPS
 from evm.contracts_codec import predict_xcash_vault_slot_address
 from evm.intents import build_vault_slot_collect_intent
 from evm.intents import build_vault_slot_deploy_intent
 from evm.models import EvmTxTask
+
+logger = structlog.get_logger()
+
+BPS_DENOMINATOR = 10_000
 
 # 原生币在 CryptoOnChain 里 address=""，但 VaultSlot 用 collect(address(0))
 # 表示清扫合约当前原生币余额。这里必须按「本链 native_coin」判断，避免把其它链
@@ -57,7 +65,54 @@ def create_deploy_tx_task(*, slot: VaultSlot) -> TxTask:
     return EvmTxTask.schedule(intent).base_task
 
 
-def create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
+def estimate_collect_gas(*, chain: Chain, crypto, slot: VaultSlot) -> int | None:
+    """按链上 estimate_gas 估算归集 gas 并上浮；无法估算/失败时返回 None（用静态默认）。
+
+    必须在调度短事务与热钱包 nonce 锁之外调用（execute_one_due 的 RPC 前置区），
+    避免把 estimate RPC 关进 DB 事务或全局热钱包锁。任何异常都吞掉回退静态默认，
+    绝不因估算失败阻断归集本身。
+    """
+    if chain.type != ChainType.EVM or not slot.is_deployed:
+        return None
+    try:
+        sender = SystemWallet.get_current().wallet.get_address(
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.HotWallet,
+        )
+        intent = build_vault_slot_collect_intent(
+            sender=sender,
+            chain=chain,
+            slot_address=slot.address,
+            token_address=collect_token_address(crypto=crypto, chain=chain),
+        )
+        estimated = int(
+            chain.w3.eth.estimate_gas(  # noqa: SLF001
+                {
+                    "from": sender.address,
+                    "to": intent.to,
+                    "data": intent.data,
+                    "value": 0,
+                }
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "EVM 归集 gas 链上估算失败，回退静态默认",
+            chain=chain.code,
+            vault_slot_id=slot.pk,
+            error=str(exc),
+        )
+        return None
+
+    buffered = estimated * VAULT_SLOT_COLLECT_GAS_ESTIMATE_BUFFER_BPS // BPS_DENOMINATOR
+    # max(静态默认) 防止低估回退（L1 常规链 estimate 低于默认时仍用默认）；
+    # 上限防止异常报价把 gas limit 放大到烧穿热钱包 gas 预检。
+    return min(max(DEFAULT_VAULT_SLOT_COLLECT_GAS, buffered), VAULT_SLOT_COLLECT_GAS_CEILING)
+
+
+def create_collect_tx_task(
+    *, chain: Chain, crypto, slot: VaultSlot, collect_gas_hint: int | None = None
+) -> TxTask:
     # 归集前置闸门保证只有已部署的 slot 走到这里;未部署一律先走部署任务。
     if not slot.is_deployed:
         raise RuntimeError(f"VaultSlot {slot.pk} 尚未部署,不能创建归集任务")
@@ -72,6 +127,7 @@ def create_collect_tx_task(*, chain: Chain, crypto, slot: VaultSlot) -> TxTask:
         chain=chain,
         slot_address=slot.address,
         token_address=collect_token_address(crypto=crypto, chain=chain),
+        gas=collect_gas_hint,
     )
     # 不复用在途归集任务:归集计划 tx_task 是 OneToOne,复用同一任务会让第二个
     # 窗口撞唯一约束;collect(token) 是全额清扫,独立任务最多产生余额为 0 的空扫。
