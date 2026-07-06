@@ -156,27 +156,52 @@ class TronTxTask(UndeletableModel):
     def broadcast(self) -> None:
         if not self.can_broadcast_queued:
             return
+        # QUEUED 阶段广播若持续失败（进不了内存池），每轮都会重新签名生成新 txID 并
+        # 追加一条 TxHash。这里与 SUBMITTED 过期重播共用同一上限，防止 TxHash 无限
+        # 增长、以及回执确认按全部历史 hash 逐一查询而线性膨胀拖垮确认链路。
+        if self.finalize_if_rebroadcast_limit_reached(
+            expected_status=TxTaskStatus.QUEUED
+        ):
+            return
         self.execute_broadcast()
 
     def rebroadcast_expired_submitted(self) -> None:
         if not self.can_rebroadcast_expired_submitted:
             return
-        if self.rebroadcast_hash_limit_reached():
-            updated = TxTask.mark_finalized_failed(
-                task_id=self.base_task_id,
-                expected_status=TxTaskStatus.SUBMITTED,
-            )
-            if updated:
-                logger.warning(
-                    "Tron 任务重签次数达到上限，已标记失败",
-                    tron_task_id=self.pk,
-                    tx_task_id=self.base_task_id,
-                    chain=self.chain.code,
-                    sender=self.sender.address,
-                    tx_hash_count=TRON_MAX_BROADCAST_HASHES,
-                )
+        if self.finalize_if_rebroadcast_limit_reached(
+            expected_status=TxTaskStatus.SUBMITTED
+        ):
             return
         self.execute_broadcast()
+
+    def finalize_if_rebroadcast_limit_reached(
+        self, *, expected_status: TxTaskStatus
+    ) -> bool:
+        """重签累计的 TxHash 数达上限时把任务标记失败终局，返回是否已终局。
+
+        Tron 无 nonce，每次广播/重播都会生成新 txID 并追加一条 TxHash。无论任务卡在
+        QUEUED（广播环节持续失败、始终进不了内存池）还是 SUBMITTED（过期重播但迟迟
+        不上链），都必须共享同一上限：否则 TxHash 无限增长，且回执确认要按全部历史
+        hash 逐一查询，RPC 成本随之线性膨胀。终局经受状态保护的统一入口推进，并发
+        收口已置终局态时此处自然落空，不会覆盖。
+        """
+        if not self.rebroadcast_hash_limit_reached():
+            return False
+        updated = TxTask.mark_finalized_failed(
+            task_id=self.base_task_id,
+            expected_status=expected_status,
+        )
+        if updated:
+            logger.warning(
+                "Tron 任务重签次数达到上限，已标记失败",
+                tron_task_id=self.pk,
+                tx_task_id=self.base_task_id,
+                chain=self.chain.code,
+                sender=self.sender.address,
+                expected_status=expected_status,
+                tx_hash_count=TRON_MAX_BROADCAST_HASHES,
+            )
+        return True
 
     def rebroadcast_hash_limit_reached(self) -> bool:
         return (

@@ -1015,6 +1015,33 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
         task.base_task.refresh_from_db()
         self.assertEqual(task.base_task.status, TxTaskStatus.FAILED)
 
+    @patch("tron.models.TronTxTask.execute_broadcast")
+    def test_broadcast_marks_failed_after_hash_limit(self, execute_broadcast):
+        # QUEUED 阶段广播持续失败会每轮重签追加一条 TxHash；达到上限必须终局失败，
+        # 不再 execute_broadcast，防止 TxHash 无限增长并拖垮按全部历史 hash 查回执。
+        task = self.make_task()
+        for index in range(TRON_MAX_BROADCAST_HASHES):
+            task.base_task.append_tx_hash(f"{index + 1:064x}")
+
+        task.broadcast()
+
+        execute_broadcast.assert_not_called()
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.FAILED)
+
+    @patch("tron.models.TronTxTask.execute_broadcast")
+    def test_broadcast_executes_below_hash_limit(self, execute_broadcast):
+        # 未达上限的 QUEUED 任务照常广播，不被提前判失败。
+        task = self.make_task()
+        for index in range(TRON_MAX_BROADCAST_HASHES - 1):
+            task.base_task.append_tx_hash(f"{index + 1:064x}")
+
+        task.broadcast()
+
+        execute_broadcast.assert_called_once()
+        task.base_task.refresh_from_db()
+        self.assertEqual(task.base_task.status, TxTaskStatus.QUEUED)
+
     def test_broadcast_lock_timeouts_cover_worst_case_http_budget(self):
         self.assertEqual(
             TRON_SENDER_BROADCAST_LOCK_TIMEOUT_SECONDS,
@@ -1703,6 +1730,27 @@ class TronScannerTests(TestCase):
 
         self.assertEqual(summary.blocks_scanned, 1)
         client.get_transaction_infos_by_block.assert_called_once()
+
+    @override_settings(DEBUG=False)
+    @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_aborts_when_empty_block_is_not_yet_finalized(self, client_cls):
+        # 空 infos 且该块尚未在命中的后端节点固化时，get_solid_block_id 抛错必须中断
+        # 本轮扫描：游标停在该块之前，避免把未固化块误当空块推进而永久漏扫其内的
+        # TRC20 入账。
+        from tron.scanner import TronScanner
+
+        self._set_cursor_block(last_scanned_block=123455)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = 123456
+        client.get_transaction_infos_by_block.return_value = []
+        client.get_solid_block_id.side_effect = TronClientError("block not finalized")
+
+        with self.assertRaises(TronClientError):
+            TronScanner.scan_chain(chain=self.chain)
+
+        cursor = TronWatchCursor.objects.get(chain=self.chain)
+        self.assertEqual(cursor.last_scanned_block, 123455)
+        self.assertEqual(cursor.last_error, "block not finalized")
 
     @override_settings(TRON_SCAN_SAFE_LAG_BLOCKS=4)
     @patch("chains.service.TransferService.enqueue_processing")

@@ -480,6 +480,16 @@ class TronScanner:
         if not tokens_by_address:
             return []
         infos = client.get_transaction_infos_by_block(block_number=block_number)
+        if not infos:
+            # 空 infos 有两种成因，且无法从响应本身区分：真·空块，或本次命中的
+            # TronGrid 后端节点固化头落后、该块尚未在此节点固化（对未固化块同样返回
+            # 空列表）。若直接按空块推进游标，会越过一个可能尚未固化的块，导致该块内
+            # 的 TRC20 入账永久静默漏账。这里补一次固化块存在性校验：blockID 可读即为
+            # 真·空块、可安全跳过；块尚未固化时 get_solid_block_id 抛 TronClientError
+            # 中断本轮，游标停在该块之前，由下一轮重扫。Tron 主网几乎无空块，此额外
+            # RPC 在正常路径基本不触发。
+            client.get_solid_block_id(block_number=block_number)
+            return []
         candidates: list[ParsedTronTransferEvent] = []
         for info in infos:
             candidates.extend(
